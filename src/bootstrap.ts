@@ -88,7 +88,8 @@ function bootstrap(): void {
   container.register(KEYS.DRAFT_STATE_SERVICE, () =>
     new DraftStateService(
       container.resolve(KEYS.DRAFT_REPO),
-      container.resolve(KEYS.LEAGUE_REPO)
+      container.resolve(KEYS.LEAGUE_REPO),
+      container.resolve(KEYS.DRAFT_ENGINE_FACTORY)
     )
   );
 

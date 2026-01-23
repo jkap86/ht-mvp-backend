@@ -55,6 +55,9 @@ router.post('/:draftId/start', draftModifyLimiter, draftController.startDraft);
 // POST /api/leagues/:leagueId/drafts/:draftId/actions (unified action endpoint)
 router.post('/:draftId/actions', draftModifyLimiter, validateRequest(draftActionSchema), draftController.performAction);
 
+// POST /api/leagues/:leagueId/drafts/:draftId/undo (commissioner undo last pick)
+router.post('/:draftId/undo', draftModifyLimiter, draftController.undoPick);
+
 // GET /api/leagues/:leagueId/drafts/:draftId/picks
 router.get('/:draftId/picks', draftController.getDraftPicks);
 

@@ -114,6 +114,18 @@ export class DraftController {
     }
   };
 
+  undoPick = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const userId = requireUserId(req);
+      const draftId = requireDraftId(req);
+
+      const result = await this.draftService.undoPick(draftId, userId);
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   getDraftPicks = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const userId = requireUserId(req);

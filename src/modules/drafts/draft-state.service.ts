@@ -1,6 +1,7 @@
 import { DraftRepository } from './drafts.repository';
 import { draftToResponse } from './drafts.model';
 import { LeagueRepository } from '../leagues/leagues.repository';
+import { DraftEngineFactory } from '../../engines';
 import {
   NotFoundException,
   ForbiddenException,
@@ -11,7 +12,8 @@ import { getSocketService } from '../../socket';
 export class DraftStateService {
   constructor(
     private readonly draftRepo: DraftRepository,
-    private readonly leagueRepo: LeagueRepository
+    private readonly leagueRepo: LeagueRepository,
+    private readonly engineFactory: DraftEngineFactory
   ) {}
 
   async startDraft(draftId: number, userId: string): Promise<any> {
@@ -205,5 +207,75 @@ export class DraftStateService {
     }
 
     await this.draftRepo.delete(draftId);
+  }
+
+  async undoPick(draftId: number, userId: string): Promise<{ draft: any; undone: any }> {
+    const draft = await this.draftRepo.findById(draftId);
+    if (!draft) throw new NotFoundException('Draft not found');
+
+    const isCommissioner = await this.leagueRepo.isCommissioner(draft.leagueId, userId);
+    if (!isCommissioner) {
+      throw new ForbiddenException('Only the commissioner can undo picks');
+    }
+
+    if (draft.status === 'not_started') {
+      throw new ValidationException('Cannot undo picks on a draft that has not started');
+    }
+
+    const wasCompleted = draft.status === 'completed';
+
+    // Delete the most recent pick
+    const undonePick = await this.draftRepo.undoLastPick(draftId);
+    if (!undonePick) {
+      throw new ValidationException('No picks to undo');
+    }
+
+    // Calculate previous state using engine
+    const draftOrder = await this.draftRepo.getDraftOrder(draftId);
+    const engine = this.engineFactory.createEngine(draft.draftType);
+    const totalRosters = draftOrder.length;
+
+    // The undone pick tells us what the "current" pick should now be
+    const prevPick = undonePick.pickNumber;
+    const prevRound = engine.getRound(prevPick, totalRosters);
+    const prevPicker = engine.getPickerForPickNumber(draft, draftOrder, prevPick);
+
+    // Calculate new deadline only if draft was in progress (not paused)
+    const shouldSetDeadline = draft.status === 'in_progress' || wasCompleted;
+    const pickDeadline = shouldSetDeadline ? new Date() : null;
+    if (pickDeadline) {
+      pickDeadline.setSeconds(pickDeadline.getSeconds() + draft.pickTimeSeconds);
+    }
+
+    // Update draft state - revert to previous pick
+    const updatedDraft = await this.draftRepo.update(draftId, {
+      currentPick: prevPick,
+      currentRound: prevRound,
+      currentRosterId: prevPicker?.rosterId || null,
+      pickDeadline,
+      // If draft was completed, revert to in_progress
+      status: wasCompleted ? 'in_progress' : draft.status,
+      completedAt: wasCompleted ? null : draft.completedAt,
+    });
+
+    const response = draftToResponse(updatedDraft);
+
+    // Emit socket events
+    try {
+      const socket = getSocketService();
+      socket.emitPickUndone(draftId, { pick: undonePick, draft: response });
+      if (updatedDraft.status === 'in_progress') {
+        socket.emitNextPick(draftId, {
+          currentPick: prevPick,
+          currentRound: prevRound,
+          currentRosterId: prevPicker?.rosterId,
+          pickDeadline,
+        });
+      }
+    } catch {
+      // Socket service may not be initialized in tests
+    }
+
+    return { draft: response, undone: undonePick };
   }
 }

@@ -173,6 +173,11 @@ export class SocketService {
     this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.DRAFT.COMPLETED, draft);
   }
 
+  // Emit pick undone event
+  emitPickUndone(draftId: number, data: { pick: any; draft: any }): void {
+    this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.DRAFT.PICK_UNDONE, data);
+  }
+
   // Emit next pick info (whose turn, deadline)
   emitNextPick(draftId: number, pickInfo: any): void {
     this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.DRAFT.NEXT_PICK, pickInfo);

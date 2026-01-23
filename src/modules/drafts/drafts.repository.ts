@@ -268,6 +268,66 @@ export class DraftRepository {
     }
   }
 
+  /**
+   * Undoes the most recent draft pick atomically.
+   * Uses advisory lock to prevent race conditions.
+   * Returns the deleted pick with player info, or null if no picks exist.
+   */
+  async undoLastPick(draftId: number): Promise<DraftPick | null> {
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Acquire advisory lock on draft
+      await client.query('SELECT pg_advisory_xact_lock($1)', [draftId]);
+
+      // Get most recent pick with player info
+      const lastPick = await client.query(
+        `SELECT dp.*, p.full_name as player_name, p.position as player_position, p.team as player_team, u.username
+         FROM draft_picks dp
+         LEFT JOIN players p ON dp.player_id = p.id
+         LEFT JOIN rosters r ON dp.roster_id = r.id
+         LEFT JOIN users u ON r.user_id = u.id
+         WHERE dp.draft_id = $1
+         ORDER BY dp.pick_number DESC LIMIT 1`,
+        [draftId]
+      );
+
+      if (lastPick.rows.length === 0) {
+        await client.query('COMMIT');
+        return null;
+      }
+
+      const row = lastPick.rows[0];
+
+      // Delete the pick
+      await client.query('DELETE FROM draft_picks WHERE id = $1', [row.id]);
+
+      await client.query('COMMIT');
+
+      return {
+        id: row.id,
+        draftId: row.draft_id,
+        pickNumber: row.pick_number,
+        round: row.round,
+        pickInRound: row.pick_in_round,
+        rosterId: row.roster_id,
+        playerId: row.player_id,
+        isAutoPick: row.is_auto_pick,
+        pickedAt: row.picked_at,
+        playerName: row.player_name,
+        playerPosition: row.player_position,
+        playerTeam: row.player_team,
+        username: row.username,
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async isPlayerDrafted(draftId: number, playerId: number): Promise<boolean> {
     const result = await this.db.query(
       'SELECT EXISTS(SELECT 1 FROM draft_picks WHERE draft_id = $1 AND player_id = $2)',

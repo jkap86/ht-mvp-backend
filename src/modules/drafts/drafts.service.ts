@@ -96,6 +96,10 @@ export class DraftService {
     return this.stateService.deleteDraft(leagueId, draftId, userId);
   }
 
+  async undoPick(draftId: number, userId: string): Promise<{ draft: any; undone: any }> {
+    return this.stateService.undoPick(draftId, userId);
+  }
+
   // Delegate to pick service
   async getDraftPicks(leagueId: number, draftId: number, userId: string): Promise<any[]> {
     return this.pickService.getDraftPicks(leagueId, draftId, userId);
