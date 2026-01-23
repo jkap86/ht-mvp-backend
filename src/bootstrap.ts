@@ -17,9 +17,13 @@ import { DraftOrderService } from './modules/drafts/draft-order.service';
 import { DraftPickService } from './modules/drafts/draft-pick.service';
 import { DraftStateService } from './modules/drafts/draft-state.service';
 import { DraftAutopickService } from './modules/drafts/draft-autopick.service';
+import { DraftQueueService } from './modules/drafts/draft-queue.service';
 import { ChatService } from './modules/chat/chat.service';
 import { PlayerService } from './modules/players/players.service';
 import { SleeperApiClient } from './modules/players/sleeper.client';
+
+// Engines
+import { DraftEngineFactory } from './engines';
 
 function bootstrap(): void {
   // Database
@@ -96,6 +100,21 @@ function bootstrap(): void {
       container.resolve(KEYS.DRAFT_REPO),
       container.resolve(KEYS.LEAGUE_REPO),
       container.resolve(KEYS.ROSTER_REPO),
+      container.resolve(KEYS.PLAYER_REPO)
+    )
+  );
+
+  container.register(KEYS.DRAFT_QUEUE_SERVICE, () =>
+    new DraftQueueService(
+      container.resolve(KEYS.DRAFT_REPO),
+      container.resolve(KEYS.PLAYER_REPO)
+    )
+  );
+
+  // Engines
+  container.register(KEYS.DRAFT_ENGINE_FACTORY, () =>
+    new DraftEngineFactory(
+      container.resolve(KEYS.DRAFT_REPO),
       container.resolve(KEYS.PLAYER_REPO)
     )
   );
