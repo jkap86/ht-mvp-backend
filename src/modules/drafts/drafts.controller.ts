@@ -285,6 +285,63 @@ export class DraftController {
     }
   };
 
+  getAuctionLot = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const userId = requireUserId(req);
+      const leagueId = requireLeagueId(req);
+      const draftId = requireDraftId(req);
+      const lotId = parseInt(req.params.lotId as string, 10);
+
+      if (isNaN(lotId)) {
+        throw new ValidationException('Invalid lot ID');
+      }
+
+      if (!this.rosterRepo) {
+        throw new ValidationException('Roster repository not available');
+      }
+      const roster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId);
+      if (!roster) {
+        throw new ForbiddenException('You are not a member of this league');
+      }
+
+      if (!this.slowAuctionService) {
+        throw new ValidationException('Auction service not available');
+      }
+
+      const lot = await this.slowAuctionService.getLotById(draftId, lotId);
+      const userProxyBid = await this.slowAuctionService.getUserProxyBid(lotId, roster.id);
+
+      res.status(200).json({ lot, userProxyBid });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getAuctionBudgets = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const userId = requireUserId(req);
+      const leagueId = requireLeagueId(req);
+      const draftId = requireDraftId(req);
+
+      if (!this.rosterRepo) {
+        throw new ValidationException('Roster repository not available');
+      }
+      const roster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId);
+      if (!roster) {
+        throw new ForbiddenException('You are not a member of this league');
+      }
+
+      if (!this.slowAuctionService) {
+        throw new ValidationException('Auction service not available');
+      }
+
+      const budgets = await this.slowAuctionService.getAllBudgets(draftId);
+      res.status(200).json({ budgets });
+    } catch (error) {
+      next(error);
+    }
+  };
+
   makePick = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const userId = requireUserId(req);

@@ -70,6 +70,12 @@ router.post('/:draftId/pick', draftPickLimiter, validateRequest(makePickSchema),
 // GET /api/leagues/:leagueId/drafts/:draftId/auction/lots
 router.get('/:draftId/auction/lots', draftController.getAuctionLots);
 
+// GET /api/leagues/:leagueId/drafts/:draftId/auction/lots/:lotId
+router.get('/:draftId/auction/lots/:lotId', draftController.getAuctionLot);
+
+// GET /api/leagues/:leagueId/drafts/:draftId/auction/budgets
+router.get('/:draftId/auction/budgets', draftController.getAuctionBudgets);
+
 // Queue routes
 // GET /api/leagues/:leagueId/drafts/:draftId/queue
 router.get('/:draftId/queue', queueController.getQueue);

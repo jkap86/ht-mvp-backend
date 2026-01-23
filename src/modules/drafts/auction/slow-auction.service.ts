@@ -57,6 +57,67 @@ export class SlowAuctionService {
     return this.lotRepo.findActiveLotsByDraft(draftId);
   }
 
+  // Get a single lot by ID (validates it belongs to the draft)
+  async getLotById(draftId: number, lotId: number): Promise<AuctionLot> {
+    const lot = await this.lotRepo.findLotById(lotId);
+    if (!lot) {
+      throw new NotFoundException('Lot not found');
+    }
+    if (lot.draftId !== draftId) {
+      throw new NotFoundException('Lot not found in this draft');
+    }
+    return lot;
+  }
+
+  // Get user's proxy bid for a lot
+  async getUserProxyBid(lotId: number, rosterId: number): Promise<AuctionProxyBid | null> {
+    return this.lotRepo.getProxyBid(lotId, rosterId);
+  }
+
+  // Get budget info for all rosters in a draft
+  async getAllBudgets(
+    draftId: number
+  ): Promise<{
+    rosterId: number;
+    username: string;
+    totalBudget: number;
+    spent: number;
+    leadingCommitment: number;
+    available: number;
+    wonCount: number;
+  }[]> {
+    const draft = await this.draftRepo.findById(draftId);
+    if (!draft) throw new NotFoundException('Draft not found');
+
+    const league = await this.leagueRepo.findById(draft.leagueId);
+    if (!league) throw new NotFoundException('League not found');
+
+    const totalBudget = league.leagueSettings?.auctionBudget ?? 200;
+    const rosterSlots = league.leagueSettings?.rosterSlots ?? 15;
+
+    const rosters = await this.rosterRepo.findByLeagueId(draft.leagueId);
+    const budgets = await Promise.all(
+      rosters.map(async (roster) => {
+        const budgetData = await this.lotRepo.getRosterBudgetData(draftId, roster.id);
+        const remainingSlots = rosterSlots - budgetData.wonCount;
+        const reservedForMinBids = Math.max(0, remainingSlots - 1) * 1;
+        const available = totalBudget - budgetData.spent - reservedForMinBids - budgetData.leadingCommitment;
+
+        return {
+          rosterId: roster.id,
+          username: (roster as any).username || `Team ${roster.id}`,
+          totalBudget,
+          spent: budgetData.spent,
+          leadingCommitment: budgetData.leadingCommitment,
+          available: Math.max(0, available),
+          wonCount: budgetData.wonCount,
+        };
+      })
+    );
+
+    return budgets;
+  }
+
   // Budget calculation
   async getMaxAffordableBid(
     draftId: number,
