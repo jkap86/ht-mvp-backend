@@ -499,6 +499,40 @@ export class SlowAuctionService {
       }
 
       if (lot.currentBidderRosterId) {
+        // Lock winner's roster to prevent concurrent settlements
+        await client.query('SELECT pg_advisory_xact_lock(hashtext($1), $2)', ['auction_roster', lot.currentBidderRosterId]);
+
+        // Re-validate budget and slots at settlement time
+        const draft = await this.draftRepo.findById(lot.draftId);
+        if (!draft) {
+          await client.query('ROLLBACK');
+          throw new NotFoundException('Draft not found');
+        }
+        const league = await this.leagueRepo.findById(draft.leagueId);
+        if (!league) {
+          await client.query('ROLLBACK');
+          throw new NotFoundException('League not found');
+        }
+
+        const totalBudget = league.leagueSettings?.auctionBudget ?? 200;
+        const rosterSlots = league.leagueSettings?.rosterSlots ?? 15;
+        const settings = this.getSettings(draft);
+        const budgetData = await this.getRosterBudgetDataWithClient(client, lot.draftId, lot.currentBidderRosterId);
+
+        // Check roster not full
+        if (budgetData.wonCount >= rosterSlots) {
+          await client.query('ROLLBACK');
+          throw new ValidationException('Winner roster is full - lot cannot settle');
+        }
+
+        // Check budget: spent + this winning bid + reserve for remaining slots <= total
+        const remainingAfterWin = rosterSlots - budgetData.wonCount - 1;
+        const requiredReserve = remainingAfterWin * settings.minBid;
+        if (budgetData.spent + lot.currentBid + requiredReserve > totalBudget) {
+          await client.query('ROLLBACK');
+          throw new ValidationException('Winner cannot afford this lot after other settlements');
+        }
+
         // Mark lot won
         const settleResult = await client.query(
           `UPDATE auction_lots
