@@ -1,0 +1,232 @@
+import { DraftPickService } from '../../../modules/drafts/draft-pick.service';
+import { DraftRepository } from '../../../modules/drafts/drafts.repository';
+import { LeagueRepository, RosterRepository } from '../../../modules/leagues/leagues.repository';
+import { Draft, DraftOrderEntry } from '../../../modules/drafts/drafts.model';
+import {
+  NotFoundException,
+  ForbiddenException,
+  ValidationException,
+  ConflictException,
+} from '../../../utils/exceptions';
+
+// Mock draft data
+const mockDraft: Draft = {
+  id: 1,
+  leagueId: 1,
+  draftType: 'snake',
+  rounds: 15,
+  pickTimeSeconds: 90,
+  status: 'in_progress',
+  currentPick: 1,
+  currentRound: 1,
+  currentRosterId: 1,
+  pickDeadline: new Date(Date.now() + 90000),
+  startedAt: new Date(),
+  completedAt: null,
+  settings: {},
+  createdAt: new Date(),
+  updatedAt: new Date(),
+};
+
+const mockDraftOrder: DraftOrderEntry[] = [
+  { id: 1, draftId: 1, rosterId: 1, draftPosition: 1, username: 'user1' },
+  { id: 2, draftId: 1, rosterId: 2, draftPosition: 2, username: 'user2' },
+  { id: 3, draftId: 1, rosterId: 3, draftPosition: 3, username: 'user3' },
+];
+
+// Use 'any' for mockRoster to avoid strict typing issues with the Roster interface
+const mockRoster: any = {
+  id: 1,
+  leagueId: 1,
+  userId: 'user-123',
+  rosterId: 1,
+  settings: {},
+  starters: [],
+  bench: [],
+  createdAt: new Date(),
+  updatedAt: new Date(),
+};
+
+const mockPick = {
+  id: 1,
+  draftId: 1,
+  pickNumber: 1,
+  round: 1,
+  pickInRound: 1,
+  rosterId: 1,
+  playerId: 100,
+  isAutoPick: false,
+  pickedAt: new Date(),
+};
+
+// Mock repositories
+const createMockDraftRepo = (): jest.Mocked<DraftRepository> => ({
+  findById: jest.fn(),
+  findByLeagueId: jest.fn(),
+  create: jest.fn(),
+  update: jest.fn(),
+  delete: jest.fn(),
+  getDraftOrder: jest.fn(),
+  createDraftOrder: jest.fn(),
+  clearDraftOrder: jest.fn(),
+  getDraftPicks: jest.fn(),
+  createDraftPick: jest.fn(),
+  isPlayerDrafted: jest.fn(),
+} as unknown as jest.Mocked<DraftRepository>);
+
+const createMockLeagueRepo = (): jest.Mocked<LeagueRepository> => ({
+  isUserMember: jest.fn(),
+  findById: jest.fn(),
+  isUserCommissioner: jest.fn(),
+} as unknown as jest.Mocked<LeagueRepository>);
+
+const createMockRosterRepo = (): jest.Mocked<RosterRepository> => ({
+  findByLeagueAndUser: jest.fn(),
+  findByLeague: jest.fn(),
+} as unknown as jest.Mocked<RosterRepository>);
+
+describe('DraftPickService', () => {
+  let draftPickService: DraftPickService;
+  let mockDraftRepo: jest.Mocked<DraftRepository>;
+  let mockLeagueRepo: jest.Mocked<LeagueRepository>;
+  let mockRosterRepo: jest.Mocked<RosterRepository>;
+
+  beforeEach(() => {
+    mockDraftRepo = createMockDraftRepo();
+    mockLeagueRepo = createMockLeagueRepo();
+    mockRosterRepo = createMockRosterRepo();
+    draftPickService = new DraftPickService(mockDraftRepo, mockLeagueRepo, mockRosterRepo);
+  });
+
+  describe('getDraftPicks', () => {
+    it('should return draft picks when user is member', async () => {
+      mockLeagueRepo.isUserMember.mockResolvedValue(true);
+      mockDraftRepo.getDraftPicks.mockResolvedValue([mockPick]);
+
+      const result = await draftPickService.getDraftPicks(1, 1, 'user-123');
+
+      expect(result).toEqual([mockPick]);
+      expect(mockLeagueRepo.isUserMember).toHaveBeenCalledWith(1, 'user-123');
+    });
+
+    it('should throw ForbiddenException when user is not a member', async () => {
+      mockLeagueRepo.isUserMember.mockResolvedValue(false);
+
+      await expect(
+        draftPickService.getDraftPicks(1, 1, 'user-123')
+      ).rejects.toThrow(ForbiddenException);
+      await expect(
+        draftPickService.getDraftPicks(1, 1, 'user-123')
+      ).rejects.toThrow('not a member');
+    });
+  });
+
+  describe('makePick', () => {
+    it('should create pick and advance to next on success', async () => {
+      mockDraftRepo.findById.mockResolvedValue(mockDraft);
+      mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster);
+      mockDraftRepo.getDraftOrder.mockResolvedValue(mockDraftOrder);
+      mockDraftRepo.isPlayerDrafted.mockResolvedValue(false);
+      mockDraftRepo.createDraftPick.mockResolvedValue(mockPick);
+      mockDraftRepo.update.mockResolvedValue({ ...mockDraft, currentPick: 2 });
+
+      const result = await draftPickService.makePick(1, 'user-123', 100);
+
+      expect(result).toEqual(mockPick);
+      expect(mockDraftRepo.createDraftPick).toHaveBeenCalled();
+      expect(mockDraftRepo.update).toHaveBeenCalled();
+    });
+
+    it('should throw NotFoundException when draft not found', async () => {
+      mockDraftRepo.findById.mockResolvedValue(null);
+
+      await expect(
+        draftPickService.makePick(999, 'user-123', 100)
+      ).rejects.toThrow(NotFoundException);
+      await expect(
+        draftPickService.makePick(999, 'user-123', 100)
+      ).rejects.toThrow('Draft not found');
+    });
+
+    it('should throw ValidationException when draft is not in progress', async () => {
+      mockDraftRepo.findById.mockResolvedValue({ ...mockDraft, status: 'not_started' });
+
+      await expect(
+        draftPickService.makePick(1, 'user-123', 100)
+      ).rejects.toThrow(ValidationException);
+      await expect(
+        draftPickService.makePick(1, 'user-123', 100)
+      ).rejects.toThrow('not in progress');
+    });
+
+    it('should throw ForbiddenException when user not in league', async () => {
+      mockDraftRepo.findById.mockResolvedValue(mockDraft);
+      mockRosterRepo.findByLeagueAndUser.mockResolvedValue(null);
+
+      await expect(
+        draftPickService.makePick(1, 'user-123', 100)
+      ).rejects.toThrow(ForbiddenException);
+      await expect(
+        draftPickService.makePick(1, 'user-123', 100)
+      ).rejects.toThrow('not in this league');
+    });
+
+    it('should throw ValidationException when not user turn', async () => {
+      const otherRoster = { ...mockRoster, id: 99 };
+      mockDraftRepo.findById.mockResolvedValue(mockDraft);
+      mockRosterRepo.findByLeagueAndUser.mockResolvedValue(otherRoster);
+      mockDraftRepo.getDraftOrder.mockResolvedValue(mockDraftOrder);
+
+      await expect(
+        draftPickService.makePick(1, 'user-123', 100)
+      ).rejects.toThrow(ValidationException);
+      await expect(
+        draftPickService.makePick(1, 'user-123', 100)
+      ).rejects.toThrow('not your turn');
+    });
+
+    it('should throw ConflictException when player already drafted', async () => {
+      mockDraftRepo.findById.mockResolvedValue(mockDraft);
+      mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster);
+      mockDraftRepo.getDraftOrder.mockResolvedValue(mockDraftOrder);
+      mockDraftRepo.isPlayerDrafted.mockResolvedValue(true);
+
+      await expect(
+        draftPickService.makePick(1, 'user-123', 100)
+      ).rejects.toThrow(ConflictException);
+      await expect(
+        draftPickService.makePick(1, 'user-123', 100)
+      ).rejects.toThrow('already been drafted');
+    });
+
+    it('should complete draft when all picks are made', async () => {
+      // For pick 45 (last pick): round 15 (odd), pick in round = 3
+      // In normal order (odd round), position 3 picks
+      const lastPickDraft = {
+        ...mockDraft,
+        currentPick: 45, // 3 teams * 15 rounds = 45 total picks
+        currentRound: 15,
+        currentRosterId: 3, // roster at position 3
+      };
+      // User's roster must be the one at position 3
+      const lastPickRoster = { ...mockRoster, id: 3 };
+      mockDraftRepo.findById.mockResolvedValue(lastPickDraft);
+      mockRosterRepo.findByLeagueAndUser.mockResolvedValue(lastPickRoster);
+      mockDraftRepo.getDraftOrder.mockResolvedValue(mockDraftOrder);
+      mockDraftRepo.isPlayerDrafted.mockResolvedValue(false);
+      mockDraftRepo.createDraftPick.mockResolvedValue(mockPick);
+      mockDraftRepo.update.mockResolvedValue({ ...lastPickDraft, status: 'completed' });
+
+      await draftPickService.makePick(1, 'user-123', 100);
+
+      // Should update with completed status
+      expect(mockDraftRepo.update).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({
+          status: 'completed',
+          completedAt: expect.any(Date),
+        })
+      );
+    });
+  });
+});

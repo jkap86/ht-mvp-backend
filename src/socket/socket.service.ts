@@ -2,6 +2,10 @@ import { Server as HttpServer } from 'http';
 import { Server, Socket } from 'socket.io';
 import { verifyToken } from '../utils/jwt';
 import { logger } from '../config/env.config';
+import { container, KEYS } from '../container';
+import { LeagueRepository } from '../modules/leagues/leagues.repository';
+import { DraftRepository } from '../modules/drafts/drafts.repository';
+import { SOCKET_EVENTS, ROOM_NAMES } from '../constants/socket-events';
 
 interface AuthenticatedSocket extends Socket {
   userId?: string;
@@ -14,7 +18,7 @@ export class SocketService {
   constructor(httpServer: HttpServer) {
     this.io = new Server(httpServer, {
       cors: {
-        origin: process.env.CORS_ORIGIN || '*',
+        origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
         methods: ['GET', 'POST'],
         credentials: true,
       },
@@ -48,40 +52,87 @@ export class SocketService {
     this.io.on('connection', (socket: AuthenticatedSocket) => {
       logger.info(`Socket connected: ${socket.id} (user: ${socket.userId})`);
 
-      // Join league room
-      socket.on('join:league', (leagueId: number) => {
-        const room = `league:${leagueId}`;
-        socket.join(room);
-        logger.info(`User ${socket.userId} joined league room ${leagueId}`);
+      // Join league room (with membership verification)
+      socket.on(SOCKET_EVENTS.LEAGUE.JOIN, async (leagueId: number) => {
+        if (!socket.userId) {
+          socket.emit('error', { message: 'Not authenticated' });
+          return;
+        }
+
+        try {
+          const leagueRepo = container.resolve<LeagueRepository>(KEYS.LEAGUE_REPO);
+          const isMember = await leagueRepo.isUserMember(leagueId, socket.userId);
+
+          if (!isMember) {
+            socket.emit('error', { message: 'Not a member of this league' });
+            logger.warn(`User ${socket.userId} denied access to league ${leagueId}`);
+            return;
+          }
+
+          const room = ROOM_NAMES.league(leagueId);
+          socket.join(room);
+          logger.info(`User ${socket.userId} joined league room ${leagueId}`);
+        } catch (error) {
+          logger.error(`Error joining league room: ${error}`);
+          socket.emit('error', { message: 'Failed to join league room' });
+        }
       });
 
       // Leave league room
-      socket.on('leave:league', (leagueId: number) => {
-        const room = `league:${leagueId}`;
+      socket.on(SOCKET_EVENTS.LEAGUE.LEAVE, (leagueId: number) => {
+        const room = ROOM_NAMES.league(leagueId);
         socket.leave(room);
         logger.info(`User ${socket.userId} left league room ${leagueId}`);
       });
 
-      // Join draft room
-      socket.on('join:draft', (draftId: number) => {
-        const room = `draft:${draftId}`;
-        socket.join(room);
-        logger.info(`User ${socket.userId} joined draft room ${draftId}`);
+      // Join draft room (with membership verification)
+      socket.on(SOCKET_EVENTS.DRAFT.JOIN, async (draftId: number) => {
+        if (!socket.userId) {
+          socket.emit('error', { message: 'Not authenticated' });
+          return;
+        }
 
-        // Notify others in the draft room
-        socket.to(room).emit('draft:user_joined', {
-          userId: socket.userId,
-          username: socket.username,
-        });
+        try {
+          const draftRepo = container.resolve<DraftRepository>(KEYS.DRAFT_REPO);
+          const leagueRepo = container.resolve<LeagueRepository>(KEYS.LEAGUE_REPO);
+
+          // Get draft to find its league
+          const draft = await draftRepo.findById(draftId);
+          if (!draft) {
+            socket.emit('error', { message: 'Draft not found' });
+            return;
+          }
+
+          // Check if user is member of the draft's league
+          const isMember = await leagueRepo.isUserMember(draft.leagueId, socket.userId);
+          if (!isMember) {
+            socket.emit('error', { message: 'Not a member of this league' });
+            logger.warn(`User ${socket.userId} denied access to draft ${draftId}`);
+            return;
+          }
+
+          const room = ROOM_NAMES.draft(draftId);
+          socket.join(room);
+          logger.info(`User ${socket.userId} joined draft room ${draftId}`);
+
+          // Notify others in the draft room
+          socket.to(room).emit(SOCKET_EVENTS.DRAFT.USER_JOINED, {
+            userId: socket.userId,
+            username: socket.username,
+          });
+        } catch (error) {
+          logger.error(`Error joining draft room: ${error}`);
+          socket.emit('error', { message: 'Failed to join draft room' });
+        }
       });
 
       // Leave draft room
-      socket.on('leave:draft', (draftId: number) => {
-        const room = `draft:${draftId}`;
+      socket.on(SOCKET_EVENTS.DRAFT.LEAVE, (draftId: number) => {
+        const room = ROOM_NAMES.draft(draftId);
         socket.leave(room);
         logger.info(`User ${socket.userId} left draft room ${draftId}`);
 
-        socket.to(room).emit('draft:user_left', {
+        socket.to(room).emit(SOCKET_EVENTS.DRAFT.USER_LEFT, {
           userId: socket.userId,
           username: socket.username,
         });
@@ -96,27 +147,27 @@ export class SocketService {
 
   // Emit draft pick to all users in draft room
   emitDraftPick(draftId: number, pick: any): void {
-    this.io.to(`draft:${draftId}`).emit('draft:pick_made', pick);
+    this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.DRAFT.PICK_MADE, pick);
   }
 
   // Emit draft started event
   emitDraftStarted(draftId: number, draft: any): void {
-    this.io.to(`draft:${draftId}`).emit('draft:started', draft);
+    this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.DRAFT.STARTED, draft);
   }
 
   // Emit draft completed event
   emitDraftCompleted(draftId: number, draft: any): void {
-    this.io.to(`draft:${draftId}`).emit('draft:completed', draft);
+    this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.DRAFT.COMPLETED, draft);
   }
 
   // Emit next pick info (whose turn, deadline)
   emitNextPick(draftId: number, pickInfo: any): void {
-    this.io.to(`draft:${draftId}`).emit('draft:next_pick', pickInfo);
+    this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.DRAFT.NEXT_PICK, pickInfo);
   }
 
   // Emit chat message to all users in league room
   emitChatMessage(leagueId: number, message: any): void {
-    this.io.to(`league:${leagueId}`).emit('chat:message', message);
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.CHAT.MESSAGE, message);
   }
 
   // Emit to specific user
