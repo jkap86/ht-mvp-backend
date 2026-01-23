@@ -223,6 +223,28 @@ export class RosterRepository {
     };
   }
 
+  async findById(id: number): Promise<Roster | null> {
+    const result = await this.db.query(
+      'SELECT * FROM rosters WHERE id = $1',
+      [id]
+    );
+
+    if (result.rows.length === 0) return null;
+
+    const row = result.rows[0];
+    return {
+      id: row.id,
+      leagueId: row.league_id,
+      userId: row.user_id,
+      rosterId: row.roster_id,
+      settings: row.settings || {},
+      starters: row.starters || [],
+      bench: row.bench || [],
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
   async create(leagueId: number, userId: string, rosterId: number): Promise<Roster> {
     const result = await this.db.query(
       `INSERT INTO rosters (league_id, user_id, roster_id)

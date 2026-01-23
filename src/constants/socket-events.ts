@@ -35,6 +35,14 @@ export const SOCKET_EVENTS = {
   CHAT: {
     MESSAGE: 'chat:message',
   },
+
+  // Auction events
+  AUCTION: {
+    LOT_CREATED: 'auction:lot_created',
+    LOT_UPDATED: 'auction:lot_updated',
+    LOT_WON: 'auction:lot_won',
+    OUTBID: 'auction:outbid',
+  },
 } as const;
 
 // Room name helpers

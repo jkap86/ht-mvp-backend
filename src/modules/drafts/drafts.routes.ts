@@ -3,6 +3,7 @@ import { DraftController } from './drafts.controller';
 import { DraftQueueController } from './draft-queue.controller';
 import { DraftService } from './drafts.service';
 import { DraftQueueService } from './draft-queue.service';
+import { SlowAuctionService } from './auction/slow-auction.service';
 import { RosterRepository } from '../leagues/leagues.repository';
 import { authMiddleware } from '../../middleware/auth.middleware';
 import { validateRequest } from '../../middleware/validation.middleware';
@@ -20,9 +21,10 @@ import {
 const draftService = container.resolve<DraftService>(KEYS.DRAFT_SERVICE);
 const queueService = container.resolve<DraftQueueService>(KEYS.DRAFT_QUEUE_SERVICE);
 const rosterRepo = container.resolve<RosterRepository>(KEYS.ROSTER_REPO);
+const slowAuctionService = container.resolve<SlowAuctionService>(KEYS.SLOW_AUCTION_SERVICE);
 
 // Draft controller with queue support for unified /actions endpoint
-const draftController = new DraftController(draftService, queueService, rosterRepo);
+const draftController = new DraftController(draftService, queueService, rosterRepo, slowAuctionService);
 
 // Queue controller uses service layer only
 const queueController = new DraftQueueController(queueService);

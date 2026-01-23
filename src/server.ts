@@ -11,6 +11,7 @@ import { errorHandler } from './middleware/error.middleware';
 import { initializeSocket } from './socket';
 import { startAutopickJob, stopAutopickJob } from './jobs/autopick.job';
 import { startPlayerSyncJob, stopPlayerSyncJob } from './jobs/player-sync.job';
+import { startSlowAuctionJob, stopSlowAuctionJob } from './jobs/slow-auction.job';
 
 const app = express();
 
@@ -67,6 +68,7 @@ server.listen(PORT, () => {
   if (env.RUN_JOBS) {
     console.log('📋 Background jobs enabled');
     startAutopickJob();
+    startSlowAuctionJob();
     startPlayerSyncJob(true); // Sync players from Sleeper on startup, then every 12h
   } else {
     console.log('📋 Background jobs disabled (RUN_JOBS=false)');
@@ -79,6 +81,7 @@ const gracefulShutdown = () => {
 
   // Stop background jobs
   stopAutopickJob();
+  stopSlowAuctionJob();
   stopPlayerSyncJob();
 
   server.close(async () => {

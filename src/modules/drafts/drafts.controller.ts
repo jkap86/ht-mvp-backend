@@ -2,15 +2,19 @@ import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../../middleware/auth.middleware';
 import { DraftService } from './drafts.service';
 import { DraftQueueService } from './draft-queue.service';
+import { SlowAuctionService } from './auction/slow-auction.service';
 import { RosterRepository } from '../leagues/leagues.repository';
 import { requireUserId, requireLeagueId, requireDraftId, requirePlayerId } from '../../utils/controller-helpers';
-import { ForbiddenException } from '../../utils/exceptions';
+import { ForbiddenException, ValidationException } from '../../utils/exceptions';
+import { getSocketService } from '../../socket';
+import { SOCKET_EVENTS } from '../../constants/socket-events';
 
 export class DraftController {
   constructor(
     private readonly draftService: DraftService,
     private readonly queueService?: DraftQueueService,
-    private readonly rosterRepo?: RosterRepository
+    private readonly rosterRepo?: RosterRepository,
+    private readonly slowAuctionService?: SlowAuctionService
   ) {}
 
   getLeagueDrafts = async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -128,6 +132,62 @@ export class DraftController {
         case 'queue_reorder':
           result = await this.handleQueueAction(draftId, leagueId, userId, action, params);
           break;
+
+        // Auction actions
+        case 'nominate': {
+          if (!this.slowAuctionService) {
+            throw new ValidationException('Auction service not available');
+          }
+          if (!this.rosterRepo) {
+            throw new ValidationException('Roster repository not available');
+          }
+          const roster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId);
+          if (!roster) {
+            throw new ForbiddenException('You are not a member of this league');
+          }
+          const nominateResult = await this.slowAuctionService.nominate(draftId, roster.id, params.playerId);
+
+          // Emit socket event
+          try {
+            const socket = getSocketService();
+            socket.getIO().to(`draft:${draftId}`).emit(SOCKET_EVENTS.AUCTION.LOT_CREATED, { lot: nominateResult.lot });
+          } catch {}
+
+          res.status(200).json(nominateResult);
+          return;
+        }
+
+        case 'set_max_bid': {
+          if (!this.slowAuctionService) {
+            throw new ValidationException('Auction service not available');
+          }
+          if (!this.rosterRepo) {
+            throw new ValidationException('Roster repository not available');
+          }
+          const roster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId);
+          if (!roster) {
+            throw new ForbiddenException('You are not a member of this league');
+          }
+          const bidResult = await this.slowAuctionService.setMaxBid(draftId, params.lotId, roster.id, params.maxBid);
+
+          // Emit socket events
+          try {
+            const socket = getSocketService();
+            socket.getIO().to(`draft:${draftId}`).emit(SOCKET_EVENTS.AUCTION.LOT_UPDATED, { lot: bidResult.lot });
+
+            // Notify outbid users
+            for (const notif of bidResult.outbidNotifications) {
+              // Find user for this roster and emit
+              const outbidRoster = await this.rosterRepo.findById(notif.rosterId);
+              if (outbidRoster && outbidRoster.userId) {
+                socket.emitToUser(outbidRoster.userId, SOCKET_EVENTS.AUCTION.OUTBID, notif);
+              }
+            }
+          } catch {}
+
+          res.status(200).json(bidResult);
+          return;
+        }
       }
       res.status(200).json(result);
     } catch (error) {

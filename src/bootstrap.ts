@@ -17,6 +17,8 @@ import { DraftOrderService } from './modules/drafts/draft-order.service';
 import { DraftPickService } from './modules/drafts/draft-pick.service';
 import { DraftStateService } from './modules/drafts/draft-state.service';
 import { DraftQueueService } from './modules/drafts/draft-queue.service';
+import { AuctionLotRepository } from './modules/drafts/auction/auction-lot.repository';
+import { SlowAuctionService } from './modules/drafts/auction/slow-auction.service';
 import { ChatService } from './modules/chat/chat.service';
 import { PlayerService } from './modules/players/players.service';
 import { SleeperApiClient } from './modules/players/sleeper.client';
@@ -109,6 +111,20 @@ function bootstrap(): void {
       container.resolve(KEYS.DRAFT_REPO),
       container.resolve(KEYS.PLAYER_REPO),
       container.resolve(KEYS.ROSTER_REPO)
+    )
+  );
+
+  container.register(KEYS.AUCTION_LOT_REPO, () =>
+    new AuctionLotRepository(container.resolve(KEYS.POOL))
+  );
+
+  container.register(KEYS.SLOW_AUCTION_SERVICE, () =>
+    new SlowAuctionService(
+      container.resolve(KEYS.AUCTION_LOT_REPO),
+      container.resolve(KEYS.DRAFT_REPO),
+      container.resolve(KEYS.ROSTER_REPO),
+      container.resolve(KEYS.LEAGUE_REPO),
+      container.resolve(KEYS.PLAYER_REPO)
     )
   );
 
