@@ -7,7 +7,6 @@ import { RosterRepository } from '../leagues/leagues.repository';
 import { requireUserId, requireLeagueId, requireDraftId, requirePlayerId } from '../../utils/controller-helpers';
 import { ForbiddenException, ValidationException } from '../../utils/exceptions';
 import { getSocketService } from '../../socket';
-import { SOCKET_EVENTS } from '../../constants/socket-events';
 
 export class DraftController {
   constructor(
@@ -151,7 +150,7 @@ export class DraftController {
           // Emit socket event
           try {
             const socket = getSocketService();
-            socket.getIO().to(`draft:${draftId}`).emit(SOCKET_EVENTS.AUCTION.LOT_CREATED, { lot: nominateResult.lot });
+            socket.emitAuctionLotCreated(draftId, nominateResult.lot);
           } catch (socketError) {
             console.warn(`Failed to emit lot created event: ${socketError}`);
           }
@@ -176,14 +175,14 @@ export class DraftController {
           // Emit socket events
           try {
             const socket = getSocketService();
-            socket.getIO().to(`draft:${draftId}`).emit(SOCKET_EVENTS.AUCTION.LOT_UPDATED, { lot: bidResult.lot });
+            socket.emitAuctionLotUpdated(draftId, bidResult.lot);
 
             // Notify outbid users
             for (const notif of bidResult.outbidNotifications) {
               // Find user for this roster and emit
               const outbidRoster = await this.rosterRepo.findById(notif.rosterId);
               if (outbidRoster && outbidRoster.userId) {
-                socket.emitToUser(outbidRoster.userId, SOCKET_EVENTS.AUCTION.OUTBID, notif);
+                socket.emitAuctionOutbid(outbidRoster.userId, notif);
               }
             }
           } catch (socketError) {

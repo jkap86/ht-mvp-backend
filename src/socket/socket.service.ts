@@ -232,6 +232,31 @@ export class SocketService {
     this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.CHAT.MESSAGE, message);
   }
 
+  // Emit auction lot created event
+  emitAuctionLotCreated(draftId: number, lot: any): void {
+    this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.AUCTION.LOT_CREATED, { lot });
+  }
+
+  // Emit auction lot updated event (new bid placed)
+  emitAuctionLotUpdated(draftId: number, lot: any): void {
+    this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.AUCTION.LOT_UPDATED, { lot });
+  }
+
+  // Emit auction lot won event
+  emitAuctionLotWon(draftId: number, data: { lotId: number; playerId: number; winnerRosterId: number; price: number }): void {
+    this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.AUCTION.LOT_WON, data);
+  }
+
+  // Emit auction lot passed event (no bids)
+  emitAuctionLotPassed(draftId: number, data: { lotId: number; playerId: number }): void {
+    this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.AUCTION.LOT_PASSED, data);
+  }
+
+  // Emit outbid notification to a specific user
+  emitAuctionOutbid(userId: string, data: any): void {
+    this.emitToUser(userId, SOCKET_EVENTS.AUCTION.OUTBID, data);
+  }
+
   // Emit to specific user (O(1) lookup via userSockets map)
   emitToUser(userId: string, event: string, data: any): void {
     const socketIds = this.userSockets.get(userId);

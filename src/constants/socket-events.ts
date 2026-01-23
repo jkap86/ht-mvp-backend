@@ -36,12 +36,13 @@ export const SOCKET_EVENTS = {
     MESSAGE: 'chat:message',
   },
 
-  // Auction events
+  // Slow Auction events
   AUCTION: {
-    LOT_CREATED: 'auction:lot_created',
-    LOT_UPDATED: 'auction:lot_updated',
-    LOT_WON: 'auction:lot_won',
-    OUTBID: 'auction:outbid',
+    LOT_CREATED: 'draft:auction_lot_created',
+    LOT_UPDATED: 'draft:auction_lot_updated',
+    LOT_WON: 'draft:auction_lot_won',
+    LOT_PASSED: 'draft:auction_lot_passed',
+    OUTBID: 'draft:auction_outbid',
   },
 } as const;
 

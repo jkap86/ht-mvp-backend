@@ -2,7 +2,6 @@ import { Pool } from 'pg';
 import { container, KEYS } from '../container';
 import { SlowAuctionService } from '../modules/drafts/auction/slow-auction.service';
 import { getSocketService } from '../socket/socket.service';
-import { SOCKET_EVENTS } from '../constants/socket-events';
 import { logger } from '../config/env.config';
 
 let intervalId: NodeJS.Timeout | null = null;
@@ -45,17 +44,22 @@ async function processExpiredLots(): Promise<void> {
         // Emit socket events
         try {
           const socket = getSocketService();
-          socket.getIO().to(`draft:${result.lot.draftId}`).emit(
-            SOCKET_EVENTS.AUCTION.LOT_WON,
-            {
+
+          if (result.passed) {
+            // Lot passed (no bids)
+            socket.emitAuctionLotPassed(result.lot.draftId, {
               lotId: result.lot.id,
-              draftId: result.lot.draftId,
               playerId: result.lot.playerId,
-              winnerRosterId: result.winner?.rosterId ?? null,
-              price: result.winner?.amount ?? 0,
-              passed: result.passed,
-            }
-          );
+            });
+          } else {
+            // Lot won
+            socket.emitAuctionLotWon(result.lot.draftId, {
+              lotId: result.lot.id,
+              playerId: result.lot.playerId,
+              winnerRosterId: result.winner!.rosterId,
+              price: result.winner!.amount,
+            });
+          }
         } catch (socketError) {
           logger.warn(`Failed to emit lot settlement event for lot ${result.lot.id}: ${socketError}`);
         }
