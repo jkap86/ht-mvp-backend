@@ -252,7 +252,10 @@ describe('DraftPickService', () => {
       mockDraftRepo.findById.mockResolvedValue(mockDraft);
       mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster);
       mockDraftRepo.getDraftOrder.mockResolvedValue(mockDraftOrder);
-      mockDraftRepo.isPlayerDrafted.mockResolvedValue(true);
+      // The check is now inside the repository transaction
+      mockDraftRepo.createDraftPickWithCleanup.mockRejectedValue(
+        new ConflictException('Player has already been drafted')
+      );
 
       await expect(
         draftPickService.makePick(1, 1, 'user-123', 100)

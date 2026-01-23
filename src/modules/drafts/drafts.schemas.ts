@@ -26,7 +26,14 @@ export const reorderQueueSchema = z.object({
     .min(1, 'Player IDs array cannot be empty'),
 });
 
+export const draftActionSchema = z.object({
+  action: z.enum(['start', 'pause', 'resume', 'complete'], {
+    message: 'Action must be one of: start, pause, resume, complete',
+  }),
+});
+
 export type CreateDraftInput = z.infer<typeof createDraftSchema>;
 export type MakePickInput = z.infer<typeof makePickSchema>;
 export type AddToQueueInput = z.infer<typeof addToQueueSchema>;
 export type ReorderQueueInput = z.infer<typeof reorderQueueSchema>;
+export type DraftActionInput = z.infer<typeof draftActionSchema>;

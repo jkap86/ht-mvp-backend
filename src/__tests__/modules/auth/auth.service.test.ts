@@ -25,6 +25,9 @@ const createMockUserRepository = (): jest.Mocked<UserRepository> => ({
   emailExists: jest.fn(),
   usernameExists: jest.fn(),
   searchByUsername: jest.fn(),
+  updateRefreshToken: jest.fn(),
+  clearRefreshToken: jest.fn(),
+  getRefreshToken: jest.fn(),
 } as unknown as jest.Mocked<UserRepository>);
 
 describe('AuthService', () => {
@@ -158,6 +161,7 @@ describe('AuthService', () => {
   describe('refreshAccessToken', () => {
     it('should return new tokens on valid refresh token', async () => {
       mockUserRepo.findById.mockResolvedValue(mockUser);
+      mockUserRepo.getRefreshToken.mockResolvedValue('valid_refresh_token');
 
       const result = await authService.refreshAccessToken('valid_refresh_token');
 

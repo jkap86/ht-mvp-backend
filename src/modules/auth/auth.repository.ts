@@ -77,4 +77,35 @@ export class UserRepository {
 
     return result.rows.map((row) => User.fromDatabase(row));
   }
+
+  async updateRefreshToken(userId: string, token: string, expiresAt: Date): Promise<void> {
+    await this.db.query(
+      `UPDATE users
+       SET refresh_token = $1, refresh_token_expires_at = $2, updated_at = NOW()
+       WHERE id = $3`,
+      [token, expiresAt, userId]
+    );
+  }
+
+  async clearRefreshToken(userId: string): Promise<void> {
+    await this.db.query(
+      `UPDATE users
+       SET refresh_token = NULL, refresh_token_expires_at = NULL, updated_at = NOW()
+       WHERE id = $1`,
+      [userId]
+    );
+  }
+
+  async getRefreshToken(userId: string): Promise<string | null> {
+    const result = await this.db.query(
+      'SELECT refresh_token FROM users WHERE id = $1',
+      [userId]
+    );
+
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    return result.rows[0].refresh_token;
+  }
 }

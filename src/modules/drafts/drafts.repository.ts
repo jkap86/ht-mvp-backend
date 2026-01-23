@@ -1,5 +1,6 @@
 import { Pool } from 'pg';
 import { Draft, DraftOrderEntry, DraftPick, draftFromDatabase } from './drafts.model';
+import { ConflictException } from '../../utils/exceptions';
 
 export class DraftRepository {
   constructor(private readonly db: Pool) {}
@@ -59,6 +60,10 @@ export class DraftRepository {
     if (updates.completedAt !== undefined) {
       setClauses.push(`completed_at = $${paramIndex++}`);
       values.push(updates.completedAt);
+    }
+    if (updates.draftState !== undefined) {
+      setClauses.push(`draft_state = $${paramIndex++}`);
+      values.push(JSON.stringify(updates.draftState));
     }
 
     if (setClauses.length === 0) {
@@ -174,7 +179,8 @@ export class DraftRepository {
 
   /**
    * Creates a draft pick and removes the player from all queues atomically.
-   * This prevents data corruption if the process crashes between operations.
+   * Uses pg_advisory_xact_lock to prevent race conditions between concurrent picks.
+   * Supports idempotency keys for safe retries.
    */
   async createDraftPickWithCleanup(
     draftId: number,
@@ -182,18 +188,56 @@ export class DraftRepository {
     round: number,
     pickInRound: number,
     rosterId: number,
-    playerId: number
+    playerId: number,
+    idempotencyKey?: string
   ): Promise<DraftPick> {
     const client = await this.db.connect();
     try {
       await client.query('BEGIN');
 
-      // Create the pick
+      // Acquire advisory lock on draft to prevent race conditions
+      await client.query('SELECT pg_advisory_xact_lock($1)', [draftId]);
+
+      // Check idempotency - return existing pick if found
+      if (idempotencyKey) {
+        const existing = await client.query(
+          `SELECT * FROM draft_picks
+           WHERE draft_id = $1 AND roster_id = $2 AND idempotency_key = $3`,
+          [draftId, rosterId, idempotencyKey]
+        );
+        if (existing.rows.length > 0) {
+          await client.query('COMMIT');
+          const row = existing.rows[0];
+          return {
+            id: row.id,
+            draftId: row.draft_id,
+            pickNumber: row.pick_number,
+            round: row.round,
+            pickInRound: row.pick_in_round,
+            rosterId: row.roster_id,
+            playerId: row.player_id,
+            isAutoPick: row.is_auto_pick,
+            pickedAt: row.picked_at,
+          };
+        }
+      }
+
+      // Re-check player not drafted (inside lock to prevent race condition)
+      const alreadyDrafted = await client.query(
+        'SELECT 1 FROM draft_picks WHERE draft_id = $1 AND player_id = $2',
+        [draftId, playerId]
+      );
+      if (alreadyDrafted.rows.length > 0) {
+        await client.query('ROLLBACK');
+        throw new ConflictException('Player has already been drafted');
+      }
+
+      // Create the pick with idempotency key
       const pickResult = await client.query(
-        `INSERT INTO draft_picks (draft_id, pick_number, round, pick_in_round, roster_id, player_id)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO draft_picks (draft_id, pick_number, round, pick_in_round, roster_id, player_id, idempotency_key)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING *`,
-        [draftId, pickNumber, round, pickInRound, rosterId, playerId]
+        [draftId, pickNumber, round, pickInRound, rosterId, playerId, idempotencyKey || null]
       );
 
       // Remove player from all queues in this draft

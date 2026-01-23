@@ -158,6 +158,16 @@ export class SocketService {
     this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.DRAFT.STARTED, draft);
   }
 
+  // Emit draft paused event
+  emitDraftPaused(draftId: number, draft: any): void {
+    this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.DRAFT.PAUSED, draft);
+  }
+
+  // Emit draft resumed event
+  emitDraftResumed(draftId: number, draft: any): void {
+    this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.DRAFT.RESUMED, draft);
+  }
+
   // Emit draft completed event
   emitDraftCompleted(draftId: number, draft: any): void {
     this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.DRAFT.COMPLETED, draft);

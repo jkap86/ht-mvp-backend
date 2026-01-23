@@ -23,6 +23,8 @@ export const SOCKET_EVENTS = {
     USER_LEFT: 'draft:user_left',
     PICK_MADE: 'draft:pick_made',
     STARTED: 'draft:started',
+    PAUSED: 'draft:paused',
+    RESUMED: 'draft:resumed',
     COMPLETED: 'draft:completed',
     NEXT_PICK: 'draft:next_pick',
     QUEUE_UPDATED: 'draft:queue_updated',

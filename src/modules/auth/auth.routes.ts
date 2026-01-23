@@ -36,6 +36,9 @@ router.post(
 // GET /api/auth/me (protected)
 router.get('/me', authMiddleware, authController.me);
 
+// POST /api/auth/logout (protected)
+router.post('/logout', authMiddleware, authController.logout);
+
 // GET /api/auth/users/search?q=<query> (protected)
 router.get('/users/search', authMiddleware, authController.searchUsers);
 

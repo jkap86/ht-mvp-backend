@@ -87,6 +87,33 @@ export class DraftController {
     }
   };
 
+  performAction = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const userId = requireUserId(req);
+      const draftId = requireDraftId(req);
+      const { action } = req.body;
+
+      let draft;
+      switch (action) {
+        case 'start':
+          draft = await this.draftService.startDraft(draftId, userId);
+          break;
+        case 'pause':
+          draft = await this.draftService.pauseDraft(draftId, userId);
+          break;
+        case 'resume':
+          draft = await this.draftService.resumeDraft(draftId, userId);
+          break;
+        case 'complete':
+          draft = await this.draftService.completeDraft(draftId, userId);
+          break;
+      }
+      res.status(200).json(draft);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   getDraftPicks = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const userId = requireUserId(req);
@@ -106,8 +133,9 @@ export class DraftController {
       const leagueId = requireLeagueId(req);
       const draftId = requireDraftId(req);
       const playerId = requirePlayerId(req);
+      const idempotencyKey = req.headers['x-idempotency-key'] as string | undefined;
 
-      const pick = await this.draftService.makePick(leagueId, draftId, userId, playerId);
+      const pick = await this.draftService.makePick(leagueId, draftId, userId, playerId, idempotencyKey);
       res.status(201).json(pick);
     } catch (error) {
       next(error);

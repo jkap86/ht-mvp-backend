@@ -27,7 +27,13 @@ export class DraftPickService {
     return this.draftRepo.getDraftPicks(draftId);
   }
 
-  async makePick(leagueId: number, draftId: number, userId: string, playerId: number): Promise<any> {
+  async makePick(
+    leagueId: number,
+    draftId: number,
+    userId: string,
+    playerId: number,
+    idempotencyKey?: string
+  ): Promise<any> {
     // Validate league membership first
     const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
     if (!isMember) {
@@ -61,24 +67,19 @@ export class DraftPickService {
       throw new ValidationException('It is not your turn to pick');
     }
 
-    // Check if player already drafted
-    const isDrafted = await this.draftRepo.isPlayerDrafted(draftId, playerId);
-    if (isDrafted) {
-      throw new ConflictException('Player has already been drafted');
-    }
-
     // Calculate pick position
     const totalRosters = draftOrder.length;
     const pickInRound = engine.getPickInRound(draft.currentPick, totalRosters);
 
-    // Make the pick and remove from all queues atomically
+    // Make the pick atomically with advisory lock (handles race condition check inside transaction)
     const pick = await this.draftRepo.createDraftPickWithCleanup(
       draftId,
       draft.currentPick,
       draft.currentRound,
       pickInRound,
       userRoster.id,
-      playerId
+      playerId,
+      idempotencyKey
     );
 
     // Advance to next pick

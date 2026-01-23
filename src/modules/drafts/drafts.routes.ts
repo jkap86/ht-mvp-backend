@@ -13,6 +13,7 @@ import {
   makePickSchema,
   addToQueueSchema,
   reorderQueueSchema,
+  draftActionSchema,
 } from './drafts.schemas';
 
 // Resolve dependencies from container
@@ -50,6 +51,9 @@ router.post('/:draftId/randomize', draftModifyLimiter, draftController.randomize
 
 // POST /api/leagues/:leagueId/drafts/:draftId/start
 router.post('/:draftId/start', draftModifyLimiter, draftController.startDraft);
+
+// POST /api/leagues/:leagueId/drafts/:draftId/actions (unified action endpoint)
+router.post('/:draftId/actions', draftModifyLimiter, validateRequest(draftActionSchema), draftController.performAction);
 
 // GET /api/leagues/:leagueId/drafts/:draftId/picks
 router.get('/:draftId/picks', draftController.getDraftPicks);

@@ -80,6 +80,18 @@ export class DraftService {
     return this.stateService.startDraft(draftId, userId);
   }
 
+  async pauseDraft(draftId: number, userId: string): Promise<any> {
+    return this.stateService.pauseDraft(draftId, userId);
+  }
+
+  async resumeDraft(draftId: number, userId: string): Promise<any> {
+    return this.stateService.resumeDraft(draftId, userId);
+  }
+
+  async completeDraft(draftId: number, userId: string): Promise<any> {
+    return this.stateService.completeDraft(draftId, userId);
+  }
+
   async deleteDraft(leagueId: number, draftId: number, userId: string): Promise<void> {
     return this.stateService.deleteDraft(leagueId, draftId, userId);
   }
@@ -89,7 +101,13 @@ export class DraftService {
     return this.pickService.getDraftPicks(leagueId, draftId, userId);
   }
 
-  async makePick(leagueId: number, draftId: number, userId: string, playerId: number): Promise<any> {
-    return this.pickService.makePick(leagueId, draftId, userId, playerId);
+  async makePick(
+    leagueId: number,
+    draftId: number,
+    userId: string,
+    playerId: number,
+    idempotencyKey?: string
+  ): Promise<any> {
+    return this.pickService.makePick(leagueId, draftId, userId, playerId, idempotencyKey);
   }
 }

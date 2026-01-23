@@ -63,6 +63,10 @@ export class AuthService {
     const accessToken = this.generateAccessToken(user);
     const refreshToken = this.generateRefreshToken(user);
 
+    // Store refresh token in database
+    const refreshExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
+    await this.userRepository.updateRefreshToken(user.userId, refreshToken, refreshExpiry);
+
     return {
       user: user.toSafeObject(),
       token: accessToken,
@@ -86,6 +90,10 @@ export class AuthService {
     // Generate tokens
     const accessToken = this.generateAccessToken(user);
     const refreshToken = this.generateRefreshToken(user);
+
+    // Store refresh token in database
+    const refreshExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
+    await this.userRepository.updateRefreshToken(user.userId, refreshToken, refreshExpiry);
 
     return {
       user: user.toSafeObject(),
@@ -118,8 +126,18 @@ export class AuthService {
         throw new InvalidCredentialsException('Invalid refresh token');
       }
 
+      // Validate that this refresh token matches the stored one
+      const storedToken = await this.userRepository.getRefreshToken(user.userId);
+      if (storedToken !== refreshToken) {
+        throw new InvalidCredentialsException('Invalid refresh token');
+      }
+
       const newAccessToken = this.generateAccessToken(user);
       const newRefreshToken = this.generateRefreshToken(user);
+
+      // Store new refresh token
+      const refreshExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
+      await this.userRepository.updateRefreshToken(user.userId, newRefreshToken, refreshExpiry);
 
       return {
         user: user.toSafeObject(),
@@ -129,6 +147,10 @@ export class AuthService {
     } catch (error) {
       throw new InvalidCredentialsException('Invalid refresh token');
     }
+  }
+
+  async logout(userId: string): Promise<void> {
+    await this.userRepository.clearRefreshToken(userId);
   }
 
   async searchUsers(

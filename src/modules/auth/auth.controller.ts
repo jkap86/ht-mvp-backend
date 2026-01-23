@@ -131,4 +131,23 @@ export class AuthController {
       next(error);
     }
   };
+
+  logout = async (
+    req: AuthRequest,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return next(new InvalidCredentialsException('User ID not found'));
+      }
+
+      await this.authService.logout(userId);
+
+      res.status(200).json({ message: 'Logged out successfully' });
+    } catch (error) {
+      next(error);
+    }
+  };
 }
