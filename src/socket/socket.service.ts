@@ -1,7 +1,7 @@
 import { Server as HttpServer } from 'http';
 import { Server, Socket } from 'socket.io';
 import { verifyToken } from '../utils/jwt';
-import { logger } from '../config/env.config';
+import { env, logger } from '../config/env.config';
 import { container, KEYS } from '../container';
 import { LeagueRepository } from '../modules/leagues/leagues.repository';
 import { DraftRepository } from '../modules/drafts/drafts.repository';
@@ -16,9 +16,12 @@ export class SocketService {
   private io: Server;
 
   constructor(httpServer: HttpServer) {
+    // Use same CORS origin as Express (from env.FRONTEND_URL)
+    const corsOrigin = env.FRONTEND_URL || 'http://localhost:3000';
+
     this.io = new Server(httpServer, {
       cors: {
-        origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+        origin: corsOrigin,
         methods: ['GET', 'POST'],
         credentials: true,
       },

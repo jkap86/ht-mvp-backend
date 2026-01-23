@@ -1,8 +1,9 @@
 import rateLimit from 'express-rate-limit';
 import { Request } from 'express';
 
+// Match the shape from auth.middleware.ts
 interface AuthRequest extends Request {
-  user?: { id: string };
+  user?: { userId: string; username: string };
 }
 
 /**
@@ -13,7 +14,7 @@ export const draftPickLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 10,
   message: { error: 'Too many pick attempts, please slow down', status: 429 },
-  keyGenerator: (req: AuthRequest) => req.user?.id || req.ip || 'unknown',
+  keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -26,7 +27,7 @@ export const queueLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 30,
   message: { error: 'Too many queue operations, please slow down', status: 429 },
-  keyGenerator: (req: AuthRequest) => req.user?.id || req.ip || 'unknown',
+  keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -39,7 +40,7 @@ export const draftModifyLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 5,
   message: { error: 'Too many draft operations, please slow down', status: 429 },
-  keyGenerator: (req: AuthRequest) => req.user?.id || req.ip || 'unknown',
+  keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
   standardHeaders: true,
   legacyHeaders: false,
 });

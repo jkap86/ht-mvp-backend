@@ -17,8 +17,16 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.string().default('5000').transform((val) => parseInt(val, 10)),
 
-  // Frontend (for CORS)
+  // Frontend (for CORS) - used by both Express and Socket.IO
   FRONTEND_URL: z.string().url().optional(),
+
+  // Background Jobs
+  // Set to "true" to enable background jobs (autopick, player sync)
+  // In multi-instance deployments, only one instance should run jobs
+  RUN_JOBS: z.string().default('true').transform((val) => val === 'true'),
+
+  // Logging
+  LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 });
 
 // Parse and validate environment variables
@@ -43,9 +51,27 @@ export const env = parseEnv();
 // Type for environment variables
 export type Env = z.infer<typeof envSchema>;
 
-// Simple logger
+// Log levels in order of verbosity
+const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
+
+// Simple logger that respects LOG_LEVEL
 export const logger = {
-  info: (message: string, ...args: any[]) => console.log(`[INFO] ${message}`, ...args),
-  warn: (message: string, ...args: any[]) => console.warn(`[WARN] ${message}`, ...args),
-  error: (message: string, ...args: any[]) => console.error(`[ERROR] ${message}`, ...args),
+  debug: (message: string, ...args: any[]) => {
+    if (LOG_LEVELS.indexOf(env.LOG_LEVEL) <= LOG_LEVELS.indexOf('debug')) {
+      console.log(`[DEBUG] ${message}`, ...args);
+    }
+  },
+  info: (message: string, ...args: any[]) => {
+    if (LOG_LEVELS.indexOf(env.LOG_LEVEL) <= LOG_LEVELS.indexOf('info')) {
+      console.log(`[INFO] ${message}`, ...args);
+    }
+  },
+  warn: (message: string, ...args: any[]) => {
+    if (LOG_LEVELS.indexOf(env.LOG_LEVEL) <= LOG_LEVELS.indexOf('warn')) {
+      console.warn(`[WARN] ${message}`, ...args);
+    }
+  },
+  error: (message: string, ...args: any[]) => {
+    console.error(`[ERROR] ${message}`, ...args);
+  },
 };

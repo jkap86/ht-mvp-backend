@@ -10,6 +10,7 @@ import routes from './routes';
 import { errorHandler } from './middleware/error.middleware';
 import { initializeSocket } from './socket';
 import { startAutopickJob, stopAutopickJob } from './jobs/autopick.job';
+import { startPlayerSyncJob, stopPlayerSyncJob } from './jobs/player-sync.job';
 
 const app = express();
 
@@ -62,8 +63,14 @@ server.listen(PORT, () => {
   console.log(`🚀 MVP Backend running on port ${PORT}`);
   console.log(`📡 Health check: http://localhost:${PORT}/api/health`);
 
-  // Start background jobs
-  startAutopickJob();
+  // Start background jobs if enabled (for multi-instance deployments, only one instance should run jobs)
+  if (env.RUN_JOBS) {
+    console.log('📋 Background jobs enabled');
+    startAutopickJob();
+    startPlayerSyncJob(true); // Sync players from Sleeper on startup, then every 12h
+  } else {
+    console.log('📋 Background jobs disabled (RUN_JOBS=false)');
+  }
 });
 
 // Graceful shutdown
@@ -72,6 +79,7 @@ const gracefulShutdown = () => {
 
   // Stop background jobs
   stopAutopickJob();
+  stopPlayerSyncJob();
 
   server.close(async () => {
     console.log('HTTP server closed');
