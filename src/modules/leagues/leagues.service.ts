@@ -1,0 +1,105 @@
+import { LeagueRepository, RosterRepository, CreateLeagueParams } from './leagues.repository';
+import { RosterService } from './roster.service';
+import { League } from './leagues.model';
+import {
+  NotFoundException,
+  ForbiddenException,
+  ValidationException,
+} from '../../utils/exceptions';
+
+export class LeagueService {
+  constructor(
+    private readonly leagueRepo: LeagueRepository,
+    private readonly rosterRepo: RosterRepository,
+    private readonly rosterService: RosterService
+  ) {}
+
+  async getUserLeagues(userId: string): Promise<any[]> {
+    const leagues = await this.leagueRepo.findByUserId(userId);
+    return leagues.map(l => l.toResponse());
+  }
+
+  async getLeagueById(leagueId: number, userId: string): Promise<any> {
+    const league = await this.leagueRepo.findByIdWithUserRoster(leagueId, userId);
+
+    if (!league) {
+      throw new NotFoundException('League not found');
+    }
+
+    // Check if user is a member
+    const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
+    if (!isMember) {
+      throw new ForbiddenException('You are not a member of this league');
+    }
+
+    return league.toResponse();
+  }
+
+  async createLeague(params: CreateLeagueParams, userId: string): Promise<any> {
+    // Validate
+    if (!params.name || params.name.trim().length === 0) {
+      throw new ValidationException('League name is required');
+    }
+
+    if (!params.season || !/^\d{4}$/.test(params.season)) {
+      throw new ValidationException('Valid season year is required (e.g., 2024)');
+    }
+
+    if (params.totalRosters < 2 || params.totalRosters > 20) {
+      throw new ValidationException('Total rosters must be between 2 and 20');
+    }
+
+    // Create league
+    const league = await this.leagueRepo.create({
+      name: params.name.trim(),
+      season: params.season,
+      totalRosters: params.totalRosters,
+      settings: params.settings || {},
+      scoringSettings: params.scoringSettings || {},
+    });
+
+    // Create first roster for the creator (commissioner) via RosterService
+    await this.rosterService.createInitialRoster(league.id, userId);
+
+    // Get updated league with commissioner info
+    const updatedLeague = await this.leagueRepo.findByIdWithUserRoster(league.id, userId);
+    return updatedLeague!.toResponse();
+  }
+
+  async updateLeague(leagueId: number, userId: string, updates: Partial<League>): Promise<any> {
+    // Check if user is commissioner
+    const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
+    if (!isCommissioner) {
+      throw new ForbiddenException('Only the commissioner can update league settings');
+    }
+
+    const league = await this.leagueRepo.update(leagueId, updates);
+    return league.toResponse();
+  }
+
+  async deleteLeague(leagueId: number, userId: string): Promise<void> {
+    // Check if user is commissioner
+    const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
+    if (!isCommissioner) {
+      throw new ForbiddenException('Only the commissioner can delete the league');
+    }
+
+    await this.leagueRepo.delete(leagueId);
+  }
+
+  // Delegation methods to RosterService
+  async joinLeague(leagueId: number, userId: string): Promise<{ message: string; roster: any }> {
+    return this.rosterService.joinLeague(leagueId, userId);
+  }
+
+  async getLeagueMembers(leagueId: number, userId: string): Promise<any[]> {
+    return this.rosterService.getLeagueMembers(leagueId, userId);
+  }
+
+  async devBulkAddUsers(
+    leagueId: number,
+    usernames: string[]
+  ): Promise<Array<{ username: string; success: boolean; error?: string }>> {
+    return this.rosterService.devBulkAddUsers(leagueId, usernames);
+  }
+}

@@ -1,0 +1,161 @@
+import bcrypt from 'bcrypt';
+import { User } from './auth.model';
+import { UserRepository } from './auth.repository';
+import {
+  ValidationException,
+  InvalidCredentialsException,
+  ConflictException,
+} from '../../utils/exceptions';
+import { signToken, verifyToken } from '../../utils/jwt';
+
+export interface AuthResult {
+  user: {
+    userId: string;
+    username: string;
+    email: string;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+  token: string;
+  refreshToken: string;
+}
+
+export class AuthService {
+  private readonly ACCESS_TOKEN_EXPIRY = '15m';
+  private readonly REFRESH_TOKEN_EXPIRY = '30d';
+
+  constructor(private readonly userRepository: UserRepository) {}
+
+  async register(username: string, email: string, password: string): Promise<AuthResult> {
+    // Validate username format
+    if (!User.isValidUsername(username)) {
+      throw new ValidationException(
+        'Username must be 3-20 characters and contain only letters, numbers, and underscores'
+      );
+    }
+
+    // Validate password length
+    if (password.length < User.MIN_PASSWORD_LENGTH) {
+      throw new ValidationException(
+        `Password must be at least ${User.MIN_PASSWORD_LENGTH} characters`
+      );
+    }
+
+    // Check if username already exists
+    const usernameExists = await this.userRepository.usernameExists(username);
+    if (usernameExists) {
+      throw new ConflictException('Username already taken');
+    }
+
+    // Check if email already exists
+    const emailExists = await this.userRepository.emailExists(email);
+    if (emailExists) {
+      throw new ConflictException('Email already in use');
+    }
+
+    // Hash password
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    // Create user
+    const user = await this.userRepository.create(username, email, passwordHash);
+
+    // Generate tokens
+    const accessToken = this.generateAccessToken(user);
+    const refreshToken = this.generateRefreshToken(user);
+
+    return {
+      user: user.toSafeObject(),
+      token: accessToken,
+      refreshToken,
+    };
+  }
+
+  async login(username: string, password: string): Promise<AuthResult> {
+    // Find user
+    const user = await this.userRepository.findByUsername(username);
+    if (!user) {
+      throw new InvalidCredentialsException('Invalid credentials');
+    }
+
+    // Verify password
+    const isValid = await bcrypt.compare(password, user.passwordHash);
+    if (!isValid) {
+      throw new InvalidCredentialsException('Invalid credentials');
+    }
+
+    // Generate tokens
+    const accessToken = this.generateAccessToken(user);
+    const refreshToken = this.generateRefreshToken(user);
+
+    return {
+      user: user.toSafeObject(),
+      token: accessToken,
+      refreshToken,
+    };
+  }
+
+  async getCurrentUser(userId: string): Promise<{
+    userId: string;
+    username: string;
+    email: string;
+    createdAt: Date;
+    updatedAt: Date;
+  }> {
+    const user = await this.userRepository.findById(userId);
+    if (!user) {
+      throw new InvalidCredentialsException('User not found');
+    }
+
+    return user.toSafeObject();
+  }
+
+  async refreshAccessToken(refreshToken: string): Promise<AuthResult> {
+    try {
+      const payload = verifyToken(refreshToken);
+
+      const user = await this.userRepository.findById(payload.sub);
+      if (!user) {
+        throw new InvalidCredentialsException('Invalid refresh token');
+      }
+
+      const newAccessToken = this.generateAccessToken(user);
+      const newRefreshToken = this.generateRefreshToken(user);
+
+      return {
+        user: user.toSafeObject(),
+        token: newAccessToken,
+        refreshToken: newRefreshToken,
+      };
+    } catch (error) {
+      throw new InvalidCredentialsException('Invalid refresh token');
+    }
+  }
+
+  async searchUsers(
+    query: string,
+    currentUserId: string
+  ): Promise<Array<{
+    userId: string;
+    username: string;
+    email: string;
+    createdAt: Date;
+    updatedAt: Date;
+  }>> {
+    const users = await this.userRepository.searchByUsername(query, currentUserId);
+    return users.map((user) => user.toSafeObject());
+  }
+
+  private generateAccessToken(user: User): string {
+    return signToken(
+      { sub: user.userId, userId: user.userId, username: user.username },
+      { expiresIn: this.ACCESS_TOKEN_EXPIRY }
+    );
+  }
+
+  private generateRefreshToken(user: User): string {
+    return signToken(
+      { sub: user.userId, userId: user.userId, username: user.username },
+      { expiresIn: this.REFRESH_TOKEN_EXPIRY }
+    );
+  }
+}

@@ -1,0 +1,81 @@
+export interface Draft {
+  id: number;
+  leagueId: number;
+  draftType: string;
+  status: string;
+  currentPick: number;
+  currentRound: number;
+  currentRosterId: number | null;
+  pickTimeSeconds: number;
+  pickDeadline: Date | null;
+  rounds: number;
+  startedAt: Date | null;
+  completedAt: Date | null;
+  settings: Record<string, any>;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface DraftOrderEntry {
+  id: number;
+  draftId: number;
+  rosterId: number;
+  draftPosition: number;
+  username?: string;
+}
+
+export interface DraftPick {
+  id: number;
+  draftId: number;
+  pickNumber: number;
+  round: number;
+  pickInRound: number;
+  rosterId: number;
+  playerId: number | null;
+  isAutoPick: boolean;
+  pickedAt: Date;
+  playerName?: string;
+  playerPosition?: string;
+  playerTeam?: string;
+  username?: string;
+}
+
+export function draftFromDatabase(row: any): Draft {
+  return {
+    id: row.id,
+    leagueId: row.league_id,
+    draftType: row.draft_type,
+    status: row.status,
+    currentPick: row.current_pick,
+    currentRound: row.current_round,
+    currentRosterId: row.current_roster_id,
+    pickTimeSeconds: row.pick_time_seconds,
+    pickDeadline: row.pick_deadline,
+    rounds: row.rounds,
+    startedAt: row.started_at,
+    completedAt: row.completed_at,
+    settings: row.settings || {},
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function draftToResponse(draft: Draft) {
+  return {
+    id: draft.id,
+    league_id: draft.leagueId,
+    draft_type: draft.draftType,
+    status: draft.status,
+    current_pick: draft.currentPick,
+    current_round: draft.currentRound,
+    current_roster_id: draft.currentRosterId,
+    pick_time_seconds: draft.pickTimeSeconds,
+    pick_deadline: draft.pickDeadline,
+    rounds: draft.rounds,
+    started_at: draft.startedAt,
+    completed_at: draft.completedAt,
+    settings: draft.settings,
+    created_at: draft.createdAt,
+    updated_at: draft.updatedAt,
+  };
+}
