@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import { createServer } from 'http';
 
 import { env } from './config/env.config';
@@ -43,6 +44,12 @@ const corsOptions: cors.CorsOptions = {
 };
 
 // Middleware
+app.use(helmet({
+  // Allow cross-origin requests for API
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  // Disable contentSecurityPolicy for API (not serving HTML)
+  contentSecurityPolicy: false,
+}));
 app.use(cors(corsOptions));
 app.use(express.json());
 

@@ -1,11 +1,15 @@
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../../middleware/auth.middleware';
 import { LeagueService } from './leagues.service';
-import { ValidationException } from '../../utils/exceptions';
+import { ValidationException, ForbiddenException } from '../../utils/exceptions';
 import { requireUserId, requireLeagueId } from '../../utils/controller-helpers';
+import { LeagueRepository } from './leagues.repository';
 
 export class LeagueController {
-  constructor(private readonly leagueService: LeagueService) {}
+  constructor(
+    private readonly leagueService: LeagueService,
+    private readonly leagueRepo: LeagueRepository
+  ) {}
 
   getMyLeagues = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
@@ -109,7 +113,14 @@ export class LeagueController {
 
   devAddUsers = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
+      const userId = requireUserId(req);
       const leagueId = requireLeagueId(req);
+
+      // Only commissioner can add users to a league
+      const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
+      if (!isCommissioner) {
+        throw new ForbiddenException('Only the commissioner can add users to the league');
+      }
 
       const { usernames } = req.body;
       if (!Array.isArray(usernames) || usernames.length === 0) {

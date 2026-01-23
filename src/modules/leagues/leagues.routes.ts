@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { LeagueController } from './leagues.controller';
 import { LeagueService } from './leagues.service';
+import { LeagueRepository } from './leagues.repository';
 import { authMiddleware } from '../../middleware/auth.middleware';
 import { validateRequest } from '../../middleware/validation.middleware';
 import { createLeagueSchema, updateLeagueSchema } from './leagues.schemas';
@@ -10,7 +11,8 @@ import chatRoutes from '../chat/chat.routes';
 
 // Resolve dependencies from container
 const leagueService = container.resolve<LeagueService>(KEYS.LEAGUE_SERVICE);
-const leagueController = new LeagueController(leagueService);
+const leagueRepo = container.resolve<LeagueRepository>(KEYS.LEAGUE_REPO);
+const leagueController = new LeagueController(leagueService, leagueRepo);
 
 const router = Router();
 

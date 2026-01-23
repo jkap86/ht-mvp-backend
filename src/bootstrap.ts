@@ -50,7 +50,8 @@ function bootstrap(): void {
     new RosterService(
       container.resolve(KEYS.LEAGUE_REPO),
       container.resolve(KEYS.ROSTER_REPO),
-      container.resolve(KEYS.USER_REPO)
+      container.resolve(KEYS.USER_REPO),
+      container.resolve(KEYS.POOL)
     )
   );
 
@@ -66,7 +67,8 @@ function bootstrap(): void {
     new DraftOrderService(
       container.resolve(KEYS.DRAFT_REPO),
       container.resolve(KEYS.LEAGUE_REPO),
-      container.resolve(KEYS.ROSTER_REPO)
+      container.resolve(KEYS.ROSTER_REPO),
+      container.resolve(KEYS.POOL)
     )
   );
 

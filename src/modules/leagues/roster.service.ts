@@ -1,3 +1,4 @@
+import { Pool } from 'pg';
 import { LeagueRepository, RosterRepository } from './leagues.repository';
 import { UserRepository } from '../auth/auth.repository';
 import {
@@ -11,7 +12,8 @@ export class RosterService {
   constructor(
     private readonly leagueRepo: LeagueRepository,
     private readonly rosterRepo: RosterRepository,
-    private readonly userRepo?: UserRepository
+    private readonly userRepo?: UserRepository,
+    private readonly db?: Pool
   ) {}
 
   /**
@@ -25,37 +27,78 @@ export class RosterService {
   }
 
   async joinLeague(leagueId: number, userId: string): Promise<{ message: string; roster: any }> {
-    const league = await this.leagueRepo.findById(leagueId);
-
-    if (!league) {
-      throw new NotFoundException('League not found');
+    // Use transaction with advisory lock to prevent race conditions
+    if (!this.db) {
+      throw new ValidationException('Database pool not available');
     }
 
-    // Check if already a member
-    const existingRoster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId);
-    if (existingRoster) {
-      throw new ConflictException('You are already a member of this league');
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Acquire advisory lock on the league to prevent concurrent joins
+      await client.query('SELECT pg_advisory_xact_lock($1)', [leagueId]);
+
+      // Check if league exists
+      const leagueResult = await client.query(
+        'SELECT * FROM leagues WHERE id = $1',
+        [leagueId]
+      );
+      if (leagueResult.rows.length === 0) {
+        throw new NotFoundException('League not found');
+      }
+      const league = leagueResult.rows[0];
+
+      // Check if already a member
+      const existingResult = await client.query(
+        'SELECT * FROM rosters WHERE league_id = $1 AND user_id = $2',
+        [leagueId, userId]
+      );
+      if (existingResult.rows.length > 0) {
+        throw new ConflictException('You are already a member of this league');
+      }
+
+      // Check if league is full
+      const countResult = await client.query(
+        'SELECT COUNT(*) as count FROM rosters WHERE league_id = $1',
+        [leagueId]
+      );
+      const rosterCount = parseInt(countResult.rows[0].count, 10);
+      if (rosterCount >= league.total_rosters) {
+        throw new ConflictException('League is full');
+      }
+
+      // Get next roster ID
+      const nextIdResult = await client.query(
+        'SELECT COALESCE(MAX(roster_id), 0) + 1 as next_id FROM rosters WHERE league_id = $1',
+        [leagueId]
+      );
+      const nextRosterId = nextIdResult.rows[0].next_id;
+
+      // Create roster
+      const rosterResult = await client.query(
+        `INSERT INTO rosters (league_id, user_id, roster_id)
+         VALUES ($1, $2, $3)
+         RETURNING *`,
+        [leagueId, userId, nextRosterId]
+      );
+
+      await client.query('COMMIT');
+
+      const roster = rosterResult.rows[0];
+      return {
+        message: 'Successfully joined the league',
+        roster: {
+          roster_id: roster.roster_id,
+          league_id: roster.league_id,
+        },
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
-
-    // Check if league is full
-    const rosterCount = await this.rosterRepo.getRosterCount(leagueId);
-    if (rosterCount >= league.totalRosters) {
-      throw new ConflictException('League is full');
-    }
-
-    // Get next roster ID
-    const nextRosterId = await this.rosterRepo.getNextRosterId(leagueId);
-
-    // Create roster
-    const roster = await this.rosterRepo.create(leagueId, userId, nextRosterId);
-
-    return {
-      message: 'Successfully joined the league',
-      roster: {
-        roster_id: roster.rosterId,
-        league_id: roster.leagueId,
-      },
-    };
   }
 
   async getLeagueMembers(leagueId: number, userId: string): Promise<any[]> {
