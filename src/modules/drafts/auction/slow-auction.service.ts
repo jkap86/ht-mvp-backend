@@ -124,11 +124,12 @@ export class SlowAuctionService {
     draftId: number,
     rosterId: number,
     totalBudget: number,
-    rosterSlots: number
+    rosterSlots: number,
+    minBid: number = 1
   ): Promise<number> {
     const budgetData = await this.lotRepo.getRosterBudgetData(draftId, rosterId);
     const remainingSlots = rosterSlots - budgetData.wonCount - 1; // -1 for current
-    const reservedForMinBids = Math.max(0, remainingSlots) * 1;
+    const reservedForMinBids = Math.max(0, remainingSlots) * minBid;
     return totalBudget - budgetData.spent - reservedForMinBids - budgetData.leadingCommitment;
   }
 

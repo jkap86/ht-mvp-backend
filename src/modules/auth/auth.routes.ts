@@ -3,6 +3,7 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { authMiddleware } from '../../middleware/auth.middleware';
 import { validateRequest } from '../../middleware/validation.middleware';
+import { authLimiter } from '../../middleware/rate-limit.middleware';
 import { registerSchema, loginSchema, refreshTokenSchema } from './auth.schemas';
 import { container, KEYS } from '../../container';
 
@@ -15,6 +16,7 @@ const router = Router();
 // POST /api/auth/register
 router.post(
   '/register',
+  authLimiter,
   validateRequest(registerSchema, 'body'),
   authController.register
 );
@@ -22,6 +24,7 @@ router.post(
 // POST /api/auth/login
 router.post(
   '/login',
+  authLimiter,
   validateRequest(loginSchema, 'body'),
   authController.login
 );

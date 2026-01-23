@@ -7,6 +7,19 @@ interface AuthRequest extends Request {
 }
 
 /**
+ * Rate limiter for authentication endpoints (login, register)
+ * Limits to 5 attempts per 15 minutes to prevent brute force attacks
+ */
+export const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // 5 attempts per window
+  message: { error: { code: 'RATE_LIMITED', message: 'Too many login attempts. Please try again later.' } },
+  keyGenerator: (req: Request) => req.ip || 'unknown',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+/**
  * Rate limiter for draft pick operations
  * Limits to 10 picks per minute per user
  */
