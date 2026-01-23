@@ -165,6 +165,11 @@ export class SocketService {
     this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.DRAFT.NEXT_PICK, pickInfo);
   }
 
+  // Emit queue update event when a player is removed from all queues
+  emitQueueUpdated(draftId: number, data: { playerId: number; action: string }): void {
+    this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.DRAFT.QUEUE_UPDATED, data);
+  }
+
   // Emit chat message to all users in league room
   emitChatMessage(leagueId: number, message: any): void {
     this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.CHAT.MESSAGE, message);

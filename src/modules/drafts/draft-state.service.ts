@@ -67,6 +67,13 @@ export class DraftStateService {
   }
 
   async deleteDraft(leagueId: number, draftId: number, userId: string): Promise<void> {
+    const draft = await this.draftRepo.findById(draftId);
+    if (!draft) throw new NotFoundException('Draft not found');
+
+    if (draft.status === 'in_progress') {
+      throw new ValidationException('Cannot delete a draft that is in progress');
+    }
+
     const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
     if (!isCommissioner) {
       throw new ForbiddenException('Only the commissioner can delete drafts');

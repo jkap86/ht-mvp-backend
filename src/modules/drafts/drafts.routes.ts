@@ -1,12 +1,29 @@
 import { Router } from 'express';
 import { DraftController } from './drafts.controller';
+import { DraftQueueController } from './draft-queue.controller';
 import { DraftService } from './drafts.service';
+import { DraftRepository } from './drafts.repository';
+import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import { authMiddleware } from '../../middleware/auth.middleware';
+import { validateRequest } from '../../middleware/validation.middleware';
+import { draftPickLimiter, queueLimiter, draftModifyLimiter } from '../../middleware/rate-limit.middleware';
 import { container, KEYS } from '../../container';
+import {
+  createDraftSchema,
+  makePickSchema,
+  addToQueueSchema,
+  reorderQueueSchema,
+} from './drafts.schemas';
 
 // Resolve dependencies from container
 const draftService = container.resolve<DraftService>(KEYS.DRAFT_SERVICE);
 const draftController = new DraftController(draftService);
+
+// Queue controller uses repositories directly
+const draftRepo = container.resolve<DraftRepository>(KEYS.DRAFT_REPO);
+const leagueRepo = container.resolve<LeagueRepository>(KEYS.LEAGUE_REPO);
+const rosterRepo = container.resolve<RosterRepository>(KEYS.ROSTER_REPO);
+const queueController = new DraftQueueController(draftRepo, leagueRepo, rosterRepo);
 
 const router = Router({ mergeParams: true }); // mergeParams to access :leagueId
 
@@ -17,7 +34,7 @@ router.use(authMiddleware);
 router.get('/', draftController.getLeagueDrafts);
 
 // POST /api/leagues/:leagueId/drafts
-router.post('/', draftController.createDraft);
+router.post('/', draftModifyLimiter, validateRequest(createDraftSchema), draftController.createDraft);
 
 // GET /api/leagues/:leagueId/drafts/:draftId
 router.get('/:draftId', draftController.getDraft);
@@ -29,15 +46,28 @@ router.delete('/:draftId', draftController.deleteDraft);
 router.get('/:draftId/order', draftController.getDraftOrder);
 
 // POST /api/leagues/:leagueId/drafts/:draftId/randomize
-router.post('/:draftId/randomize', draftController.randomizeDraftOrder);
+router.post('/:draftId/randomize', draftModifyLimiter, draftController.randomizeDraftOrder);
 
 // POST /api/leagues/:leagueId/drafts/:draftId/start
-router.post('/:draftId/start', draftController.startDraft);
+router.post('/:draftId/start', draftModifyLimiter, draftController.startDraft);
 
 // GET /api/leagues/:leagueId/drafts/:draftId/picks
 router.get('/:draftId/picks', draftController.getDraftPicks);
 
 // POST /api/leagues/:leagueId/drafts/:draftId/pick
-router.post('/:draftId/pick', draftController.makePick);
+router.post('/:draftId/pick', draftPickLimiter, validateRequest(makePickSchema), draftController.makePick);
+
+// Queue routes
+// GET /api/leagues/:leagueId/drafts/:draftId/queue
+router.get('/:draftId/queue', queueController.getQueue);
+
+// POST /api/leagues/:leagueId/drafts/:draftId/queue
+router.post('/:draftId/queue', queueLimiter, validateRequest(addToQueueSchema), queueController.addToQueue);
+
+// PUT /api/leagues/:leagueId/drafts/:draftId/queue (reorder)
+router.put('/:draftId/queue', queueLimiter, validateRequest(reorderQueueSchema), queueController.reorderQueue);
+
+// DELETE /api/leagues/:leagueId/drafts/:draftId/queue/:playerId
+router.delete('/:draftId/queue/:playerId', queueLimiter, queueController.removeFromQueue);
 
 export default router;

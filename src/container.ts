@@ -58,6 +58,7 @@ export const KEYS = {
   DRAFT_ORDER_SERVICE: 'draftOrderService',
   DRAFT_PICK_SERVICE: 'draftPickService',
   DRAFT_STATE_SERVICE: 'draftStateService',
+  DRAFT_AUTOPICK_SERVICE: 'draftAutopickService',
   CHAT_SERVICE: 'chatService',
   PLAYER_SERVICE: 'playerService',
   SOCKET_SERVICE: 'socketService',

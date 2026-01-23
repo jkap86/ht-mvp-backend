@@ -16,6 +16,7 @@ import { DraftService } from './modules/drafts/drafts.service';
 import { DraftOrderService } from './modules/drafts/draft-order.service';
 import { DraftPickService } from './modules/drafts/draft-pick.service';
 import { DraftStateService } from './modules/drafts/draft-state.service';
+import { DraftAutopickService } from './modules/drafts/draft-autopick.service';
 import { ChatService } from './modules/chat/chat.service';
 import { PlayerService } from './modules/players/players.service';
 import { SleeperApiClient } from './modules/players/sleeper.client';
@@ -87,6 +88,15 @@ function bootstrap(): void {
       container.resolve(KEYS.DRAFT_ORDER_SERVICE),
       container.resolve(KEYS.DRAFT_PICK_SERVICE),
       container.resolve(KEYS.DRAFT_STATE_SERVICE)
+    )
+  );
+
+  container.register(KEYS.DRAFT_AUTOPICK_SERVICE, () =>
+    new DraftAutopickService(
+      container.resolve(KEYS.DRAFT_REPO),
+      container.resolve(KEYS.LEAGUE_REPO),
+      container.resolve(KEYS.ROSTER_REPO),
+      container.resolve(KEYS.PLAYER_REPO)
     )
   );
 

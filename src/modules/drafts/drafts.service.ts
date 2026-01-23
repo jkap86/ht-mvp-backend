@@ -89,7 +89,7 @@ export class DraftService {
     return this.pickService.getDraftPicks(leagueId, draftId, userId);
   }
 
-  async makePick(draftId: number, userId: string, playerId: number): Promise<any> {
-    return this.pickService.makePick(draftId, userId, playerId);
+  async makePick(leagueId: number, draftId: number, userId: string, playerId: number): Promise<any> {
+    return this.pickService.makePick(leagueId, draftId, userId, playerId);
   }
 }

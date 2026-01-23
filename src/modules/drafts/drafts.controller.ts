@@ -103,10 +103,11 @@ export class DraftController {
   makePick = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const userId = requireUserId(req);
+      const leagueId = requireLeagueId(req);
       const draftId = requireDraftId(req);
       const playerId = requirePlayerId(req);
 
-      const pick = await this.draftService.makePick(draftId, userId, playerId);
+      const pick = await this.draftService.makePick(leagueId, draftId, userId, playerId);
       res.status(201).json(pick);
     } catch (error) {
       next(error);

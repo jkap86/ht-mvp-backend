@@ -26,9 +26,20 @@ export class DraftPickService {
     return this.draftRepo.getDraftPicks(draftId);
   }
 
-  async makePick(draftId: number, userId: string, playerId: number): Promise<any> {
+  async makePick(leagueId: number, draftId: number, userId: string, playerId: number): Promise<any> {
+    // Validate league membership first
+    const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
+    if (!isMember) {
+      throw new ForbiddenException('You are not a member of this league');
+    }
+
     const draft = await this.draftRepo.findById(draftId);
     if (!draft) throw new NotFoundException('Draft not found');
+
+    // Verify draft belongs to the league
+    if (draft.leagueId !== leagueId) {
+      throw new NotFoundException('Draft not found in this league');
+    }
 
     if (draft.status !== 'in_progress') {
       throw new ValidationException('Draft is not in progress');
@@ -58,8 +69,8 @@ export class DraftPickService {
     const totalRosters = draftOrder.length;
     const pickInRound = calculatePickInRound(draft.currentPick, totalRosters);
 
-    // Make the pick
-    const pick = await this.draftRepo.createDraftPick(
+    // Make the pick and remove from all queues atomically
+    const pick = await this.draftRepo.createDraftPickWithCleanup(
       draftId,
       draft.currentPick,
       draft.currentRound,
@@ -75,6 +86,9 @@ export class DraftPickService {
     try {
       const socket = getSocketService();
       socket.emitDraftPick(draftId, pick);
+
+      // Notify all users in draft that this player was removed from queues
+      socket.emitQueueUpdated(draftId, { playerId, action: 'removed' });
 
       if (nextPickInfo) {
         socket.emitNextPick(draftId, nextPickInfo);

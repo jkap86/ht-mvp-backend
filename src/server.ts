@@ -9,6 +9,7 @@ import './bootstrap';
 import routes from './routes';
 import { errorHandler } from './middleware/error.middleware';
 import { initializeSocket } from './socket';
+import { startAutopickJob, stopAutopickJob } from './jobs/autopick.job';
 
 const app = express();
 
@@ -60,11 +61,17 @@ initializeSocket(server);
 server.listen(PORT, () => {
   console.log(`🚀 MVP Backend running on port ${PORT}`);
   console.log(`📡 Health check: http://localhost:${PORT}/api/health`);
+
+  // Start background jobs
+  startAutopickJob();
 });
 
 // Graceful shutdown
 const gracefulShutdown = () => {
   console.log('Shutting down gracefully...');
+
+  // Stop background jobs
+  stopAutopickJob();
 
   server.close(async () => {
     console.log('HTTP server closed');
