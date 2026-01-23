@@ -1,6 +1,16 @@
 /**
  * League domain model
  */
+
+export type LeagueMode = 'redraft' | 'dynasty' | 'keeper';
+
+export interface LeagueSettings {
+  draftType?: 'snake' | 'linear' | 'third_round_reversal' | 'auction' | 'derby';
+  auctionMode?: 'live' | 'slow';
+  auctionBudget?: number;
+  rosterSlots?: number;
+}
+
 export class League {
   constructor(
     public readonly id: number,
@@ -13,7 +23,9 @@ export class League {
     public readonly createdAt: Date,
     public readonly updatedAt: Date,
     public readonly userRosterId?: number,
-    public readonly commissionerRosterId?: number
+    public readonly commissionerRosterId?: number,
+    public readonly mode: LeagueMode = 'redraft',
+    public readonly leagueSettings: LeagueSettings = {}
   ) {}
 
   static fromDatabase(row: any): League {
@@ -28,7 +40,9 @@ export class League {
       row.created_at,
       row.updated_at,
       row.user_roster_id,
-      row.commissioner_roster_id
+      row.commissioner_roster_id,
+      row.mode || 'redraft',
+      row.league_settings || {}
     );
   }
 
@@ -45,6 +59,8 @@ export class League {
       updated_at: this.updatedAt,
       user_roster_id: this.userRosterId,
       commissioner_roster_id: this.commissionerRosterId,
+      mode: this.mode,
+      league_settings: this.leagueSettings,
     };
   }
 }

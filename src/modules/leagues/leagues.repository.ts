@@ -7,6 +7,8 @@ export interface CreateLeagueParams {
   totalRosters: number;
   settings?: Record<string, any>;
   scoringSettings?: Record<string, any>;
+  mode?: string;
+  leagueSettings?: Record<string, any>;
 }
 
 export class LeagueRepository {
@@ -60,8 +62,8 @@ export class LeagueRepository {
 
   async create(params: CreateLeagueParams): Promise<League> {
     const result = await this.db.query(
-      `INSERT INTO leagues (name, total_rosters, season, settings, scoring_settings)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO leagues (name, total_rosters, season, settings, scoring_settings, mode, league_settings)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
       [
         params.name,
@@ -69,6 +71,8 @@ export class LeagueRepository {
         params.season,
         JSON.stringify(params.settings || {}),
         JSON.stringify(params.scoringSettings || {}),
+        params.mode || 'redraft',
+        JSON.stringify(params.leagueSettings || {}),
       ]
     );
 
@@ -98,6 +102,16 @@ export class LeagueRepository {
     if (updates.scoringSettings) {
       setClauses.push(`scoring_settings = $${paramIndex++}`);
       values.push(JSON.stringify(updates.scoringSettings));
+    }
+
+    if (updates.mode) {
+      setClauses.push(`mode = $${paramIndex++}`);
+      values.push(updates.mode);
+    }
+
+    if (updates.leagueSettings) {
+      setClauses.push(`league_settings = COALESCE(league_settings, '{}'::jsonb) || $${paramIndex++}::jsonb`);
+      values.push(JSON.stringify(updates.leagueSettings));
     }
 
     if (setClauses.length === 0) {
