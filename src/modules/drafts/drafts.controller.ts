@@ -47,12 +47,13 @@ export class DraftController {
       const userId = requireUserId(req);
       const leagueId = requireLeagueId(req);
 
-      const { draft_type, rounds, pick_time_seconds } = req.body;
+      const { draft_type, rounds, pick_time_seconds, auction_settings } = req.body;
 
       const draft = await this.draftService.createDraft(leagueId, userId, {
         draftType: draft_type,
         rounds,
         pickTimeSeconds: pick_time_seconds,
+        auctionSettings: auction_settings,
       });
       res.status(201).json(draft);
     } catch (error) {
@@ -151,7 +152,9 @@ export class DraftController {
           try {
             const socket = getSocketService();
             socket.getIO().to(`draft:${draftId}`).emit(SOCKET_EVENTS.AUCTION.LOT_CREATED, { lot: nominateResult.lot });
-          } catch {}
+          } catch (socketError) {
+            console.warn(`Failed to emit lot created event: ${socketError}`);
+          }
 
           res.status(200).json(nominateResult);
           return;
@@ -183,7 +186,9 @@ export class DraftController {
                 socket.emitToUser(outbidRoster.userId, SOCKET_EVENTS.AUCTION.OUTBID, notif);
               }
             }
-          } catch {}
+          } catch (socketError) {
+            console.warn(`Failed to emit auction events: ${socketError}`);
+          }
 
           res.status(200).json(bidResult);
           return;
@@ -243,6 +248,38 @@ export class DraftController {
 
       const picks = await this.draftService.getDraftPicks(leagueId, draftId, userId);
       res.status(200).json(picks);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getAuctionLots = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const userId = requireUserId(req);
+      const leagueId = requireLeagueId(req);
+      const draftId = requireDraftId(req);
+
+      // Verify user is a member of the league
+      if (!this.rosterRepo) {
+        throw new ValidationException('Roster repository not available');
+      }
+      const roster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId);
+      if (!roster) {
+        throw new ForbiddenException('You are not a member of this league');
+      }
+
+      // Get status filter from query (default to 'active')
+      const status = req.query.status as string | undefined;
+
+      // For now, use the lotRepo through slowAuctionService or add a method
+      // Since we need to access the repository, we'll need to inject it or use a service method
+      if (!this.slowAuctionService) {
+        throw new ValidationException('Auction service not available');
+      }
+
+      // We need to add a method to get lots - for now let's add getActiveLots to the service
+      const lots = await this.slowAuctionService.getActiveLots(draftId);
+      res.status(200).json({ lots });
     } catch (error) {
       next(error);
     }

@@ -67,6 +67,9 @@ router.get('/:draftId/picks', draftController.getDraftPicks);
 // POST /api/leagues/:leagueId/drafts/:draftId/pick
 router.post('/:draftId/pick', draftPickLimiter, validateRequest(makePickSchema), draftController.makePick);
 
+// GET /api/leagues/:leagueId/drafts/:draftId/auction/lots
+router.get('/:draftId/auction/lots', draftController.getAuctionLots);
+
 // Queue routes
 // GET /api/leagues/:leagueId/drafts/:draftId/queue
 router.get('/:draftId/queue', queueController.getQueue);

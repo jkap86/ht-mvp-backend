@@ -18,12 +18,18 @@ export class DraftRepository {
     return result.rows.map(draftFromDatabase);
   }
 
-  async create(leagueId: number, draftType: string, rounds: number, pickTimeSeconds: number): Promise<Draft> {
+  async create(
+    leagueId: number,
+    draftType: string,
+    rounds: number,
+    pickTimeSeconds: number,
+    settings?: Record<string, any>
+  ): Promise<Draft> {
     const result = await this.db.query(
-      `INSERT INTO drafts (league_id, draft_type, rounds, pick_time_seconds)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO drafts (league_id, draft_type, rounds, pick_time_seconds, settings)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
-      [leagueId, draftType, rounds, pickTimeSeconds]
+      [leagueId, draftType, rounds, pickTimeSeconds, settings ? JSON.stringify(settings) : null]
     );
     return draftFromDatabase(result.rows[0]);
   }

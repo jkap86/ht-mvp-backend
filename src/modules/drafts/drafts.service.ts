@@ -46,18 +46,46 @@ export class DraftService {
   async createDraft(
     leagueId: number,
     userId: string,
-    options: { draftType?: string; rounds?: number; pickTimeSeconds?: number }
+    options: {
+      draftType?: string;
+      rounds?: number;
+      pickTimeSeconds?: number;
+      auctionSettings?: {
+        bid_window_seconds?: number;
+        max_active_nominations_per_team?: number;
+        min_bid?: number;
+        min_increment?: number;
+      };
+    }
   ): Promise<any> {
     const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
     if (!isCommissioner) {
       throw new ForbiddenException('Only the commissioner can create drafts');
     }
 
+    // Transform auction settings from snake_case (API) to camelCase (storage)
+    const settings: Record<string, any> = {};
+    if (options.auctionSettings) {
+      if (options.auctionSettings.bid_window_seconds !== undefined) {
+        settings.bidWindowSeconds = options.auctionSettings.bid_window_seconds;
+      }
+      if (options.auctionSettings.max_active_nominations_per_team !== undefined) {
+        settings.maxActiveNominationsPerTeam = options.auctionSettings.max_active_nominations_per_team;
+      }
+      if (options.auctionSettings.min_bid !== undefined) {
+        settings.minBid = options.auctionSettings.min_bid;
+      }
+      if (options.auctionSettings.min_increment !== undefined) {
+        settings.minIncrement = options.auctionSettings.min_increment;
+      }
+    }
+
     const draft = await this.draftRepo.create(
       leagueId,
       options.draftType || 'snake',
       options.rounds || 15,
-      options.pickTimeSeconds || 90
+      options.pickTimeSeconds || 90,
+      Object.keys(settings).length > 0 ? settings : undefined
     );
 
     // Create initial draft order

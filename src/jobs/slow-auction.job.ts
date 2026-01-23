@@ -56,7 +56,9 @@ async function processExpiredLots(): Promise<void> {
               passed: result.passed,
             }
           );
-        } catch {}
+        } catch (socketError) {
+          logger.warn(`Failed to emit lot settlement event for lot ${result.lot.id}: ${socketError}`);
+        }
       }
     } finally {
       // Always release advisory lock

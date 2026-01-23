@@ -65,7 +65,7 @@ export class AuctionLotRepository {
    */
   async findLotByDraftAndPlayer(draftId: number, playerId: number): Promise<AuctionLot | null> {
     const result = await this.db.query(
-      'SELECT * FROM auction_lots WHERE draft_id = $1 AND player_id = $2',
+      `SELECT * FROM auction_lots WHERE draft_id = $1 AND player_id = $2 AND status IN ('active', 'won')`,
       [draftId, playerId]
     );
     return result.rows.length > 0 ? auctionLotFromDatabase(result.rows[0]) : null;
@@ -213,7 +213,7 @@ export class AuctionLotRepository {
     const result = await this.db.query(
       `SELECT * FROM auction_proxy_bids
        WHERE lot_id = $1
-       ORDER BY max_bid DESC`,
+       ORDER BY max_bid DESC, updated_at ASC`,
       [lotId]
     );
     return result.rows.map(auctionProxyBidFromDatabase);
