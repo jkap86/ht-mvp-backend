@@ -22,6 +22,7 @@ const mockDraft: Draft = {
   startedAt: null,
   completedAt: null,
   settings: {},
+  draftState: {},
   createdAt: new Date(),
   updatedAt: new Date(),
 };

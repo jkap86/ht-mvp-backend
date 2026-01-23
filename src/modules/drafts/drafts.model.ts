@@ -12,6 +12,7 @@ export interface Draft {
   startedAt: Date | null;
   completedAt: Date | null;
   settings: Record<string, any>;
+  draftState: Record<string, any>;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -55,6 +56,7 @@ export function draftFromDatabase(row: any): Draft {
     startedAt: row.started_at,
     completedAt: row.completed_at,
     settings: row.settings || {},
+    draftState: row.draft_state || {},
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -75,6 +77,7 @@ export function draftToResponse(draft: Draft) {
     started_at: draft.startedAt,
     completed_at: draft.completedAt,
     settings: draft.settings,
+    draft_state: draft.draftState,
     created_at: draft.createdAt,
     updated_at: draft.updatedAt,
   };
