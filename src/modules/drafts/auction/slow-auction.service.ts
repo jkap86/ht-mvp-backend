@@ -397,12 +397,16 @@ export class SlowAuctionService {
         }
       }
 
+      // bid_count tracks price changes only (not just leader changes)
+      const priceChanged = newPrice !== lot.currentBid;
+      const newBidCount = priceChanged ? lot.bidCount + 1 : lot.bidCount;
+
       const updateResult = await client.query(
         `UPDATE auction_lots
          SET current_bidder_roster_id = $2, current_bid = $3, bid_count = $4, bid_deadline = $5, updated_at = CURRENT_TIMESTAMP
          WHERE id = $1
          RETURNING *`,
-        [lot.id, newLeader, newPrice, lot.bidCount + 1, newBidDeadline]
+        [lot.id, newLeader, newPrice, newBidCount, newBidDeadline]
       );
       updatedLot = auctionLotFromDatabase(updateResult.rows[0]);
 
@@ -447,10 +451,12 @@ export class SlowAuctionService {
     const leaderChanged = newLeader !== previousLeader;
 
     if (leaderChanged || newPrice !== lot.currentBid) {
+      // bid_count tracks price changes only (not just leader changes)
+      const priceChanged = newPrice !== lot.currentBid;
       const updates: Partial<AuctionLot> = {
         currentBidderRosterId: newLeader,
         currentBid: newPrice,
-        bidCount: lot.bidCount + 1,
+        bidCount: priceChanged ? lot.bidCount + 1 : lot.bidCount,
       };
 
       // Reset timer only if leader changed
