@@ -16,9 +16,12 @@ export const authMiddleware = (
   const header = req.headers.authorization;
 
   if (!header || !header.startsWith('Bearer ')) {
-    return res
-      .status(401)
-      .json({ error: 'Missing or invalid Authorization header', status: 401 });
+    return res.status(401).json({
+      error: {
+        code: 'UNAUTHORIZED',
+        message: 'Missing or invalid Authorization header',
+      },
+    });
   }
 
   const token = header.replace('Bearer ', '');
@@ -33,6 +36,11 @@ export const authMiddleware = (
 
     next();
   } catch (err) {
-    return res.status(401).json({ error: 'Invalid or expired token', status: 401 });
+    return res.status(401).json({
+      error: {
+        code: 'INVALID_TOKEN',
+        message: 'Invalid or expired token',
+      },
+    });
   }
 };

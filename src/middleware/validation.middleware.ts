@@ -29,14 +29,19 @@ export function validateRequest(
           ? firstError.message
           : 'Validation failed';
         return res.status(400).json({
-          error: errorMessage,
-          status: 400,
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: errorMessage,
+          },
         });
       }
 
       console.error('Validation middleware error:', error);
       return res.status(500).json({
-        error: 'Internal server error during validation',
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'Internal server error during validation',
+        },
       });
     }
   };

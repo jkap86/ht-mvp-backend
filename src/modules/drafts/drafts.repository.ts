@@ -126,6 +126,41 @@ export class DraftRepository {
     await this.db.query('DELETE FROM draft_order WHERE draft_id = $1', [draftId]);
   }
 
+  /**
+   * Atomically updates the draft order within a transaction.
+   * Clears existing order and inserts new positions in a single transaction.
+   * @param draftId - The draft ID
+   * @param rosterIds - Array of roster IDs in desired order (index 0 = position 1)
+   */
+  async updateDraftOrderAtomic(draftId: number, rosterIds: number[]): Promise<void> {
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Clear existing order
+      await client.query('DELETE FROM draft_order WHERE draft_id = $1', [draftId]);
+
+      // Insert new order - use a single multi-row INSERT for efficiency
+      if (rosterIds.length > 0) {
+        const values = rosterIds.map((rosterId, index) =>
+          `($1, ${rosterId}, ${index + 1})`
+        ).join(', ');
+
+        await client.query(
+          `INSERT INTO draft_order (draft_id, roster_id, draft_position) VALUES ${values}`,
+          [draftId]
+        );
+      }
+
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   // Draft Picks
   async getDraftPicks(draftId: number): Promise<DraftPick[]> {
     const result = await this.db.query(

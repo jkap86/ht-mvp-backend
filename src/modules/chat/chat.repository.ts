@@ -5,25 +5,26 @@ export class ChatRepository {
   constructor(private readonly pool: Pool) {}
 
   async create(leagueId: number, userId: string, message: string): Promise<ChatMessageWithUser> {
+    // Single query using CTE to INSERT and JOIN with users table
     const result = await this.pool.query(
-      `INSERT INTO league_chat_messages (league_id, user_id, message)
-       VALUES ($1, $2, $3)
-       RETURNING id, league_id as "leagueId", user_id as "userId", message, created_at as "createdAt"`,
+      `WITH inserted AS (
+        INSERT INTO league_chat_messages (league_id, user_id, message)
+        VALUES ($1, $2, $3)
+        RETURNING id, league_id, user_id, message, created_at
+      )
+      SELECT
+        i.id,
+        i.league_id as "leagueId",
+        i.user_id as "userId",
+        i.message,
+        i.created_at as "createdAt",
+        COALESCE(u.username, 'Unknown') as username
+      FROM inserted i
+      LEFT JOIN users u ON i.user_id = u.id`,
       [leagueId, userId, message]
     );
 
-    const msg = result.rows[0];
-
-    // Get username
-    const userResult = await this.pool.query(
-      'SELECT username FROM users WHERE id = $1',
-      [userId]
-    );
-
-    return {
-      ...msg,
-      username: userResult.rows[0]?.username || 'Unknown',
-    };
+    return result.rows[0];
   }
 
   async findByLeagueId(leagueId: number, limit = 50, before?: number): Promise<ChatMessageWithUser[]> {
