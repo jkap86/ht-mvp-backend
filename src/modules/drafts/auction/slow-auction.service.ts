@@ -94,13 +94,14 @@ export class SlowAuctionService {
 
     const totalBudget = league.leagueSettings?.auctionBudget ?? 200;
     const rosterSlots = league.leagueSettings?.rosterSlots ?? 15;
+    const settings = this.getSettings(draft);
 
     const rosters = await this.rosterRepo.findByLeagueId(draft.leagueId);
     const budgets = await Promise.all(
       rosters.map(async (roster) => {
         const budgetData = await this.lotRepo.getRosterBudgetData(draftId, roster.id);
         const remainingSlots = rosterSlots - budgetData.wonCount;
-        const reservedForMinBids = Math.max(0, remainingSlots - 1) * 1;
+        const reservedForMinBids = Math.max(0, remainingSlots - 1) * settings.minBid;
         const available = totalBudget - budgetData.spent - reservedForMinBids - budgetData.leadingCommitment;
 
         return {
@@ -206,6 +207,9 @@ export class SlowAuctionService {
     try {
       await client.query('BEGIN');
 
+      // 0. Acquire roster-level lock to prevent cross-lot race conditions
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1), $2)', ['auction_roster', rosterId]);
+
       // 1. Lock the lot row and validate it exists and is active
       const lotResult = await client.query(
         'SELECT * FROM auction_lots WHERE id = $1 FOR UPDATE',
@@ -251,9 +255,18 @@ export class SlowAuctionService {
       // 4. Budget validation within transaction (exclude current lot if already leading)
       const budgetData = await this.getRosterBudgetDataWithClient(client, draftId, rosterId);
       const remainingSlots = rosterSlots - budgetData.wonCount - 1;
-      const reservedForMinBids = Math.max(0, remainingSlots) * 1;
-      let maxAffordable = totalBudget - budgetData.spent - reservedForMinBids - budgetData.leadingCommitment;
+      const reservedForMinBids = Math.max(0, remainingSlots) * settings.minBid;
 
+      // 4a. Worst-case check: if you win at maxBid, you must still fill remaining roster
+      const worstCaseIfWin = maxBid + budgetData.spent + (remainingSlots * settings.minBid);
+      if (worstCaseIfWin > totalBudget) {
+        const maxSafeBid = totalBudget - budgetData.spent - (remainingSlots * settings.minBid);
+        await client.query('ROLLBACK');
+        throw new ValidationException(`Maximum safe bid is $${Math.max(settings.minBid, maxSafeBid)} (must reserve for remaining roster)`);
+      }
+
+      // 4b. Affordable check based on current commitments
+      let maxAffordable = totalBudget - budgetData.spent - reservedForMinBids - budgetData.leadingCommitment;
       const isLeadingThisLot = lot.currentBidderRosterId === rosterId;
       if (isLeadingThisLot) {
         maxAffordable += lot.currentBid; // Can reuse current commitment
