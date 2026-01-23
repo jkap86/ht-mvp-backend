@@ -1,5 +1,5 @@
 import { DraftRepository } from './drafts.repository';
-import { Draft, draftToResponse } from './drafts.model';
+import { Draft, DraftOrderEntry, draftToResponse } from './drafts.model';
 import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import {
   NotFoundException,
@@ -8,13 +8,14 @@ import {
   ConflictException,
 } from '../../utils/exceptions';
 import { getSocketService } from '../../socket';
-import { getPickerByPosition, calculateRound, calculatePickInRound } from './draft-pick-calculation.helper';
+import { DraftEngineFactory, IDraftEngine } from '../../engines';
 
 export class DraftPickService {
   constructor(
     private readonly draftRepo: DraftRepository,
     private readonly leagueRepo: LeagueRepository,
-    private readonly rosterRepo: RosterRepository
+    private readonly rosterRepo: RosterRepository,
+    private readonly engineFactory: DraftEngineFactory
   ) {}
 
   async getDraftPicks(leagueId: number, draftId: number, userId: string): Promise<any[]> {
@@ -53,7 +54,8 @@ export class DraftPickService {
 
     // Check if it's user's turn
     const draftOrder = await this.draftRepo.getDraftOrder(draftId);
-    const currentPicker = getPickerByPosition(draft.currentRound, draft.currentPick, draft.draftType, draftOrder);
+    const engine = this.engineFactory.createEngine(draft.draftType);
+    const currentPicker = engine.getPickerForPickNumber(draft, draftOrder, draft.currentPick);
 
     if (currentPicker?.rosterId !== userRoster.id) {
       throw new ValidationException('It is not your turn to pick');
@@ -67,7 +69,7 @@ export class DraftPickService {
 
     // Calculate pick position
     const totalRosters = draftOrder.length;
-    const pickInRound = calculatePickInRound(draft.currentPick, totalRosters);
+    const pickInRound = engine.getPickInRound(draft.currentPick, totalRosters);
 
     // Make the pick and remove from all queues atomically
     const pick = await this.draftRepo.createDraftPickWithCleanup(
@@ -80,7 +82,7 @@ export class DraftPickService {
     );
 
     // Advance to next pick
-    const nextPickInfo = await this.advanceToNextPick(draft, draftOrder);
+    const nextPickInfo = await this.advanceToNextPick(draft, draftOrder, engine);
 
     // Emit socket events
     try {
@@ -106,7 +108,11 @@ export class DraftPickService {
     return pick;
   }
 
-  private async advanceToNextPick(draft: Draft, draftOrder: any[]): Promise<any | null> {
+  private async advanceToNextPick(
+    draft: Draft,
+    draftOrder: DraftOrderEntry[],
+    engine: IDraftEngine
+  ): Promise<any | null> {
     const totalRosters = draftOrder.length;
     const totalPicks = totalRosters * draft.rounds;
     const nextPick = draft.currentPick + 1;
@@ -122,11 +128,10 @@ export class DraftPickService {
       return null;
     }
 
-    const nextRound = calculateRound(nextPick, totalRosters);
-    const nextPicker = getPickerByPosition(nextRound, nextPick, draft.draftType, draftOrder);
+    const nextRound = engine.getRound(nextPick, totalRosters);
+    const nextPicker = engine.getPickerForPickNumber(draft, draftOrder, nextPick);
 
-    const pickDeadline = new Date();
-    pickDeadline.setSeconds(pickDeadline.getSeconds() + draft.pickTimeSeconds);
+    const pickDeadline = engine.calculatePickDeadline(draft);
 
     await this.draftRepo.update(draft.id, {
       currentPick: nextPick,

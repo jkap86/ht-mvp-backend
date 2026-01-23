@@ -2,6 +2,7 @@ import { DraftPickService } from '../../../modules/drafts/draft-pick.service';
 import { DraftRepository } from '../../../modules/drafts/drafts.repository';
 import { LeagueRepository, RosterRepository } from '../../../modules/leagues/leagues.repository';
 import { Draft, DraftOrderEntry } from '../../../modules/drafts/drafts.model';
+import { DraftEngineFactory, IDraftEngine } from '../../../engines';
 import {
   NotFoundException,
   ForbiddenException,
@@ -87,17 +88,47 @@ const createMockRosterRepo = (): jest.Mocked<RosterRepository> => ({
   findByLeague: jest.fn(),
 } as unknown as jest.Mocked<RosterRepository>);
 
+const createMockEngine = (): jest.Mocked<IDraftEngine> => ({
+  draftType: 'snake',
+  getPickerForPickNumber: jest.fn((draft, draftOrder, pickNumber) => {
+    const totalRosters = draftOrder.length;
+    const round = Math.ceil(pickNumber / totalRosters);
+    const pickInRound = ((pickNumber - 1) % totalRosters) + 1;
+    // Snake logic: reverse even rounds
+    const isReversed = round % 2 === 0;
+    const position = isReversed ? totalRosters - pickInRound + 1 : pickInRound;
+    return draftOrder.find((o: DraftOrderEntry) => o.draftPosition === position);
+  }),
+  getPickInRound: jest.fn((pickNumber, totalRosters) => ((pickNumber - 1) % totalRosters) + 1),
+  getRound: jest.fn((pickNumber, totalRosters) => Math.ceil(pickNumber / totalRosters)),
+  isDraftComplete: jest.fn(),
+  getNextPickDetails: jest.fn(),
+  shouldAutoPick: jest.fn(),
+  calculatePickDeadline: jest.fn(() => new Date(Date.now() + 90000)),
+  tick: jest.fn(),
+} as unknown as jest.Mocked<IDraftEngine>);
+
+const createMockEngineFactory = (): jest.Mocked<DraftEngineFactory> => {
+  const mockEngine = createMockEngine();
+  return {
+    createEngine: jest.fn(() => mockEngine),
+    getEngineForDraft: jest.fn(),
+  } as unknown as jest.Mocked<DraftEngineFactory>;
+};
+
 describe('DraftPickService', () => {
   let draftPickService: DraftPickService;
   let mockDraftRepo: jest.Mocked<DraftRepository>;
   let mockLeagueRepo: jest.Mocked<LeagueRepository>;
   let mockRosterRepo: jest.Mocked<RosterRepository>;
+  let mockEngineFactory: jest.Mocked<DraftEngineFactory>;
 
   beforeEach(() => {
     mockDraftRepo = createMockDraftRepo();
     mockLeagueRepo = createMockLeagueRepo();
     mockRosterRepo = createMockRosterRepo();
-    draftPickService = new DraftPickService(mockDraftRepo, mockLeagueRepo, mockRosterRepo);
+    mockEngineFactory = createMockEngineFactory();
+    draftPickService = new DraftPickService(mockDraftRepo, mockLeagueRepo, mockRosterRepo, mockEngineFactory);
   });
 
   describe('getDraftPicks', () => {

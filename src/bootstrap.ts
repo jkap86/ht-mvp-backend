@@ -16,7 +16,6 @@ import { DraftService } from './modules/drafts/drafts.service';
 import { DraftOrderService } from './modules/drafts/draft-order.service';
 import { DraftPickService } from './modules/drafts/draft-pick.service';
 import { DraftStateService } from './modules/drafts/draft-state.service';
-import { DraftAutopickService } from './modules/drafts/draft-autopick.service';
 import { DraftQueueService } from './modules/drafts/draft-queue.service';
 import { ChatService } from './modules/chat/chat.service';
 import { PlayerService } from './modules/players/players.service';
@@ -69,11 +68,20 @@ function bootstrap(): void {
     )
   );
 
+  // Engines (needed by DraftPickService)
+  container.register(KEYS.DRAFT_ENGINE_FACTORY, () =>
+    new DraftEngineFactory(
+      container.resolve(KEYS.DRAFT_REPO),
+      container.resolve(KEYS.PLAYER_REPO)
+    )
+  );
+
   container.register(KEYS.DRAFT_PICK_SERVICE, () =>
     new DraftPickService(
       container.resolve(KEYS.DRAFT_REPO),
       container.resolve(KEYS.LEAGUE_REPO),
-      container.resolve(KEYS.ROSTER_REPO)
+      container.resolve(KEYS.ROSTER_REPO),
+      container.resolve(KEYS.DRAFT_ENGINE_FACTORY)
     )
   );
 
@@ -95,25 +103,8 @@ function bootstrap(): void {
     )
   );
 
-  container.register(KEYS.DRAFT_AUTOPICK_SERVICE, () =>
-    new DraftAutopickService(
-      container.resolve(KEYS.DRAFT_REPO),
-      container.resolve(KEYS.LEAGUE_REPO),
-      container.resolve(KEYS.ROSTER_REPO),
-      container.resolve(KEYS.PLAYER_REPO)
-    )
-  );
-
   container.register(KEYS.DRAFT_QUEUE_SERVICE, () =>
     new DraftQueueService(
-      container.resolve(KEYS.DRAFT_REPO),
-      container.resolve(KEYS.PLAYER_REPO)
-    )
-  );
-
-  // Engines
-  container.register(KEYS.DRAFT_ENGINE_FACTORY, () =>
-    new DraftEngineFactory(
       container.resolve(KEYS.DRAFT_REPO),
       container.resolve(KEYS.PLAYER_REPO)
     )
