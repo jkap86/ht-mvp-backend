@@ -55,7 +55,7 @@ export class SocketService {
       // Join league room (with membership verification)
       socket.on(SOCKET_EVENTS.LEAGUE.JOIN, async (leagueId: number) => {
         if (!socket.userId) {
-          socket.emit('error', { message: 'Not authenticated' });
+          socket.emit(SOCKET_EVENTS.APP.ERROR, { message: 'Not authenticated' });
           return;
         }
 
@@ -64,7 +64,7 @@ export class SocketService {
           const isMember = await leagueRepo.isUserMember(leagueId, socket.userId);
 
           if (!isMember) {
-            socket.emit('error', { message: 'Not a member of this league' });
+            socket.emit(SOCKET_EVENTS.APP.ERROR, { message: 'Not a member of this league' });
             logger.warn(`User ${socket.userId} denied access to league ${leagueId}`);
             return;
           }
@@ -74,7 +74,7 @@ export class SocketService {
           logger.info(`User ${socket.userId} joined league room ${leagueId}`);
         } catch (error) {
           logger.error(`Error joining league room: ${error}`);
-          socket.emit('error', { message: 'Failed to join league room' });
+          socket.emit(SOCKET_EVENTS.APP.ERROR, { message: 'Failed to join league room' });
         }
       });
 
@@ -88,7 +88,7 @@ export class SocketService {
       // Join draft room (with membership verification)
       socket.on(SOCKET_EVENTS.DRAFT.JOIN, async (draftId: number) => {
         if (!socket.userId) {
-          socket.emit('error', { message: 'Not authenticated' });
+          socket.emit(SOCKET_EVENTS.APP.ERROR, { message: 'Not authenticated' });
           return;
         }
 
@@ -99,14 +99,14 @@ export class SocketService {
           // Get draft to find its league
           const draft = await draftRepo.findById(draftId);
           if (!draft) {
-            socket.emit('error', { message: 'Draft not found' });
+            socket.emit(SOCKET_EVENTS.APP.ERROR, { message: 'Draft not found' });
             return;
           }
 
           // Check if user is member of the draft's league
           const isMember = await leagueRepo.isUserMember(draft.leagueId, socket.userId);
           if (!isMember) {
-            socket.emit('error', { message: 'Not a member of this league' });
+            socket.emit(SOCKET_EVENTS.APP.ERROR, { message: 'Not a member of this league' });
             logger.warn(`User ${socket.userId} denied access to draft ${draftId}`);
             return;
           }
@@ -122,7 +122,7 @@ export class SocketService {
           });
         } catch (error) {
           logger.error(`Error joining draft room: ${error}`);
-          socket.emit('error', { message: 'Failed to join draft room' });
+          socket.emit(SOCKET_EVENTS.APP.ERROR, { message: 'Failed to join draft room' });
         }
       });
 

@@ -4,6 +4,11 @@
  */
 
 export const SOCKET_EVENTS = {
+  // App-level events
+  APP: {
+    ERROR: 'app:error',
+  },
+
   // League events
   LEAGUE: {
     JOIN: 'join:league',
