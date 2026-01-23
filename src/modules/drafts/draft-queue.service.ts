@@ -1,7 +1,9 @@
 import { DraftRepository, QueueEntry } from './drafts.repository';
 import { Player } from '../players/players.model';
 import { PlayerRepository } from '../players/players.repository';
-import { ValidationException } from '../../utils/exceptions';
+import { RosterRepository } from '../leagues/leagues.repository';
+import { Roster } from '../leagues/leagues.model';
+import { ValidationException, ForbiddenException, NotFoundException } from '../../utils/exceptions';
 
 /**
  * Service for managing draft queues.
@@ -11,8 +13,33 @@ import { ValidationException } from '../../utils/exceptions';
 export class DraftQueueService {
   constructor(
     private readonly draftRepo: DraftRepository,
-    private readonly playerRepo: PlayerRepository
+    private readonly playerRepo: PlayerRepository,
+    private readonly rosterRepo: RosterRepository
   ) {}
+
+  /**
+   * Resolve user's roster in a league. Throws if not a member.
+   */
+  async resolveUserRoster(leagueId: number, userId: string): Promise<Roster> {
+    const roster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId);
+    if (!roster) {
+      throw new ForbiddenException('You are not a member of this league');
+    }
+    return roster;
+  }
+
+  /**
+   * Validate draft is in progress. Throws if not.
+   */
+  async requireDraftInProgress(draftId: number): Promise<void> {
+    const draft = await this.draftRepo.findById(draftId);
+    if (!draft) {
+      throw new NotFoundException('Draft not found');
+    }
+    if (draft.status !== 'in_progress') {
+      throw new ValidationException('Cannot modify queue when draft is not in progress');
+    }
+  }
 
   /**
    * Get a user's queue for a draft

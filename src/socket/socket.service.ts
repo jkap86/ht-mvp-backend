@@ -14,6 +14,7 @@ interface AuthenticatedSocket extends Socket {
 
 export class SocketService {
   private io: Server;
+  private userSockets: Map<string, Set<string>> = new Map(); // userId -> Set<socketId>
 
   constructor(httpServer: HttpServer) {
     this.io = new Server(httpServer, {
@@ -22,9 +23,15 @@ export class SocketService {
           // Allow requests with no origin (mobile apps, Postman)
           if (!origin) return callback(null, true);
 
-          // Dev: allow any localhost port
-          if (env.NODE_ENV !== 'production' && origin.startsWith('http://localhost:')) {
-            return callback(null, true);
+          // Dev: allow any localhost/127.0.0.1 port (both http and https)
+          if (env.NODE_ENV !== 'production') {
+            if (
+              origin.startsWith('http://localhost:') ||
+              origin.startsWith('http://127.0.0.1:') ||
+              origin.startsWith('https://localhost:')
+            ) {
+              return callback(null, true);
+            }
           }
 
           // Prod: only allow configured FRONTEND_URL
@@ -67,6 +74,14 @@ export class SocketService {
   private setupEventHandlers(): void {
     this.io.on('connection', (socket: AuthenticatedSocket) => {
       logger.info(`Socket connected: ${socket.id} (user: ${socket.userId})`);
+
+      // Track user's sockets for O(1) lookup
+      if (socket.userId) {
+        if (!this.userSockets.has(socket.userId)) {
+          this.userSockets.set(socket.userId, new Set());
+        }
+        this.userSockets.get(socket.userId)!.add(socket.id);
+      }
 
       // Join league room (with membership verification)
       socket.on(SOCKET_EVENTS.LEAGUE.JOIN, async (leagueId: number) => {
@@ -157,6 +172,17 @@ export class SocketService {
       // Handle disconnection
       socket.on('disconnect', (reason) => {
         logger.info(`Socket disconnected: ${socket.id} (reason: ${reason})`);
+
+        // Remove from tracking
+        if (socket.userId) {
+          const sockets = this.userSockets.get(socket.userId);
+          if (sockets) {
+            sockets.delete(socket.id);
+            if (sockets.size === 0) {
+              this.userSockets.delete(socket.userId);
+            }
+          }
+        }
       });
     });
   }
@@ -206,14 +232,12 @@ export class SocketService {
     this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.CHAT.MESSAGE, message);
   }
 
-  // Emit to specific user
+  // Emit to specific user (O(1) lookup via userSockets map)
   emitToUser(userId: string, event: string, data: any): void {
-    // Find socket by userId
-    const sockets = this.io.sockets.sockets;
-    for (const [, socket] of sockets) {
-      const authSocket = socket as AuthenticatedSocket;
-      if (authSocket.userId === userId) {
-        authSocket.emit(event, data);
+    const socketIds = this.userSockets.get(userId);
+    if (socketIds) {
+      for (const socketId of socketIds) {
+        this.io.to(socketId).emit(event, data);
       }
     }
   }

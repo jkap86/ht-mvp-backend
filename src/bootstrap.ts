@@ -107,7 +107,8 @@ function bootstrap(): void {
   container.register(KEYS.DRAFT_QUEUE_SERVICE, () =>
     new DraftQueueService(
       container.resolve(KEYS.DRAFT_REPO),
-      container.resolve(KEYS.PLAYER_REPO)
+      container.resolve(KEYS.PLAYER_REPO),
+      container.resolve(KEYS.ROSTER_REPO)
     )
   );
 
