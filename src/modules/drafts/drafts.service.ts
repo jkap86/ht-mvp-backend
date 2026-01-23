@@ -94,6 +94,78 @@ export class DraftService {
     return draftToResponse(draft);
   }
 
+  /**
+   * Get draft configuration options and defaults for a league.
+   * Returns available draft types, default values, constraints, and any league-specific overrides.
+   */
+  async getDraftConfig(leagueId: number, userId: string): Promise<{
+    draftTypes: Array<{ value: string; label: string; description: string }>;
+    defaults: {
+      draftType: string;
+      rounds: number;
+      pickTimeSeconds: number;
+      auctionSettings: {
+        bidWindowSeconds: number;
+        maxActiveNominationsPerTeam: number;
+        minBid: number;
+        minIncrement: number;
+        budget: number;
+      };
+    };
+    constraints: {
+      rounds: { min: number; max: number };
+      pickTimeSeconds: { min: number; max: number };
+      bidWindowSeconds: { min: number; max: number };
+      maxActiveNominationsPerTeam: { min: number; max: number };
+      budget: { min: number; max: number };
+    };
+    leagueOverrides: {
+      auctionBudget?: number;
+      rosterSlots?: number;
+    };
+  }> {
+    // Verify user is a member of the league
+    const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
+    if (!isMember) {
+      throw new ForbiddenException('You are not a member of this league');
+    }
+
+    // Get league settings for overrides
+    const league = await this.leagueRepo.findById(leagueId);
+    const leagueSettings = league?.leagueSettings || {};
+
+    return {
+      draftTypes: [
+        { value: 'snake', label: 'Snake', description: 'Pick order reverses each round' },
+        { value: 'linear', label: 'Linear', description: 'Same pick order every round' },
+        { value: 'auction', label: 'Auction', description: 'Bid on players with a budget' },
+      ],
+      defaults: {
+        draftType: 'snake',
+        rounds: 15,
+        pickTimeSeconds: 90,
+        auctionSettings: {
+          bidWindowSeconds: 43200,         // 12 hours
+          maxActiveNominationsPerTeam: 2,
+          minBid: 1,
+          minIncrement: 1,
+          budget: leagueSettings.auctionBudget ?? 200,
+        },
+      },
+      constraints: {
+        rounds: { min: 1, max: 30 },
+        pickTimeSeconds: { min: 30, max: 600 },
+        bidWindowSeconds: { min: 3600, max: 172800 },
+        maxActiveNominationsPerTeam: { min: 1, max: 10 },
+        budget: { min: 1, max: 10000 },
+      },
+      leagueOverrides: {
+        auctionBudget: leagueSettings.auctionBudget,
+        rosterSlots: leagueSettings.rosterSlots,
+      },
+    };
+  }
+
   // Delegate to order service
   async getDraftOrder(leagueId: number, draftId: number, userId: string): Promise<any[]> {
     return this.orderService.getDraftOrder(leagueId, draftId, userId);

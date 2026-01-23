@@ -1,8 +1,30 @@
+/** Valid draft types */
+export type DraftType = 'snake' | 'linear' | 'auction';
+
+/** Draft status values */
+export type DraftStatus = 'not_started' | 'in_progress' | 'paused' | 'completed';
+
+/** Auction-specific settings stored in draft.settings */
+export interface AuctionSettings {
+  bidWindowSeconds: number;
+  maxActiveNominationsPerTeam: number;
+  minBid: number;
+  minIncrement: number;
+}
+
+/** Default auction settings */
+export const DEFAULT_AUCTION_SETTINGS: AuctionSettings = {
+  bidWindowSeconds: 43200,        // 12 hours
+  maxActiveNominationsPerTeam: 2,
+  minBid: 1,
+  minIncrement: 1,
+};
+
 export interface Draft {
   id: number;
   leagueId: number;
-  draftType: string;
-  status: string;
+  draftType: DraftType;
+  status: DraftStatus;
   currentPick: number;
   currentRound: number;
   currentRosterId: number | null;
@@ -11,7 +33,7 @@ export interface Draft {
   rounds: number;
   startedAt: Date | null;
   completedAt: Date | null;
-  settings: Record<string, any>;
+  settings: AuctionSettings | Record<string, any>;
   draftState: Record<string, any>;
   createdAt: Date;
   updatedAt: Date;

@@ -45,6 +45,7 @@ const createMockDraftRepo = (): jest.Mocked<DraftRepository> => ({
   getDraftOrder: jest.fn(),
   createDraftOrder: jest.fn(),
   clearDraftOrder: jest.fn(),
+  updateDraftOrderAtomic: jest.fn(),
 } as unknown as jest.Mocked<DraftRepository>);
 
 const createMockLeagueRepo = (): jest.Mocked<LeagueRepository> => ({
@@ -98,14 +99,12 @@ describe('DraftOrderService', () => {
       mockLeagueRepo.isCommissioner.mockResolvedValue(true);
       mockDraftRepo.findById.mockResolvedValue(mockDraft);
       mockRosterRepo.findByLeagueId.mockResolvedValue(mockRosters as any);
-      mockDraftRepo.clearDraftOrder.mockResolvedValue(undefined);
-      mockDraftRepo.createDraftOrder.mockResolvedValue(undefined);
+      mockDraftRepo.updateDraftOrderAtomic.mockResolvedValue(undefined);
       mockDraftRepo.getDraftOrder.mockResolvedValue(mockDraftOrder);
 
       const result = await draftOrderService.randomizeDraftOrder(1, 1, 'user-123');
 
-      expect(mockDraftRepo.clearDraftOrder).toHaveBeenCalledWith(1);
-      expect(mockDraftRepo.createDraftOrder).toHaveBeenCalledTimes(3);
+      expect(mockDraftRepo.updateDraftOrderAtomic).toHaveBeenCalledWith(1, expect.any(Array));
       expect(result).toEqual(mockDraftOrder);
     });
 

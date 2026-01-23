@@ -6,15 +6,20 @@ import { SlowAuctionService } from './auction/slow-auction.service';
 import { RosterRepository } from '../leagues/leagues.repository';
 import { requireUserId, requireLeagueId, requireDraftId, requirePlayerId } from '../../utils/controller-helpers';
 import { ForbiddenException, ValidationException } from '../../utils/exceptions';
-import { getSocketService } from '../../socket';
+import { ActionDispatcher } from './action-handlers';
 
 export class DraftController {
+  private actionDispatcher?: ActionDispatcher;
+
   constructor(
     private readonly draftService: DraftService,
     private readonly queueService?: DraftQueueService,
     private readonly rosterRepo?: RosterRepository,
-    private readonly slowAuctionService?: SlowAuctionService
-  ) {}
+    private readonly slowAuctionService?: SlowAuctionService,
+    actionDispatcher?: ActionDispatcher
+  ) {
+    this.actionDispatcher = actionDispatcher;
+  }
 
   getLeagueDrafts = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
@@ -55,6 +60,18 @@ export class DraftController {
         auctionSettings: auction_settings,
       });
       res.status(201).json(draft);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getDraftConfig = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const userId = requireUserId(req);
+      const leagueId = requireLeagueId(req);
+
+      const config = await this.draftService.getDraftConfig(leagueId, userId);
+      res.status(200).json(config);
     } catch (error) {
       next(error);
     }
@@ -105,125 +122,19 @@ export class DraftController {
       const draftId = requireDraftId(req);
       const { action, ...params } = req.body;
 
-      let result;
-      switch (action) {
-        // State actions (commissioner only)
-        case 'start':
-          result = await this.draftService.startDraft(draftId, userId);
-          break;
-        case 'pause':
-          result = await this.draftService.pauseDraft(draftId, userId);
-          break;
-        case 'resume':
-          result = await this.draftService.resumeDraft(draftId, userId);
-          break;
-        case 'complete':
-          result = await this.draftService.completeDraft(draftId, userId);
-          break;
-
-        // Pick action
-        case 'pick':
-          result = await this.draftService.makePick(leagueId, draftId, userId, params.playerId);
-          break;
-
-        // Queue actions
-        case 'queue_add':
-        case 'queue_remove':
-        case 'queue_reorder':
-          result = await this.handleQueueAction(draftId, leagueId, userId, action, params);
-          break;
-
-        // Auction actions
-        case 'nominate': {
-          if (!this.slowAuctionService) {
-            throw new ValidationException('Auction service not available');
-          }
-          if (!this.rosterRepo) {
-            throw new ValidationException('Roster repository not available');
-          }
-          const roster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId);
-          if (!roster) {
-            throw new ForbiddenException('You are not a member of this league');
-          }
-          const nominateResult = await this.slowAuctionService.nominate(draftId, roster.id, params.playerId);
-
-          // Emit socket event
-          try {
-            const socket = getSocketService();
-            socket.emitAuctionLotCreated(draftId, nominateResult.lot);
-          } catch (socketError) {
-            console.warn(`Failed to emit lot created event: ${socketError}`);
-          }
-
-          res.status(200).json(nominateResult);
-          return;
-        }
-
-        case 'set_max_bid': {
-          if (!this.slowAuctionService) {
-            throw new ValidationException('Auction service not available');
-          }
-          if (!this.rosterRepo) {
-            throw new ValidationException('Roster repository not available');
-          }
-          const roster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId);
-          if (!roster) {
-            throw new ForbiddenException('You are not a member of this league');
-          }
-          const bidResult = await this.slowAuctionService.setMaxBid(draftId, params.lotId, roster.id, params.maxBid);
-
-          // Emit socket events
-          try {
-            const socket = getSocketService();
-            socket.emitAuctionLotUpdated(draftId, bidResult.lot);
-
-            // Notify outbid users
-            for (const notif of bidResult.outbidNotifications) {
-              // Find user for this roster and emit
-              const outbidRoster = await this.rosterRepo.findById(notif.rosterId);
-              if (outbidRoster && outbidRoster.userId) {
-                socket.emitAuctionOutbid(outbidRoster.userId, notif);
-              }
-            }
-          } catch (socketError) {
-            console.warn(`Failed to emit auction events: ${socketError}`);
-          }
-
-          res.status(200).json(bidResult);
-          return;
-        }
+      if (!this.actionDispatcher) {
+        throw new ValidationException('Action dispatcher not configured');
       }
+
+      const result = await this.actionDispatcher.dispatch(
+        { userId, leagueId, draftId },
+        action,
+        params
+      );
+
       res.status(200).json(result);
     } catch (error) {
       next(error);
-    }
-  };
-
-  private handleQueueAction = async (
-    draftId: number,
-    leagueId: number,
-    userId: string,
-    action: string,
-    params: { playerId?: number; playerIds?: number[] }
-  ) => {
-    if (!this.queueService || !this.rosterRepo) {
-      throw new Error('Queue service not configured');
-    }
-
-    const roster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId);
-    if (!roster) {
-      throw new ForbiddenException('You are not a member of this league');
-    }
-
-    switch (action) {
-      case 'queue_add':
-        return this.queueService.addToQueue(draftId, roster.id, params.playerId!);
-      case 'queue_remove':
-        await this.queueService.removeFromQueueByPlayer(draftId, roster.id, params.playerId!);
-        return { success: true };
-      case 'queue_reorder':
-        await this.queueService.reorderQueue(draftId, roster.id, params.playerIds!);
-        return { success: true };
     }
   };
 

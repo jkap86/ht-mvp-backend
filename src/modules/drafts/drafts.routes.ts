@@ -16,6 +16,11 @@ import {
   reorderQueueSchema,
   draftActionSchema,
 } from './drafts.schemas';
+import { ActionDispatcher } from './action-handlers';
+import { StateActionHandler } from './action-handlers/state.handler';
+import { PickActionHandler } from './action-handlers/pick.handler';
+import { QueueActionHandler } from './action-handlers/queue.handler';
+import { AuctionActionHandler } from './action-handlers/auction.handler';
 
 // Resolve dependencies from container
 const draftService = container.resolve<DraftService>(KEYS.DRAFT_SERVICE);
@@ -23,8 +28,21 @@ const queueService = container.resolve<DraftQueueService>(KEYS.DRAFT_QUEUE_SERVI
 const rosterRepo = container.resolve<RosterRepository>(KEYS.ROSTER_REPO);
 const slowAuctionService = container.resolve<SlowAuctionService>(KEYS.SLOW_AUCTION_SERVICE);
 
-// Draft controller with queue support for unified /actions endpoint
-const draftController = new DraftController(draftService, queueService, rosterRepo, slowAuctionService);
+// Set up action dispatcher with all handlers
+const actionDispatcher = new ActionDispatcher();
+actionDispatcher.register(new StateActionHandler(draftService));
+actionDispatcher.register(new PickActionHandler(draftService));
+actionDispatcher.register(new QueueActionHandler(queueService, rosterRepo));
+actionDispatcher.register(new AuctionActionHandler(slowAuctionService, rosterRepo));
+
+// Draft controller with dispatcher for unified /actions endpoint
+const draftController = new DraftController(
+  draftService,
+  queueService,
+  rosterRepo,
+  slowAuctionService,
+  actionDispatcher
+);
 
 // Queue controller uses service layer only
 const queueController = new DraftQueueController(queueService);
@@ -36,6 +54,9 @@ router.use(authMiddleware);
 
 // GET /api/leagues/:leagueId/drafts
 router.get('/', draftController.getLeagueDrafts);
+
+// GET /api/leagues/:leagueId/drafts/config (draft configuration options and defaults)
+router.get('/config', draftController.getDraftConfig);
 
 // POST /api/leagues/:leagueId/drafts
 router.post('/', draftModifyLimiter, validateRequest(createDraftSchema), draftController.createDraft);

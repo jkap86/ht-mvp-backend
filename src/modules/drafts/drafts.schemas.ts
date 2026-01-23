@@ -1,21 +1,27 @@
 import { z } from 'zod';
 
+/** Zod schema for draft type validation */
+export const draftTypeSchema = z.enum(['snake', 'linear', 'auction'], {
+  message: 'Draft type must be "snake", "linear", or "auction"',
+});
+
+/** Zod schema for auction settings */
+export const auctionSettingsSchema = z.object({
+  bid_window_seconds: z.number().int().min(3600).max(172800).default(43200),
+  max_active_nominations_per_team: z.number().int().min(1).max(10).default(2),
+  min_bid: z.number().int().min(1).default(1),
+  min_increment: z.number().int().min(1).default(1),
+});
+
 export const createDraftSchema = z.object({
-  draft_type: z.enum(['snake', 'linear', 'auction'], {
-    message: 'Draft type must be "snake", "linear", or "auction"',
-  }),
+  draft_type: draftTypeSchema,
   rounds: z.number().int().min(1, 'Rounds must be at least 1').max(30, 'Rounds cannot exceed 30'),
   pick_time_seconds: z
     .number()
     .int()
     .min(30, 'Pick time must be at least 30 seconds')
     .max(600, 'Pick time cannot exceed 600 seconds'),
-  auction_settings: z.object({
-    bid_window_seconds: z.number().int().min(3600).max(172800).default(43200),
-    max_active_nominations_per_team: z.number().int().min(1).max(10).default(2),
-    min_bid: z.number().int().min(1).default(1),
-    min_increment: z.number().int().min(1).default(1),
-  }).optional(),
+  auction_settings: auctionSettingsSchema.optional(),
 });
 
 export const makePickSchema = z.object({
@@ -72,8 +78,20 @@ export const draftActionSchema = z.discriminatedUnion('action', [
   }),
 ]);
 
+// Type exports from Zod schemas
+export type DraftTypeSchema = z.infer<typeof draftTypeSchema>;
+export type AuctionSettingsInput = z.infer<typeof auctionSettingsSchema>;
 export type CreateDraftInput = z.infer<typeof createDraftSchema>;
 export type MakePickInput = z.infer<typeof makePickSchema>;
 export type AddToQueueInput = z.infer<typeof addToQueueSchema>;
 export type ReorderQueueInput = z.infer<typeof reorderQueueSchema>;
 export type DraftActionInput = z.infer<typeof draftActionSchema>;
+
+/** Validation constraints for draft configuration */
+export const DRAFT_CONFIG_CONSTRAINTS = {
+  rounds: { min: 1, max: 30 },
+  pickTimeSeconds: { min: 30, max: 600 },
+  bidWindowSeconds: { min: 3600, max: 172800 },
+  maxActiveNominationsPerTeam: { min: 1, max: 10 },
+  budget: { min: 1, max: 10000 },
+} as const;
