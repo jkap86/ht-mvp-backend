@@ -1,14 +1,15 @@
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../../middleware/auth.middleware';
+import { DraftQueueService } from './draft-queue.service';
 import { DraftRepository } from './drafts.repository';
-import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
+import { RosterRepository } from '../leagues/leagues.repository';
 import { requireUserId, requireLeagueId, requireDraftId, requirePlayerId } from '../../utils/controller-helpers';
 import { ForbiddenException, ValidationException, NotFoundException } from '../../utils/exceptions';
 
 export class DraftQueueController {
   constructor(
+    private readonly queueService: DraftQueueService,
     private readonly draftRepo: DraftRepository,
-    private readonly leagueRepo: LeagueRepository,
     private readonly rosterRepo: RosterRepository
   ) {}
 
@@ -28,7 +29,7 @@ export class DraftQueueController {
         throw new ForbiddenException('You are not a member of this league');
       }
 
-      const queue = await this.draftRepo.getQueue(draftId, roster.id);
+      const queue = await this.queueService.getQueue(draftId, roster.id);
       res.status(200).json(queue);
     } catch (error) {
       next(error);
@@ -62,13 +63,8 @@ export class DraftQueueController {
         throw new ValidationException('Cannot modify queue when draft is not in progress');
       }
 
-      // Check if player is already drafted
-      const isDrafted = await this.draftRepo.isPlayerDrafted(draftId, playerId);
-      if (isDrafted) {
-        throw new ValidationException('Player has already been drafted');
-      }
-
-      const entry = await this.draftRepo.addToQueue(draftId, roster.id, playerId);
+      // Service handles checking if player is already drafted
+      const entry = await this.queueService.addToQueue(draftId, roster.id, playerId);
       res.status(201).json(entry);
     } catch (error) {
       next(error);
@@ -97,7 +93,7 @@ export class DraftQueueController {
         throw new ForbiddenException('You are not a member of this league');
       }
 
-      await this.draftRepo.removeFromQueueByPlayer(draftId, roster.id, playerId);
+      await this.queueService.removeFromQueueByPlayer(draftId, roster.id, playerId);
       res.status(200).json({ message: 'Player removed from queue' });
     } catch (error) {
       next(error);
@@ -135,8 +131,8 @@ export class DraftQueueController {
         throw new ValidationException('Cannot modify queue when draft is not in progress');
       }
 
-      await this.draftRepo.reorderQueue(draftId, roster.id, player_ids);
-      const queue = await this.draftRepo.getQueue(draftId, roster.id);
+      await this.queueService.reorderQueue(draftId, roster.id, player_ids);
+      const queue = await this.queueService.getQueue(draftId, roster.id);
       res.status(200).json(queue);
     } catch (error) {
       next(error);

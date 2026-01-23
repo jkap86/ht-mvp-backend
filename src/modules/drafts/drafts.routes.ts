@@ -2,8 +2,9 @@ import { Router } from 'express';
 import { DraftController } from './drafts.controller';
 import { DraftQueueController } from './draft-queue.controller';
 import { DraftService } from './drafts.service';
+import { DraftQueueService } from './draft-queue.service';
 import { DraftRepository } from './drafts.repository';
-import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
+import { RosterRepository } from '../leagues/leagues.repository';
 import { authMiddleware } from '../../middleware/auth.middleware';
 import { validateRequest } from '../../middleware/validation.middleware';
 import { draftPickLimiter, queueLimiter, draftModifyLimiter } from '../../middleware/rate-limit.middleware';
@@ -18,13 +19,15 @@ import {
 
 // Resolve dependencies from container
 const draftService = container.resolve<DraftService>(KEYS.DRAFT_SERVICE);
-const draftController = new DraftController(draftService);
-
-// Queue controller uses repositories directly
+const queueService = container.resolve<DraftQueueService>(KEYS.DRAFT_QUEUE_SERVICE);
 const draftRepo = container.resolve<DraftRepository>(KEYS.DRAFT_REPO);
-const leagueRepo = container.resolve<LeagueRepository>(KEYS.LEAGUE_REPO);
 const rosterRepo = container.resolve<RosterRepository>(KEYS.ROSTER_REPO);
-const queueController = new DraftQueueController(draftRepo, leagueRepo, rosterRepo);
+
+// Draft controller with queue support for unified /actions endpoint
+const draftController = new DraftController(draftService, queueService, rosterRepo);
+
+// Queue controller uses service layer
+const queueController = new DraftQueueController(queueService, draftRepo, rosterRepo);
 
 const router = Router({ mergeParams: true }); // mergeParams to access :leagueId
 

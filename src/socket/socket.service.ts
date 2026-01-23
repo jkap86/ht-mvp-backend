@@ -16,12 +16,25 @@ export class SocketService {
   private io: Server;
 
   constructor(httpServer: HttpServer) {
-    // Use same CORS origin as Express (from env.FRONTEND_URL)
-    const corsOrigin = env.FRONTEND_URL || 'http://localhost:3000';
-
     this.io = new Server(httpServer, {
       cors: {
-        origin: corsOrigin,
+        origin: (origin, callback) => {
+          // Allow requests with no origin (mobile apps, Postman)
+          if (!origin) return callback(null, true);
+
+          // Dev: allow any localhost port
+          if (env.NODE_ENV !== 'production' && origin.startsWith('http://localhost:')) {
+            return callback(null, true);
+          }
+
+          // Prod: only allow configured FRONTEND_URL
+          if (env.FRONTEND_URL && origin === env.FRONTEND_URL) {
+            return callback(null, true);
+          }
+
+          logger.warn(`Socket.IO CORS rejected origin: ${origin}`);
+          return callback(new Error('Not allowed by CORS'));
+        },
         methods: ['GET', 'POST'],
         credentials: true,
       },

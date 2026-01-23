@@ -26,11 +26,34 @@ export const reorderQueueSchema = z.object({
     .min(1, 'Player IDs array cannot be empty'),
 });
 
-export const draftActionSchema = z.object({
-  action: z.enum(['start', 'pause', 'resume', 'complete'], {
-    message: 'Action must be one of: start, pause, resume, complete',
+// Unified action schema supporting state changes, picks, and queue operations
+export const draftActionSchema = z.discriminatedUnion('action', [
+  // State actions (commissioner only)
+  z.object({ action: z.literal('start') }),
+  z.object({ action: z.literal('pause') }),
+  z.object({ action: z.literal('resume') }),
+  z.object({ action: z.literal('complete') }),
+
+  // Pick action
+  z.object({
+    action: z.literal('pick'),
+    playerId: z.number().int().positive('Player ID must be a positive integer'),
   }),
-});
+
+  // Queue actions
+  z.object({
+    action: z.literal('queue_add'),
+    playerId: z.number().int().positive('Player ID must be a positive integer'),
+  }),
+  z.object({
+    action: z.literal('queue_remove'),
+    playerId: z.number().int().positive('Player ID must be a positive integer'),
+  }),
+  z.object({
+    action: z.literal('queue_reorder'),
+    playerIds: z.array(z.number().int().positive('Each player ID must be a positive integer')).min(1),
+  }),
+]);
 
 export type CreateDraftInput = z.infer<typeof createDraftSchema>;
 export type MakePickInput = z.infer<typeof makePickSchema>;

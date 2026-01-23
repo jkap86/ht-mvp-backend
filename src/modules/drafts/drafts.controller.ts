@@ -1,10 +1,17 @@
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../../middleware/auth.middleware';
 import { DraftService } from './drafts.service';
+import { DraftQueueService } from './draft-queue.service';
+import { RosterRepository } from '../leagues/leagues.repository';
 import { requireUserId, requireLeagueId, requireDraftId, requirePlayerId } from '../../utils/controller-helpers';
+import { ForbiddenException } from '../../utils/exceptions';
 
 export class DraftController {
-  constructor(private readonly draftService: DraftService) {}
+  constructor(
+    private readonly draftService: DraftService,
+    private readonly queueService?: DraftQueueService,
+    private readonly rosterRepo?: RosterRepository
+  ) {}
 
   getLeagueDrafts = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
@@ -90,27 +97,69 @@ export class DraftController {
   performAction = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const userId = requireUserId(req);
+      const leagueId = requireLeagueId(req);
       const draftId = requireDraftId(req);
-      const { action } = req.body;
+      const { action, ...params } = req.body;
 
-      let draft;
+      let result;
       switch (action) {
+        // State actions (commissioner only)
         case 'start':
-          draft = await this.draftService.startDraft(draftId, userId);
+          result = await this.draftService.startDraft(draftId, userId);
           break;
         case 'pause':
-          draft = await this.draftService.pauseDraft(draftId, userId);
+          result = await this.draftService.pauseDraft(draftId, userId);
           break;
         case 'resume':
-          draft = await this.draftService.resumeDraft(draftId, userId);
+          result = await this.draftService.resumeDraft(draftId, userId);
           break;
         case 'complete':
-          draft = await this.draftService.completeDraft(draftId, userId);
+          result = await this.draftService.completeDraft(draftId, userId);
+          break;
+
+        // Pick action
+        case 'pick':
+          result = await this.draftService.makePick(leagueId, draftId, userId, params.playerId);
+          break;
+
+        // Queue actions
+        case 'queue_add':
+        case 'queue_remove':
+        case 'queue_reorder':
+          result = await this.handleQueueAction(draftId, leagueId, userId, action, params);
           break;
       }
-      res.status(200).json(draft);
+      res.status(200).json(result);
     } catch (error) {
       next(error);
+    }
+  };
+
+  private handleQueueAction = async (
+    draftId: number,
+    leagueId: number,
+    userId: string,
+    action: string,
+    params: { playerId?: number; playerIds?: number[] }
+  ) => {
+    if (!this.queueService || !this.rosterRepo) {
+      throw new Error('Queue service not configured');
+    }
+
+    const roster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId);
+    if (!roster) {
+      throw new ForbiddenException('You are not a member of this league');
+    }
+
+    switch (action) {
+      case 'queue_add':
+        return this.queueService.addToQueue(draftId, roster.id, params.playerId!);
+      case 'queue_remove':
+        await this.queueService.removeFromQueueByPlayer(draftId, roster.id, params.playerId!);
+        return { success: true };
+      case 'queue_reorder':
+        await this.queueService.reorderQueue(draftId, roster.id, params.playerIds!);
+        return { success: true };
     }
   };
 
