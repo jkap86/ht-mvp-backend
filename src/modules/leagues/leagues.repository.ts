@@ -45,7 +45,7 @@ export class LeagueRepository {
     return League.fromDatabase(result.rows[0]);
   }
 
-  async findByUserId(userId: string): Promise<League[]> {
+  async findByUserId(userId: string, limit: number = 50, offset: number = 0): Promise<League[]> {
     const result = await this.db.query(
       `SELECT l.*,
               r.roster_id as user_roster_id,
@@ -53,8 +53,9 @@ export class LeagueRepository {
        FROM leagues l
        INNER JOIN rosters r ON r.league_id = l.id
        WHERE r.user_id = $1
-       ORDER BY l.created_at DESC`,
-      [userId]
+       ORDER BY l.created_at DESC
+       LIMIT $2 OFFSET $3`,
+      [userId, limit, offset]
     );
 
     return result.rows.map((row) => League.fromDatabase(row));

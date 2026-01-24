@@ -27,6 +27,12 @@ const envSchema = z.object({
 
   // Logging
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
+
+  // Redis
+  REDIS_HOST: z.string().optional(),
+  REDIS_PORT: z.string().optional(),
+  REDIS_PASSWORD: z.string().optional(),
+  REDIS_DB: z.string().optional(),
 });
 
 // Parse and validate environment variables

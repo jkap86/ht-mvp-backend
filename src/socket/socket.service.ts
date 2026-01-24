@@ -1,7 +1,9 @@
 import { Server as HttpServer } from 'http';
 import { Server, Socket } from 'socket.io';
+import { createAdapter } from '@socket.io/redis-adapter';
 import { verifyToken } from '../utils/jwt';
 import { env, logger } from '../config/env.config';
+import { getRedisClient } from '../config/redis.config';
 import { container, KEYS } from '../container';
 import { LeagueRepository } from '../modules/leagues/leagues.repository';
 import { DraftRepository } from '../modules/drafts/drafts.repository';
@@ -46,6 +48,14 @@ export class SocketService {
         credentials: true,
       },
     });
+
+    // Configure Redis adapter for horizontal scaling
+    if (process.env.REDIS_HOST) {
+      const pubClient = getRedisClient();
+      const subClient = pubClient.duplicate();
+      this.io.adapter(createAdapter(pubClient, subClient));
+      console.log('Socket.io using Redis adapter for horizontal scaling');
+    }
 
     this.setupMiddleware();
     this.setupEventHandlers();

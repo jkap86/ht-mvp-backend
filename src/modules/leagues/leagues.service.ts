@@ -14,8 +14,8 @@ export class LeagueService {
     private readonly rosterService: RosterService
   ) {}
 
-  async getUserLeagues(userId: string): Promise<any[]> {
-    const leagues = await this.leagueRepo.findByUserId(userId);
+  async getUserLeagues(userId: string, limit?: number, offset?: number): Promise<any[]> {
+    const leagues = await this.leagueRepo.findByUserId(userId, limit, offset);
     return leagues.map(l => l.toResponse());
   }
 

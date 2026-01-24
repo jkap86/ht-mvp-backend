@@ -4,6 +4,8 @@ import { createServer } from 'http';
 
 import { env } from './config/env.config';
 import { closePool } from './db/pool';
+import { closeRedis } from './config/redis.config';
+import { requestTimingMiddleware } from './middleware/request-timing.middleware';
 // Bootstrap DI container (auto-runs on import, must be before routes)
 import './bootstrap';
 import routes from './routes';
@@ -45,6 +47,7 @@ const corsOptions: cors.CorsOptions = {
 // Middleware
 app.use(cors(corsOptions));
 app.use(express.json());
+app.use(requestTimingMiddleware);
 
 // Routes
 app.use('/api', routes);
@@ -86,6 +89,7 @@ const gracefulShutdown = () => {
 
   server.close(async () => {
     console.log('HTTP server closed');
+    await closeRedis();
     await closePool();
     process.exit(0);
   });

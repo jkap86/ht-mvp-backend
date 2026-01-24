@@ -1,9 +1,21 @@
 import rateLimit from 'express-rate-limit';
+import { RedisStore } from 'rate-limit-redis';
 import { Request } from 'express';
+import { getRedisClient } from '../config/redis.config';
 
 // Match the shape from auth.middleware.ts
 interface AuthRequest extends Request {
   user?: { userId: string; username: string };
+}
+
+function getRedisStore(): RedisStore | undefined {
+  if (!process.env.REDIS_HOST) {
+    return undefined; // Falls back to in-memory
+  }
+  return new RedisStore({
+    sendCommand: (command: string, ...args: (string | number | Buffer)[]) =>
+      getRedisClient().call(command, ...args) as Promise<any>,
+  });
 }
 
 /**
@@ -17,6 +29,7 @@ export const authLimiter = rateLimit({
   keyGenerator: (req: Request) => req.ip || 'unknown',
   standardHeaders: true,
   legacyHeaders: false,
+  store: getRedisStore(),
 });
 
 /**
@@ -30,6 +43,7 @@ export const draftPickLimiter = rateLimit({
   keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
   standardHeaders: true,
   legacyHeaders: false,
+  store: getRedisStore(),
 });
 
 /**
@@ -43,6 +57,7 @@ export const queueLimiter = rateLimit({
   keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
   standardHeaders: true,
   legacyHeaders: false,
+  store: getRedisStore(),
 });
 
 /**
@@ -56,4 +71,5 @@ export const draftModifyLimiter = rateLimit({
   keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
   standardHeaders: true,
   legacyHeaders: false,
+  store: getRedisStore(),
 });

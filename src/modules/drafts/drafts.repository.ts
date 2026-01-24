@@ -94,16 +94,27 @@ export class DraftRepository {
   }
 
   // Draft Order
-  async getDraftOrder(draftId: number): Promise<DraftOrderEntry[]> {
-    const result = await this.db.query(
-      `SELECT dord.*, u.username
+  async getDraftOrder(draftId: number, limit?: number, offset?: number): Promise<DraftOrderEntry[]> {
+    let query = `SELECT dord.*, u.username
        FROM draft_order dord
        LEFT JOIN rosters r ON dord.roster_id = r.id
        LEFT JOIN users u ON r.user_id = u.id
        WHERE dord.draft_id = $1
-       ORDER BY dord.draft_position`,
-      [draftId]
-    );
+       ORDER BY dord.draft_position`;
+
+    const params: (number)[] = [draftId];
+
+    if (limit !== undefined) {
+      params.push(limit);
+      query += ` LIMIT $${params.length}`;
+    }
+
+    if (offset !== undefined) {
+      params.push(offset);
+      query += ` OFFSET $${params.length}`;
+    }
+
+    const result = await this.db.query(query, params);
     return result.rows.map(row => ({
       id: row.id,
       draftId: row.draft_id,
@@ -162,17 +173,28 @@ export class DraftRepository {
   }
 
   // Draft Picks
-  async getDraftPicks(draftId: number): Promise<DraftPick[]> {
-    const result = await this.db.query(
-      `SELECT dp.*, p.full_name as player_name, p.position as player_position, p.team as player_team, u.username
+  async getDraftPicks(draftId: number, limit?: number, offset?: number): Promise<DraftPick[]> {
+    let query = `SELECT dp.*, p.full_name as player_name, p.position as player_position, p.team as player_team, u.username
        FROM draft_picks dp
        LEFT JOIN players p ON dp.player_id = p.id
        LEFT JOIN rosters r ON dp.roster_id = r.id
        LEFT JOIN users u ON r.user_id = u.id
        WHERE dp.draft_id = $1
-       ORDER BY dp.pick_number`,
-      [draftId]
-    );
+       ORDER BY dp.pick_number`;
+
+    const params: (number)[] = [draftId];
+
+    if (limit !== undefined) {
+      params.push(limit);
+      query += ` LIMIT $${params.length}`;
+    }
+
+    if (offset !== undefined) {
+      params.push(offset);
+      query += ` OFFSET $${params.length}`;
+    }
+
+    const result = await this.db.query(query, params);
     return result.rows.map(row => ({
       id: row.id,
       draftId: row.draft_id,
