@@ -61,6 +61,24 @@ export class AuctionLotRepository {
   }
 
   /**
+   * Find lots for a draft with optional status filter
+   */
+  async findLotsByDraft(draftId: number, status?: string): Promise<AuctionLot[]> {
+    let query = `SELECT * FROM auction_lots WHERE draft_id = $1`;
+    const params: any[] = [draftId];
+
+    if (status && status !== 'all') {
+      query += ` AND status = $2`;
+      params.push(status);
+    }
+
+    query += ` ORDER BY id DESC`;
+
+    const result = await this.db.query(query, params);
+    return result.rows.map(auctionLotFromDatabase);
+  }
+
+  /**
    * Find a lot by draft and player (for duplicate check)
    */
   async findLotByDraftAndPlayer(draftId: number, playerId: number): Promise<AuctionLot | null> {

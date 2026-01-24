@@ -178,17 +178,17 @@ export class DraftController {
         throw new ForbiddenException('You are not a member of this league');
       }
 
-      // Get status filter from query (default to 'active')
+      // Get status filter from query (supports: active, won, passed, all)
       const status = req.query.status as string | undefined;
 
-      // For now, use the lotRepo through slowAuctionService or add a method
-      // Since we need to access the repository, we'll need to inject it or use a service method
       if (!this.slowAuctionService) {
         throw new ValidationException('Auction service not available');
       }
 
-      // We need to add a method to get lots - for now let's add getActiveLots to the service
-      const lots = await this.slowAuctionService.getActiveLots(draftId);
+      // Use status filter if provided, otherwise default to active lots
+      const lots = status
+        ? await this.slowAuctionService.getLotsByStatus(draftId, status)
+        : await this.slowAuctionService.getActiveLots(draftId);
       res.status(200).json({ lots });
     } catch (error) {
       next(error);
@@ -269,8 +269,19 @@ export class DraftController {
 
       // Get draft to determine auction mode
       const draft = await this.draftService.getDraftById(leagueId, draftId, userId);
-      const auctionSettings = draft.settings?.auctionSettings;
-      const auctionMode = auctionSettings?.auctionMode || 'slow';
+      // Settings are stored flat on draft.settings, not nested under auctionSettings
+      const auctionMode = draft.settings?.auctionMode || 'slow';
+
+      // Build normalized settings object for response
+      const auctionSettings = {
+        auctionMode,
+        bidWindowSeconds: draft.settings?.bidWindowSeconds ?? 43200,
+        maxActiveNominationsPerTeam: draft.settings?.maxActiveNominationsPerTeam ?? 2,
+        nominationSeconds: draft.settings?.nominationSeconds ?? 45,
+        resetOnBidSeconds: draft.settings?.resetOnBidSeconds ?? 10,
+        minBid: draft.settings?.minBid ?? 1,
+        minIncrement: draft.settings?.minIncrement ?? 1,
+      };
 
       // Get active lot(s) - for fast auction, there's at most one
       if (!this.slowAuctionService) {

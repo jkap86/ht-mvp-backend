@@ -1,6 +1,7 @@
 import { DraftPickService } from '../../../modules/drafts/draft-pick.service';
 import { DraftRepository } from '../../../modules/drafts/drafts.repository';
 import { LeagueRepository, RosterRepository } from '../../../modules/leagues/leagues.repository';
+import { PlayerRepository } from '../../../modules/players/players.repository';
 import { Draft, DraftOrderEntry } from '../../../modules/drafts/drafts.model';
 import { DraftEngineFactory, IDraftEngine } from '../../../engines';
 import {
@@ -89,6 +90,15 @@ const createMockRosterRepo = (): jest.Mocked<RosterRepository> => ({
   findByLeague: jest.fn(),
 } as unknown as jest.Mocked<RosterRepository>);
 
+const createMockPlayerRepo = (): jest.Mocked<PlayerRepository> => ({
+  findById: jest.fn().mockResolvedValue({
+    id: 100,
+    fullName: 'Test Player',
+    position: 'QB',
+    team: 'TST',
+  }),
+} as unknown as jest.Mocked<PlayerRepository>);
+
 const createMockEngine = (): jest.Mocked<IDraftEngine> => ({
   draftType: 'snake',
   getPickerForPickNumber: jest.fn((draft, draftOrder, pickNumber) => {
@@ -123,13 +133,15 @@ describe('DraftPickService', () => {
   let mockLeagueRepo: jest.Mocked<LeagueRepository>;
   let mockRosterRepo: jest.Mocked<RosterRepository>;
   let mockEngineFactory: jest.Mocked<DraftEngineFactory>;
+  let mockPlayerRepo: jest.Mocked<PlayerRepository>;
 
   beforeEach(() => {
     mockDraftRepo = createMockDraftRepo();
     mockLeagueRepo = createMockLeagueRepo();
     mockRosterRepo = createMockRosterRepo();
     mockEngineFactory = createMockEngineFactory();
-    draftPickService = new DraftPickService(mockDraftRepo, mockLeagueRepo, mockRosterRepo, mockEngineFactory);
+    mockPlayerRepo = createMockPlayerRepo();
+    draftPickService = new DraftPickService(mockDraftRepo, mockLeagueRepo, mockRosterRepo, mockEngineFactory, mockPlayerRepo);
   });
 
   describe('getDraftPicks', () => {

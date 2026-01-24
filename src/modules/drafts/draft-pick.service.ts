@@ -1,6 +1,7 @@
 import { DraftRepository } from './drafts.repository';
 import { Draft, DraftOrderEntry, draftToResponse } from './drafts.model';
 import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
+import { PlayerRepository } from '../players/players.repository';
 import {
   NotFoundException,
   ForbiddenException,
@@ -15,7 +16,8 @@ export class DraftPickService {
     private readonly draftRepo: DraftRepository,
     private readonly leagueRepo: LeagueRepository,
     private readonly rosterRepo: RosterRepository,
-    private readonly engineFactory: DraftEngineFactory
+    private readonly engineFactory: DraftEngineFactory,
+    private readonly playerRepo: PlayerRepository
   ) {}
 
   async getDraftPicks(leagueId: number, draftId: number, userId: string): Promise<any[]> {
@@ -85,10 +87,20 @@ export class DraftPickService {
     // Advance to next pick
     const nextPickInfo = await this.advanceToNextPick(draft, draftOrder, engine);
 
+    // Enrich pick with player info for socket event
+    const player = await this.playerRepo.findById(playerId);
+    const enrichedPick = {
+      ...pick,
+      is_auto_pick: false,
+      player_name: player?.fullName,
+      player_position: player?.position,
+      player_team: player?.team,
+    };
+
     // Emit socket events
     try {
       const socket = getSocketService();
-      socket.emitDraftPick(draftId, pick);
+      socket.emitDraftPick(draftId, enrichedPick);
 
       // Notify all users in draft that this player was removed from queues
       socket.emitQueueUpdated(draftId, { playerId, action: 'removed' });

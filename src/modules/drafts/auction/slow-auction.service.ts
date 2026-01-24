@@ -67,6 +67,11 @@ export class SlowAuctionService {
     return this.lotRepo.findActiveLotsByDraft(draftId);
   }
 
+  // Get lots for a draft with optional status filter
+  async getLotsByStatus(draftId: number, status?: string): Promise<AuctionLot[]> {
+    return this.lotRepo.findLotsByDraft(draftId, status);
+  }
+
   // Get a single lot by ID (validates it belongs to the draft)
   async getLotById(draftId: number, lotId: number): Promise<AuctionLot> {
     const lot = await this.lotRepo.findLotById(lotId);

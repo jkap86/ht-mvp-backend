@@ -95,7 +95,7 @@ export class DraftRepository {
 
   // Draft Order
   async getDraftOrder(draftId: number, limit?: number, offset?: number): Promise<DraftOrderEntry[]> {
-    let query = `SELECT dord.*, u.username
+    let query = `SELECT dord.*, u.username, r.user_id
        FROM draft_order dord
        LEFT JOIN rosters r ON dord.roster_id = r.id
        LEFT JOIN users u ON r.user_id = u.id
@@ -121,6 +121,7 @@ export class DraftRepository {
       rosterId: row.roster_id,
       draftPosition: row.draft_position,
       username: row.username,
+      userId: row.user_id,
     }));
   }
 

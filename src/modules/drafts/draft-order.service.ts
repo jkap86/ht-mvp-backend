@@ -8,17 +8,23 @@ import {
 
 /**
  * Cryptographically secure Fisher-Yates shuffle.
- * Uses crypto.randomBytes() for unbiased randomization.
+ * Uses crypto.randomBytes() with rejection sampling for unbiased randomization.
  */
 function secureShuffleArray<T>(array: T[]): T[] {
   const result = [...array];
   for (let i = result.length - 1; i > 0; i--) {
-    // Generate a random index from 0 to i (inclusive)
-    const randomBuffer = randomBytes(4);
-    const randomValue = randomBuffer.readUInt32BE(0);
-    const j = randomValue % (i + 1);
+    const range = i + 1;
+    // Calculate the largest multiple of range that fits in 32 bits
+    // to avoid modulo bias (2^32 isn't evenly divisible by all ranges)
+    const maxUnbiased = Math.floor(0x100000000 / range) * range;
 
-    // Swap elements
+    let randomValue: number;
+    do {
+      const randomBuffer = randomBytes(4);
+      randomValue = randomBuffer.readUInt32BE(0);
+    } while (randomValue >= maxUnbiased);
+
+    const j = randomValue % range;
     [result[i], result[j]] = [result[j], result[i]];
   }
   return result;

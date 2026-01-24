@@ -26,6 +26,7 @@ export interface NextPickDetails {
   round: number;
   rosterId: number;
   pickDeadline: Date;
+  status?: string;  // Optional: 'in_progress'
 }
 
 /**

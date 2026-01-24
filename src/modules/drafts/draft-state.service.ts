@@ -35,6 +35,13 @@ export class DraftStateService {
       throw new ValidationException('Draft order not set');
     }
 
+    // Validate positions are unique and contiguous from 1 to N
+    const positions = draftOrder.map(o => o.draftPosition).sort((a, b) => a - b);
+    const expectedPositions = Array.from({ length: draftOrder.length }, (_, i) => i + 1);
+    if (positions.join(',') !== expectedPositions.join(',')) {
+      throw new ValidationException('Draft order positions must be unique and contiguous from 1 to N');
+    }
+
     const firstPicker = draftOrder.find(o => o.draftPosition === 1);
 
     // Check if this is a fast auction draft
@@ -67,6 +74,7 @@ export class DraftStateService {
         currentRound: 1,
         currentRosterId: firstPicker?.rosterId,
         pickDeadline,
+        status: 'in_progress',
       });
     } catch {
       // Socket service may not be initialized in tests
@@ -156,6 +164,7 @@ export class DraftStateService {
         currentRound: updatedDraft.currentRound,
         currentRosterId: updatedDraft.currentRosterId,
         pickDeadline,
+        status: 'in_progress',
       });
     } catch {
       // Socket service may not be initialized in tests
@@ -277,6 +286,7 @@ export class DraftStateService {
           currentRound: prevRound,
           currentRosterId: prevPicker?.rosterId,
           pickDeadline,
+          status: 'in_progress',
         });
       }
     } catch {

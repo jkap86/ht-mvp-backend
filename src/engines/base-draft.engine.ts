@@ -75,6 +75,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
       round: nextRound,
       rosterId: nextPicker.rosterId,
       pickDeadline: this.calculatePickDeadline(draft),
+      status: 'in_progress',
     };
   }
 
@@ -257,6 +258,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
       round: nextRound,
       rosterId: nextPicker?.rosterId || 0,
       pickDeadline,
+      status: 'in_progress',
     };
   }
 

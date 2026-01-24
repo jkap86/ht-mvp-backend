@@ -51,8 +51,11 @@ export class DraftService {
       rounds?: number;
       pickTimeSeconds?: number;
       auctionSettings?: {
+        auction_mode?: 'slow' | 'fast';
         bid_window_seconds?: number;
         max_active_nominations_per_team?: number;
+        nomination_seconds?: number;
+        reset_on_bid_seconds?: number;
         min_bid?: number;
         min_increment?: number;
       };
@@ -66,12 +69,25 @@ export class DraftService {
     // Transform auction settings from snake_case (API) to camelCase (storage)
     const settings: Record<string, any> = {};
     if (options.auctionSettings) {
+      // Auction mode (slow/fast)
+      if (options.auctionSettings.auction_mode !== undefined) {
+        settings.auctionMode = options.auctionSettings.auction_mode;
+      }
+      // Slow auction settings
       if (options.auctionSettings.bid_window_seconds !== undefined) {
         settings.bidWindowSeconds = options.auctionSettings.bid_window_seconds;
       }
       if (options.auctionSettings.max_active_nominations_per_team !== undefined) {
         settings.maxActiveNominationsPerTeam = options.auctionSettings.max_active_nominations_per_team;
       }
+      // Fast auction settings
+      if (options.auctionSettings.nomination_seconds !== undefined) {
+        settings.nominationSeconds = options.auctionSettings.nomination_seconds;
+      }
+      if (options.auctionSettings.reset_on_bid_seconds !== undefined) {
+        settings.resetOnBidSeconds = options.auctionSettings.reset_on_bid_seconds;
+      }
+      // Shared settings
       if (options.auctionSettings.min_bid !== undefined) {
         settings.minBid = options.auctionSettings.min_bid;
       }
