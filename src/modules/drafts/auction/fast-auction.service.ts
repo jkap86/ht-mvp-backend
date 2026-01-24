@@ -6,7 +6,7 @@ import { DraftOrderService } from '../draft-order.service';
 import { SlowAuctionService } from './slow-auction.service';
 import { getSocketService } from '../../../socket/socket.service';
 import { PlayerRepository } from '../../players/players.repository';
-import { AuctionLot, AuctionProxyBid, auctionLotFromDatabase } from './auction.models';
+import { AuctionLot, AuctionProxyBid, auctionLotFromDatabase, auctionLotToResponse } from './auction.models';
 import { ValidationException, NotFoundException, ForbiddenException } from '../../../utils/exceptions';
 import { pool } from '../../../db/pool';
 import { Draft } from '../drafts.model';
@@ -160,9 +160,9 @@ export class FastAuctionService {
       settings.minBid
     );
 
-    // Emit socket event
+    // Emit socket event - convert to snake_case for frontend consistency
     const socket = getSocketService();
-    socket.emitAuctionLotCreated(draftId, { lot });
+    socket.emitAuctionLotCreated(draftId, { lot: auctionLotToResponse(lot) });
 
     return {
       lot,
@@ -284,9 +284,9 @@ export class FastAuctionService {
 
       await client.query('COMMIT');
 
-      // Emit lot updated event
+      // Emit lot updated event - convert to snake_case for frontend consistency
       const socket = getSocketService();
-      socket.emitAuctionLotUpdated(draftId, { lot: updatedLot });
+      socket.emitAuctionLotUpdated(draftId, { lot: auctionLotToResponse(updatedLot) });
 
       // Get proxy bid for response
       const proxyBidResult = await this.lotRepo.getProxyBid(lotId, roster.id);

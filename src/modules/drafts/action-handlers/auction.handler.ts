@@ -4,6 +4,7 @@ import { FastAuctionService } from '../auction/fast-auction.service';
 import { RosterRepository } from '../../leagues/leagues.repository';
 import { getSocketService } from '../../../socket';
 import { ForbiddenException, ValidationException, AppException } from '../../../utils/exceptions';
+import { auctionLotToResponse } from '../auction/auction.models';
 
 /**
  * Handles auction actions: nominate, set_max_bid
@@ -77,14 +78,15 @@ export class AuctionActionHandler implements ActionHandler {
     const result = await this.slowAuctionService.nominate(draftId, rosterId, playerId);
 
     // Emit socket event - wrap in { lot } for consistency with fast auction
+    // Convert to snake_case for frontend consistency
     try {
       const socket = getSocketService();
-      socket.emitAuctionLotCreated(draftId, { lot: result.lot });
+      socket.emitAuctionLotCreated(draftId, { lot: auctionLotToResponse(result.lot) });
     } catch (socketError) {
       console.warn(`Failed to emit lot created event: ${socketError}`);
     }
 
-    return { ok: true, action: 'nominate', data: { lot: result.lot }, message: result.message };
+    return { ok: true, action: 'nominate', data: { lot: auctionLotToResponse(result.lot) }, message: result.message };
   }
 
   private async handleFastNominate(
@@ -108,9 +110,10 @@ export class AuctionActionHandler implements ActionHandler {
     const result = await this.slowAuctionService.setMaxBid(draftId, lotId, rosterId, maxBid);
 
     // Emit socket events - wrap in { lot } for consistency with fast auction
+    // Convert to snake_case for frontend consistency
     try {
       const socket = getSocketService();
-      socket.emitAuctionLotUpdated(draftId, { lot: result.lot });
+      socket.emitAuctionLotUpdated(draftId, { lot: auctionLotToResponse(result.lot) });
 
       // Notify outbid users
       for (const notif of result.outbidNotifications) {
@@ -128,7 +131,7 @@ export class AuctionActionHandler implements ActionHandler {
       action: 'set_max_bid',
       data: {
         proxyBid: result.proxyBid,
-        lot: result.lot,
+        lot: auctionLotToResponse(result.lot),
         outbidNotifications: result.outbidNotifications
       },
       message: result.message
