@@ -92,6 +92,21 @@ export class LeagueService {
     return this.rosterService.joinLeague(leagueId, userId);
   }
 
+  async joinLeagueByInviteCode(inviteCode: string, userId: string): Promise<any> {
+    // Find league by invite code
+    const league = await this.leagueRepo.findByInviteCode(inviteCode);
+    if (!league) {
+      throw new NotFoundException('Invalid invite code');
+    }
+
+    // Join the league
+    const result = await this.rosterService.joinLeague(league.id, userId);
+
+    // Return the league with user's roster info
+    const updatedLeague = await this.leagueRepo.findByIdWithUserRoster(league.id, userId);
+    return updatedLeague!.toResponse();
+  }
+
   async getLeagueMembers(leagueId: number, userId: string): Promise<any[]> {
     return this.rosterService.getLeagueMembers(leagueId, userId);
   }

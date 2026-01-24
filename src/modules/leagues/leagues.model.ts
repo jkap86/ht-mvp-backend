@@ -3,6 +3,7 @@
  */
 
 export type LeagueMode = 'redraft' | 'dynasty' | 'keeper';
+export type SeasonStatus = 'pre_season' | 'regular_season' | 'playoffs' | 'offseason';
 
 export interface LeagueSettings {
   draftType?: 'snake' | 'linear' | 'third_round_reversal' | 'auction' | 'derby';
@@ -25,7 +26,10 @@ export class League {
     public readonly userRosterId?: number,
     public readonly commissionerRosterId?: number,
     public readonly mode: LeagueMode = 'redraft',
-    public readonly leagueSettings: LeagueSettings = {}
+    public readonly leagueSettings: LeagueSettings = {},
+    public readonly currentWeek: number = 1,
+    public readonly seasonStatus: SeasonStatus = 'pre_season',
+    public readonly inviteCode?: string
   ) {}
 
   static fromDatabase(row: any): League {
@@ -42,7 +46,10 @@ export class League {
       row.user_roster_id,
       row.commissioner_roster_id,
       row.mode || 'redraft',
-      row.league_settings || {}
+      row.league_settings || {},
+      row.current_week || 1,
+      row.season_status || 'pre_season',
+      row.invite_code
     );
   }
 
@@ -61,6 +68,9 @@ export class League {
       commissioner_roster_id: this.commissionerRosterId,
       mode: this.mode,
       league_settings: this.leagueSettings,
+      current_week: this.currentWeek,
+      season_status: this.seasonStatus,
+      invite_code: this.inviteCode,
     };
   }
 }

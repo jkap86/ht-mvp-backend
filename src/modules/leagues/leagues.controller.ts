@@ -67,6 +67,22 @@ export class LeagueController {
     }
   };
 
+  joinLeagueByInviteCode = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const userId = requireUserId(req);
+      const inviteCode = req.params.inviteCode as string;
+
+      if (!inviteCode || typeof inviteCode !== 'string' || inviteCode.length !== 8) {
+        throw new ValidationException('Invalid invite code format');
+      }
+
+      const league = await this.leagueService.joinLeagueByInviteCode(inviteCode, userId);
+      res.status(200).json(league);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   updateLeague = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const userId = requireUserId(req);
