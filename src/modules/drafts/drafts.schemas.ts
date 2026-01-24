@@ -5,10 +5,19 @@ export const draftTypeSchema = z.enum(['snake', 'linear', 'auction'], {
   message: 'Draft type must be "snake", "linear", or "auction"',
 });
 
+/** Zod schema for auction mode validation */
+export const auctionModeSchema = z.enum(['slow', 'fast']).default('slow');
+
 /** Zod schema for auction settings */
 export const auctionSettingsSchema = z.object({
+  auction_mode: auctionModeSchema,
+  // Slow auction settings
   bid_window_seconds: z.number().int().min(3600).max(172800).default(43200),
   max_active_nominations_per_team: z.number().int().min(1).max(10).default(2),
+  // Fast auction settings
+  nomination_seconds: z.number().int().min(15).max(120).default(45),
+  reset_on_bid_seconds: z.number().int().min(5).max(30).default(10),
+  // Shared settings
   min_bid: z.number().int().min(1).default(1),
   min_increment: z.number().int().min(1).default(1),
 });
@@ -80,6 +89,7 @@ export const draftActionSchema = z.discriminatedUnion('action', [
 
 // Type exports from Zod schemas
 export type DraftTypeSchema = z.infer<typeof draftTypeSchema>;
+export type AuctionModeSchema = z.infer<typeof auctionModeSchema>;
 export type AuctionSettingsInput = z.infer<typeof auctionSettingsSchema>;
 export type CreateDraftInput = z.infer<typeof createDraftSchema>;
 export type MakePickInput = z.infer<typeof makePickSchema>;
@@ -94,4 +104,7 @@ export const DRAFT_CONFIG_CONSTRAINTS = {
   bidWindowSeconds: { min: 3600, max: 172800 },
   maxActiveNominationsPerTeam: { min: 1, max: 10 },
   budget: { min: 1, max: 10000 },
+  // Fast auction constraints
+  nominationSeconds: { min: 15, max: 120 },
+  resetOnBidSeconds: { min: 5, max: 30 },
 } as const;

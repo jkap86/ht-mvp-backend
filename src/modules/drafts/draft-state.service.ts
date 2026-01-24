@@ -37,8 +37,15 @@ export class DraftStateService {
 
     const firstPicker = draftOrder.find(o => o.draftPosition === 1);
 
-    const pickDeadline = new Date();
-    pickDeadline.setSeconds(pickDeadline.getSeconds() + draft.pickTimeSeconds);
+    // Check if this is a fast auction draft
+    const isFastAuction = draft.draftType === 'auction' && draft.settings?.auctionMode === 'fast';
+
+    // For fast auctions, no pick deadline until nomination; for others, set deadline
+    let pickDeadline: Date | null = null;
+    if (!isFastAuction) {
+      pickDeadline = new Date();
+      pickDeadline.setSeconds(pickDeadline.getSeconds() + draft.pickTimeSeconds);
+    }
 
     const updatedDraft = await this.draftRepo.update(draftId, {
       status: 'in_progress',

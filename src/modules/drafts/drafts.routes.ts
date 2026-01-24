@@ -4,6 +4,7 @@ import { DraftQueueController } from './draft-queue.controller';
 import { DraftService } from './drafts.service';
 import { DraftQueueService } from './draft-queue.service';
 import { SlowAuctionService } from './auction/slow-auction.service';
+import { FastAuctionService } from './auction/fast-auction.service';
 import { RosterRepository } from '../leagues/leagues.repository';
 import { authMiddleware } from '../../middleware/auth.middleware';
 import { validateRequest } from '../../middleware/validation.middleware';
@@ -27,13 +28,14 @@ const draftService = container.resolve<DraftService>(KEYS.DRAFT_SERVICE);
 const queueService = container.resolve<DraftQueueService>(KEYS.DRAFT_QUEUE_SERVICE);
 const rosterRepo = container.resolve<RosterRepository>(KEYS.ROSTER_REPO);
 const slowAuctionService = container.resolve<SlowAuctionService>(KEYS.SLOW_AUCTION_SERVICE);
+const fastAuctionService = container.resolve<FastAuctionService>(KEYS.FAST_AUCTION_SERVICE);
 
 // Set up action dispatcher with all handlers
 const actionDispatcher = new ActionDispatcher();
 actionDispatcher.register(new StateActionHandler(draftService));
 actionDispatcher.register(new PickActionHandler(draftService));
 actionDispatcher.register(new QueueActionHandler(queueService, rosterRepo));
-actionDispatcher.register(new AuctionActionHandler(slowAuctionService, rosterRepo));
+actionDispatcher.register(new AuctionActionHandler(slowAuctionService, fastAuctionService, rosterRepo));
 
 // Draft controller with dispatcher for unified /actions endpoint
 const draftController = new DraftController(
@@ -87,6 +89,9 @@ router.get('/:draftId/picks', draftController.getDraftPicks);
 
 // POST /api/leagues/:leagueId/drafts/:draftId/pick
 router.post('/:draftId/pick', draftPickLimiter, validateRequest(makePickSchema), draftController.makePick);
+
+// GET /api/leagues/:leagueId/drafts/:draftId/auction/state
+router.get('/:draftId/auction/state', draftController.getAuctionState);
 
 // GET /api/leagues/:leagueId/drafts/:draftId/auction/lots
 router.get('/:draftId/auction/lots', draftController.getAuctionLots);

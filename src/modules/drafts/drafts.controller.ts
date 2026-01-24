@@ -252,6 +252,53 @@ export class DraftController {
     }
   };
 
+  getAuctionState = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const userId = requireUserId(req);
+      const leagueId = requireLeagueId(req);
+      const draftId = requireDraftId(req);
+
+      // Verify user is league member
+      if (!this.rosterRepo) {
+        throw new ValidationException('Roster repository not available');
+      }
+      const roster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId);
+      if (!roster) {
+        throw new ForbiddenException('You are not a member of this league');
+      }
+
+      // Get draft to determine auction mode
+      const draft = await this.draftService.getDraftById(leagueId, draftId, userId);
+      const auctionSettings = draft.settings?.auctionSettings;
+      const auctionMode = auctionSettings?.auctionMode || 'slow';
+
+      // Get active lot(s) - for fast auction, there's at most one
+      if (!this.slowAuctionService) {
+        throw new ValidationException('Auction service not available');
+      }
+      const lots = await this.slowAuctionService.getActiveLots(draftId);
+      const activeLot = lots.length > 0 ? lots[0] : null;
+
+      // Get budgets
+      const budgets = await this.slowAuctionService.getAllBudgets(draftId);
+
+      // Build response
+      const state = {
+        auctionMode,
+        activeLot,
+        activeLots: lots, // Include all for slow auction
+        currentNominatorRosterId: auctionMode === 'fast' ? draft.currentRosterId : null,
+        nominationNumber: auctionMode === 'fast' ? draft.currentPick : null,
+        settings: auctionSettings,
+        budgets,
+      };
+
+      res.status(200).json(state);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   makePick = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const userId = requireUserId(req);

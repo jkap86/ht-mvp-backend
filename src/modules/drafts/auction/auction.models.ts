@@ -37,6 +37,7 @@ export interface SlowAuctionSettings {
   maxActiveNominationsPerTeam: number;
   minBid: number;
   minIncrement: number;
+  auctionMode?: 'slow' | 'fast';
 }
 
 /**

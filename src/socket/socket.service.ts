@@ -267,6 +267,11 @@ export class SocketService {
     this.emitToUser(userId, SOCKET_EVENTS.AUCTION.OUTBID, data);
   }
 
+  // Emit nominator changed event (for fast auction)
+  emitAuctionNominatorChanged(draftId: number, data: { nominatorRosterId: number; nominationNumber: number }): void {
+    this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.AUCTION.NOMINATOR_CHANGED, data);
+  }
+
   // Emit to specific user (O(1) lookup via userSockets map)
   emitToUser(userId: string, event: string, data: any): void {
     const socketIds = this.userSockets.get(userId);

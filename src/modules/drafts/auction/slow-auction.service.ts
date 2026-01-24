@@ -49,7 +49,17 @@ export class SlowAuctionService {
       maxActiveNominationsPerTeam: draft.settings?.maxActiveNominationsPerTeam ?? 2,
       minBid: draft.settings?.minBid ?? 1,
       minIncrement: draft.settings?.minIncrement ?? 1,
+      auctionMode: draft.settings?.auctionMode ?? 'slow',
     };
+  }
+
+  // Get draft by ID
+  async getDraft(draftId: number): Promise<Draft> {
+    const draft = await this.draftRepo.findById(draftId);
+    if (!draft) {
+      throw new NotFoundException('Draft not found');
+    }
+    return draft;
   }
 
   // Get active lots for a draft

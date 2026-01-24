@@ -1,6 +1,7 @@
 import { Pool } from 'pg';
 import { container, KEYS } from '../container';
 import { SlowAuctionService } from '../modules/drafts/auction/slow-auction.service';
+import { FastAuctionService } from '../modules/drafts/auction/fast-auction.service';
 import { getSocketService } from '../socket/socket.service';
 import { logger } from '../config/logger.config';
 
@@ -70,6 +71,18 @@ async function processExpiredLots(): Promise<void> {
           }
         } catch (socketError) {
           logger.warn(`Failed to emit lot settlement event for lot ${result.lot.id}: ${socketError}`);
+        }
+
+        // Advance nominator for fast auctions
+        try {
+          const fastAuctionService = container.resolve<FastAuctionService>(KEYS.FAST_AUCTION_SERVICE);
+          await fastAuctionService.advanceNominator(result.lot.draftId);
+        } catch (error) {
+          logger.error('Failed to advance nominator', {
+            jobName: 'slow-auction',
+            draftId: result.lot.draftId,
+            error,
+          });
         }
       }
 
