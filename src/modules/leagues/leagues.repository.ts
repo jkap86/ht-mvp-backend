@@ -174,8 +174,8 @@ export class LeagueRepository {
     if (result.rows.length === 0) return false;
 
     const row = result.rows[0];
-    return row.commissioner_roster_id && row.roster_id &&
-      row.commissioner_roster_id === row.roster_id.toString();
+    if (!row.commissioner_roster_id || !row.roster_id) return false;
+    return parseInt(row.commissioner_roster_id, 10) === row.roster_id;
   }
 
   async updateCommissionerRosterId(leagueId: number, rosterId: number): Promise<void> {

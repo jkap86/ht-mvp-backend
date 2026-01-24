@@ -165,6 +165,25 @@ export class MatchupsRepository {
   }
 
   /**
+   * Get all finalized matchups for a league in a season
+   */
+  async getFinalizedByLeague(
+    leagueId: number,
+    season: number
+  ): Promise<Matchup[]> {
+    const result = await this.db.query(
+      `SELECT * FROM matchups
+       WHERE league_id = $1
+         AND season = $2
+         AND is_final = true
+       ORDER BY week`,
+      [leagueId, season]
+    );
+
+    return result.rows.map(matchupFromDatabase);
+  }
+
+  /**
    * Calculate standings from finalized matchups
    */
   async getStandings(leagueId: number, season: number): Promise<Standing[]> {

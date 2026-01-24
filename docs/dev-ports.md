@@ -4,8 +4,8 @@
 
 | Service | Port | Configurable | Notes |
 |---------|------|--------------|-------|
-| Backend API | 5000 | `PORT` env var | Express + Socket.IO |
-| Frontend (Flutter Web) | 3000 | Flutter CLI | Dev server only |
+| Backend API | 5000 | `PORT` env var | Express + Socket.IO (Warning: macOS AirPlay uses 5000) |
+| Frontend (Flutter Web) | 3000 | Flutter CLI | `flutter run -d chrome --web-port 3000` |
 | PostgreSQL | 5432 | `DATABASE_URL` | Default Postgres port |
 
 ## Backend Configuration

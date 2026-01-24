@@ -54,6 +54,9 @@ export class RostersController {
       const rosterId = this.requireRosterId(req);
       const userId = requireUserId(req);
       const { playerId } = req.body;
+      if (typeof playerId !== 'number' || !Number.isInteger(playerId)) {
+        throw new ValidationException('playerId must be an integer');
+      }
 
       const rosterPlayer = await this.rosterService.addPlayer(leagueId, rosterId, playerId, userId);
       res.status(201).json({ player: rosterPlayer });
@@ -86,6 +89,12 @@ export class RostersController {
       const rosterId = this.requireRosterId(req);
       const userId = requireUserId(req);
       const { addPlayerId, dropPlayerId } = req.body;
+      if (typeof addPlayerId !== 'number' || !Number.isInteger(addPlayerId)) {
+        throw new ValidationException('addPlayerId must be an integer');
+      }
+      if (typeof dropPlayerId !== 'number' || !Number.isInteger(dropPlayerId)) {
+        throw new ValidationException('dropPlayerId must be an integer');
+      }
 
       const rosterPlayer = await this.rosterService.addDropPlayer(
         leagueId,
@@ -166,6 +175,12 @@ export class RostersController {
       const rosterId = this.requireRosterId(req);
       const userId = requireUserId(req);
       const { week, lineup } = req.body;
+      if (typeof week !== 'number' || !Number.isInteger(week) || week < 1) {
+        throw new ValidationException('week must be a positive integer');
+      }
+      if (!lineup || typeof lineup !== 'object') {
+        throw new ValidationException('lineup must be an object');
+      }
 
       const updatedLineup = await this.lineupService.setLineup(
         leagueId,
@@ -187,6 +202,12 @@ export class RostersController {
       const rosterId = this.requireRosterId(req);
       const userId = requireUserId(req);
       const { week, playerId, toSlot } = req.body;
+      if (typeof playerId !== 'number' || !Number.isInteger(playerId)) {
+        throw new ValidationException('playerId must be an integer');
+      }
+      if (typeof toSlot !== 'string' || !toSlot.trim()) {
+        throw new ValidationException('toSlot must be a non-empty string');
+      }
 
       const lineup = await this.lineupService.movePlayer(
         leagueId,

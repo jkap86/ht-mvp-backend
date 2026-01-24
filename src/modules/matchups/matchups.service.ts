@@ -272,24 +272,54 @@ export class MatchupService {
     const season = parseInt(league.season, 10);
     const standings = await this.matchupsRepo.getStandings(leagueId, season);
 
-    // Calculate streaks
+    // Batch load all finalized matchups for the league in one query
+    const allMatchups = await this.matchupsRepo.getFinalizedByLeague(leagueId, season);
+
+    // Group matchups by roster for efficient streak calculation
+    const matchupsByRoster = new Map<number, Matchup[]>();
+    for (const matchup of allMatchups) {
+      // Add to roster1's list
+      if (!matchupsByRoster.has(matchup.roster1Id)) {
+        matchupsByRoster.set(matchup.roster1Id, []);
+      }
+      matchupsByRoster.get(matchup.roster1Id)!.push(matchup);
+
+      // Add to roster2's list
+      if (!matchupsByRoster.has(matchup.roster2Id)) {
+        matchupsByRoster.set(matchup.roster2Id, []);
+      }
+      matchupsByRoster.get(matchup.roster2Id)!.push(matchup);
+    }
+
+    // Calculate streaks from the grouped data (no additional queries)
     for (const standing of standings) {
-      standing.streak = await this.calculateStreak(standing.rosterId, season);
+      const rosterMatchups = matchupsByRoster.get(standing.rosterId) || [];
+      standing.streak = this.calculateStreakFromMatchups(rosterMatchups, standing.rosterId);
     }
 
     return standings;
   }
 
   /**
-   * Calculate win/loss streak for a roster
+   * Calculate win/loss streak for a roster (legacy method - uses individual query)
+   * @deprecated Use calculateStreakFromMatchups for batch processing
    */
   private async calculateStreak(rosterId: number, season: number): Promise<string> {
     const matchups = await this.matchupsRepo.getFinalizedByRoster(rosterId, season);
+    return this.calculateStreakFromMatchups(matchups, rosterId);
+  }
 
+  /**
+   * Calculate win/loss streak from pre-loaded matchups (no database query)
+   */
+  private calculateStreakFromMatchups(matchups: Matchup[], rosterId: number): string {
     if (matchups.length === 0) return '';
 
+    // Sort by week to ensure proper order
+    const sortedMatchups = [...matchups].sort((a, b) => a.week - b.week);
+
     // Get recent results, most recent first
-    const recentMatchups = matchups.slice(-5).reverse();
+    const recentMatchups = sortedMatchups.slice(-5).reverse();
 
     let streak = 0;
     let streakType: 'W' | 'L' | 'T' | null = null;
