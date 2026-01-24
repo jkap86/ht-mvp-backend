@@ -62,6 +62,7 @@ function bootstrap(): void {
 
   container.register(KEYS.ROSTER_SERVICE, () =>
     new RosterService(
+      container.resolve(KEYS.POOL),
       container.resolve(KEYS.LEAGUE_REPO),
       container.resolve(KEYS.ROSTER_REPO),
       container.resolve(KEYS.USER_REPO)

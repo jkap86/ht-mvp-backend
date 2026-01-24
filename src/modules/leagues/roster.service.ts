@@ -1,3 +1,4 @@
+import { Pool } from 'pg';
 import { LeagueRepository, RosterRepository } from './leagues.repository';
 import { UserRepository } from '../auth/auth.repository';
 import {
@@ -9,6 +10,7 @@ import {
 
 export class RosterService {
   constructor(
+    private readonly db: Pool,
     private readonly leagueRepo: LeagueRepository,
     private readonly rosterRepo: RosterRepository,
     private readonly userRepo?: UserRepository
@@ -31,31 +33,46 @@ export class RosterService {
       throw new NotFoundException('League not found');
     }
 
-    // Check if already a member
-    const existingRoster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId);
-    if (existingRoster) {
-      throw new ConflictException('You are already a member of this league');
+    // Use transaction with advisory lock to prevent exceeding roster limits
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+      // Advisory lock on league to prevent concurrent joins
+      await client.query('SELECT pg_advisory_xact_lock($1)', [leagueId]);
+
+      // Check if already a member (inside transaction)
+      const existingRoster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId, client);
+      if (existingRoster) {
+        throw new ConflictException('You are already a member of this league');
+      }
+
+      // Check if league is full (inside transaction)
+      const rosterCount = await this.rosterRepo.getRosterCount(leagueId, client);
+      if (rosterCount >= league.totalRosters) {
+        throw new ConflictException('League is full');
+      }
+
+      // Get next roster ID (inside transaction)
+      const nextRosterId = await this.rosterRepo.getNextRosterId(leagueId, client);
+
+      // Create roster (inside transaction)
+      const roster = await this.rosterRepo.create(leagueId, userId, nextRosterId, client);
+
+      await client.query('COMMIT');
+
+      return {
+        message: 'Successfully joined the league',
+        roster: {
+          roster_id: roster.rosterId,
+          league_id: roster.leagueId,
+        },
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
-
-    // Check if league is full
-    const rosterCount = await this.rosterRepo.getRosterCount(leagueId);
-    if (rosterCount >= league.totalRosters) {
-      throw new ConflictException('League is full');
-    }
-
-    // Get next roster ID
-    const nextRosterId = await this.rosterRepo.getNextRosterId(leagueId);
-
-    // Create roster
-    const roster = await this.rosterRepo.create(leagueId, userId, nextRosterId);
-
-    return {
-      message: 'Successfully joined the league',
-      roster: {
-        roster_id: roster.rosterId,
-        league_id: roster.leagueId,
-      },
-    };
   }
 
   async getLeagueMembers(leagueId: number, userId: string): Promise<any[]> {

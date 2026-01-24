@@ -50,7 +50,7 @@ export class RosterService {
     playerId: number,
     userId: string
   ): Promise<RosterPlayer> {
-    // Validate user owns this roster
+    // Validate user owns this roster (can be done outside transaction)
     const roster = await this.rosterRepo.findById(rosterId);
     if (!roster || roster.leagueId !== leagueId) {
       throw new NotFoundException('Roster not found');
@@ -60,29 +60,31 @@ export class RosterService {
       throw new ForbiddenException('You can only manage your own roster');
     }
 
-    // Check if player is already owned
-    const owner = await this.rosterPlayersRepo.findOwner(leagueId, playerId);
-    if (owner) {
-      throw new ConflictException('Player is already on a roster');
-    }
-
-    // Check roster size limit
-    const league = await this.leagueRepo.findById(leagueId);
-    if (!league) {
-      throw new NotFoundException('League not found');
-    }
-
-    const rosterSize = await this.rosterPlayersRepo.getPlayerCount(rosterId);
-    const maxRosterSize = league.settings?.roster_size || 15;
-
-    if (rosterSize >= maxRosterSize) {
-      throw new ValidationException(`Roster is full (${maxRosterSize} players max)`);
-    }
-
-    // Use transaction for atomic operation
+    // Use transaction with advisory lock for atomic operation
     const client = await this.db.connect();
     try {
       await client.query('BEGIN');
+      // Advisory lock on league to prevent concurrent free agent claims
+      await client.query('SELECT pg_advisory_xact_lock($1)', [leagueId]);
+
+      // Check if player is already owned (inside transaction)
+      const owner = await this.rosterPlayersRepo.findOwner(leagueId, playerId, client);
+      if (owner) {
+        throw new ConflictException('Player is already on a roster');
+      }
+
+      // Check roster size limit (inside transaction)
+      const league = await this.leagueRepo.findById(leagueId);
+      if (!league) {
+        throw new NotFoundException('League not found');
+      }
+
+      const rosterSize = await this.rosterPlayersRepo.getPlayerCount(rosterId, client);
+      const maxRosterSize = league.settings?.roster_size || 15;
+
+      if (rosterSize >= maxRosterSize) {
+        throw new ValidationException(`Roster is full (${maxRosterSize} players max)`);
+      }
 
       const rosterPlayer = await this.rosterPlayersRepo.addPlayer(
         rosterId,
@@ -181,7 +183,7 @@ export class RosterService {
     dropPlayerId: number,
     userId: string
   ): Promise<RosterPlayer> {
-    // Validate user owns this roster
+    // Validate user owns this roster (can be done outside transaction)
     const roster = await this.rosterRepo.findById(rosterId);
     if (!roster || roster.leagueId !== leagueId) {
       throw new NotFoundException('Roster not found');
@@ -191,27 +193,33 @@ export class RosterService {
       throw new ForbiddenException('You can only manage your own roster');
     }
 
-    // Check player to add is not owned
-    const owner = await this.rosterPlayersRepo.findOwner(leagueId, addPlayerId);
-    if (owner) {
-      throw new ConflictException('Player is already on a roster');
-    }
-
-    // Check player to drop is on roster
-    const existing = await this.rosterPlayersRepo.findByRosterAndPlayer(rosterId, dropPlayerId);
-    if (!existing) {
-      throw new NotFoundException('Player to drop is not on this roster');
-    }
-
-    const league = await this.leagueRepo.findById(leagueId);
-    if (!league) {
-      throw new NotFoundException('League not found');
-    }
-
-    // Use transaction
+    // Use transaction with advisory lock
     const client = await this.db.connect();
     try {
       await client.query('BEGIN');
+      // Advisory lock on league to prevent concurrent free agent claims
+      await client.query('SELECT pg_advisory_xact_lock($1)', [leagueId]);
+
+      // Check player to add is not owned (inside transaction)
+      const owner = await this.rosterPlayersRepo.findOwner(leagueId, addPlayerId, client);
+      if (owner) {
+        throw new ConflictException('Player is already on a roster');
+      }
+
+      // Check player to drop is on roster (inside transaction)
+      const existing = await this.rosterPlayersRepo.findByRosterAndPlayer(
+        rosterId,
+        dropPlayerId,
+        client
+      );
+      if (!existing) {
+        throw new NotFoundException('Player to drop is not on this roster');
+      }
+
+      const league = await this.leagueRepo.findById(leagueId);
+      if (!league) {
+        throw new NotFoundException('League not found');
+      }
 
       // Drop first
       await this.rosterPlayersRepo.removePlayer(rosterId, dropPlayerId, client);

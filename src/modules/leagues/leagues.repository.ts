@@ -1,4 +1,4 @@
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import { League, Roster } from './leagues.model';
 
 export interface CreateLeagueParams {
@@ -215,8 +215,13 @@ export class RosterRepository {
     }));
   }
 
-  async findByLeagueAndUser(leagueId: number, userId: string): Promise<Roster | null> {
-    const result = await this.db.query(
+  async findByLeagueAndUser(
+    leagueId: number,
+    userId: string,
+    client?: PoolClient
+  ): Promise<Roster | null> {
+    const db = client || this.db;
+    const result = await db.query(
       'SELECT * FROM rosters WHERE league_id = $1 AND user_id = $2',
       [leagueId, userId]
     );
@@ -259,8 +264,14 @@ export class RosterRepository {
     };
   }
 
-  async create(leagueId: number, userId: string, rosterId: number): Promise<Roster> {
-    const result = await this.db.query(
+  async create(
+    leagueId: number,
+    userId: string,
+    rosterId: number,
+    client?: PoolClient
+  ): Promise<Roster> {
+    const db = client || this.db;
+    const result = await db.query(
       `INSERT INTO rosters (league_id, user_id, roster_id)
        VALUES ($1, $2, $3)
        RETURNING *`,
@@ -281,16 +292,18 @@ export class RosterRepository {
     };
   }
 
-  async getNextRosterId(leagueId: number): Promise<number> {
-    const result = await this.db.query(
+  async getNextRosterId(leagueId: number, client?: PoolClient): Promise<number> {
+    const db = client || this.db;
+    const result = await db.query(
       'SELECT COALESCE(MAX(roster_id), 0) + 1 as next_id FROM rosters WHERE league_id = $1',
       [leagueId]
     );
     return result.rows[0].next_id;
   }
 
-  async getRosterCount(leagueId: number): Promise<number> {
-    const result = await this.db.query(
+  async getRosterCount(leagueId: number, client?: PoolClient): Promise<number> {
+    const db = client || this.db;
+    const result = await db.query(
       'SELECT COUNT(*) as count FROM rosters WHERE league_id = $1',
       [leagueId]
     );

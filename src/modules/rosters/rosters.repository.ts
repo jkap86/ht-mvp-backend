@@ -38,8 +38,13 @@ export class RosterPlayersRepository {
   /**
    * Get a specific player on a roster
    */
-  async findByRosterAndPlayer(rosterId: number, playerId: number): Promise<RosterPlayer | null> {
-    const result = await this.db.query(
+  async findByRosterAndPlayer(
+    rosterId: number,
+    playerId: number,
+    client?: PoolClient
+  ): Promise<RosterPlayer | null> {
+    const db = client || this.db;
+    const result = await db.query(
       'SELECT * FROM roster_players WHERE roster_id = $1 AND player_id = $2',
       [rosterId, playerId]
     );
@@ -51,8 +56,13 @@ export class RosterPlayersRepository {
   /**
    * Check if a player is on any roster in a league
    */
-  async findOwner(leagueId: number, playerId: number): Promise<number | null> {
-    const result = await this.db.query(
+  async findOwner(
+    leagueId: number,
+    playerId: number,
+    client?: PoolClient
+  ): Promise<number | null> {
+    const db = client || this.db;
+    const result = await db.query(
       `SELECT rp.roster_id
        FROM roster_players rp
        JOIN rosters r ON rp.roster_id = r.id
@@ -100,8 +110,9 @@ export class RosterPlayersRepository {
   /**
    * Get roster player count
    */
-  async getPlayerCount(rosterId: number): Promise<number> {
-    const result = await this.db.query(
+  async getPlayerCount(rosterId: number, client?: PoolClient): Promise<number> {
+    const db = client || this.db;
+    const result = await db.query(
       'SELECT COUNT(*) as count FROM roster_players WHERE roster_id = $1',
       [rosterId]
     );
