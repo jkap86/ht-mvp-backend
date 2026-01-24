@@ -3,7 +3,7 @@ import { SlowAuctionService } from '../auction/slow-auction.service';
 import { FastAuctionService } from '../auction/fast-auction.service';
 import { RosterRepository } from '../../leagues/leagues.repository';
 import { getSocketService } from '../../../socket';
-import { ForbiddenException, ValidationException } from '../../../utils/exceptions';
+import { ForbiddenException, ValidationException, AppException } from '../../../utils/exceptions';
 
 /**
  * Handles auction actions: nominate, set_max_bid
@@ -35,21 +35,37 @@ export class AuctionActionHandler implements ActionHandler {
     const settings = this.slowAuctionService.getSettings(draft);
     const auctionMode = settings.auctionMode || 'slow';
 
-    switch (action) {
-      case 'nominate':
-        if (auctionMode === 'fast') {
-          return this.handleFastNominate(ctx.draftId, ctx.userId, params.playerId);
-        }
-        return this.handleNominate(ctx.draftId, roster.id, params.playerId);
+    try {
+      switch (action) {
+        case 'nominate':
+          if (auctionMode === 'fast') {
+            return await this.handleFastNominate(ctx.draftId, ctx.userId, params.playerId);
+          }
+          return await this.handleNominate(ctx.draftId, roster.id, params.playerId);
 
-      case 'set_max_bid':
-        if (auctionMode === 'fast') {
-          return this.handleFastSetMaxBid(ctx.draftId, ctx.userId, params.lotId, params.maxBid);
-        }
-        return this.handleSetMaxBid(ctx.draftId, roster.id, params.lotId, params.maxBid);
+        case 'set_max_bid':
+          if (auctionMode === 'fast') {
+            return await this.handleFastSetMaxBid(ctx.draftId, ctx.userId, params.lotId, params.maxBid);
+          }
+          return await this.handleSetMaxBid(ctx.draftId, roster.id, params.lotId, params.maxBid);
 
-      default:
-        throw new ValidationException(`AuctionActionHandler: Unknown action ${action}`);
+        default:
+          throw new ValidationException(`AuctionActionHandler: Unknown action ${action}`);
+      }
+    } catch (error) {
+      // Emit error to user via socket for real-time feedback
+      if (error instanceof AppException) {
+        try {
+          const socket = getSocketService();
+          socket.emitAuctionError(ctx.userId, {
+            action,
+            message: error.message,
+          });
+        } catch (socketError) {
+          // Ignore socket errors - HTTP response will still contain the error
+        }
+      }
+      throw error; // Re-throw for HTTP response
     }
   }
 
@@ -60,10 +76,10 @@ export class AuctionActionHandler implements ActionHandler {
   ): Promise<any> {
     const result = await this.slowAuctionService.nominate(draftId, rosterId, playerId);
 
-    // Emit socket event
+    // Emit socket event - wrap in { lot } for consistency with fast auction
     try {
       const socket = getSocketService();
-      socket.emitAuctionLotCreated(draftId, result.lot);
+      socket.emitAuctionLotCreated(draftId, { lot: result.lot });
     } catch (socketError) {
       console.warn(`Failed to emit lot created event: ${socketError}`);
     }
@@ -91,10 +107,10 @@ export class AuctionActionHandler implements ActionHandler {
   ): Promise<any> {
     const result = await this.slowAuctionService.setMaxBid(draftId, lotId, rosterId, maxBid);
 
-    // Emit socket events
+    // Emit socket events - wrap in { lot } for consistency with fast auction
     try {
       const socket = getSocketService();
-      socket.emitAuctionLotUpdated(draftId, result.lot);
+      socket.emitAuctionLotUpdated(draftId, { lot: result.lot });
 
       // Notify outbid users
       for (const notif of result.outbidNotifications) {

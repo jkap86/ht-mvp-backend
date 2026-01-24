@@ -46,6 +46,11 @@ async function processAutopicks(): Promise<void> {
       const expiredDrafts = await draftRepo.findExpiredDrafts();
 
       for (const draft of expiredDrafts) {
+        // Auction drafts use slow-auction.job.ts for settlement, not autopick
+        if (draft.draftType === 'auction') {
+          continue;
+        }
+
         draftsProcessed++;
         try {
           // Get the appropriate engine for this draft type

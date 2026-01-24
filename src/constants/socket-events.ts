@@ -44,6 +44,7 @@ export const SOCKET_EVENTS = {
     LOT_PASSED: 'draft:auction_lot_passed',
     OUTBID: 'draft:auction_outbid',
     NOMINATOR_CHANGED: 'draft:auction_nominator_changed',
+    ERROR: 'draft:auction_error',
   },
 } as const;
 

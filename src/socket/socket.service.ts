@@ -272,6 +272,11 @@ export class SocketService {
     this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.AUCTION.NOMINATOR_CHANGED, data);
   }
 
+  // Emit auction error to a specific user (for failed bids/nominations)
+  emitAuctionError(userId: string, data: { action: string; message: string }): void {
+    this.emitToUser(userId, SOCKET_EVENTS.AUCTION.ERROR, data);
+  }
+
   // Emit to specific user (O(1) lookup via userSockets map)
   emitToUser(userId: string, event: string, data: any): void {
     const socketIds = this.userSockets.get(userId);

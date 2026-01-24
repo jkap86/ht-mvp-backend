@@ -7,6 +7,10 @@ import { PlayerRepository } from '../modules/players/players.repository';
 /**
  * Factory for creating draft engines based on draft type.
  * Uses Strategy pattern to provide the correct engine for each draft type.
+ *
+ * NOTE: Auction drafts do NOT use this factory. They use ActionDispatcher +
+ * AuctionActionHandler + FastAuctionService/SlowAuctionService instead.
+ * Callers should check `draftType !== 'auction'` before using createEngine().
  */
 export class DraftEngineFactory {
   constructor(
