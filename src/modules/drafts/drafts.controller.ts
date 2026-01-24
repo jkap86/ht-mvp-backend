@@ -7,6 +7,30 @@ import { RosterRepository } from '../leagues/leagues.repository';
 import { requireUserId, requireLeagueId, requireDraftId, requirePlayerId } from '../../utils/controller-helpers';
 import { ForbiddenException, ValidationException } from '../../utils/exceptions';
 import { ActionDispatcher } from './action-handlers';
+import { auctionLotToResponse } from './auction/auction.models';
+
+/**
+ * Convert budget to snake_case for API response
+ */
+function budgetToResponse(budget: {
+  rosterId: number;
+  username: string;
+  totalBudget: number;
+  spent: number;
+  leadingCommitment: number;
+  available: number;
+  wonCount: number;
+}): Record<string, any> {
+  return {
+    roster_id: budget.rosterId,
+    username: budget.username,
+    total_budget: budget.totalBudget,
+    spent: budget.spent,
+    leading_commitment: budget.leadingCommitment,
+    available: budget.available,
+    won_count: budget.wonCount,
+  };
+}
 
 export class DraftController {
   private actionDispatcher?: ActionDispatcher;
@@ -189,7 +213,7 @@ export class DraftController {
       const lots = status
         ? await this.slowAuctionService.getLotsByStatus(draftId, status)
         : await this.slowAuctionService.getActiveLots(draftId);
-      res.status(200).json({ lots });
+      res.status(200).json({ lots: lots.map(auctionLotToResponse) });
     } catch (error) {
       next(error);
     }
@@ -221,7 +245,7 @@ export class DraftController {
       const lot = await this.slowAuctionService.getLotById(draftId, lotId);
       const userProxyBid = await this.slowAuctionService.getUserProxyBid(lotId, roster.id);
 
-      res.status(200).json({ lot, userProxyBid });
+      res.status(200).json({ lot: lot ? auctionLotToResponse(lot) : null, userProxyBid });
     } catch (error) {
       next(error);
     }
@@ -246,7 +270,7 @@ export class DraftController {
       }
 
       const budgets = await this.slowAuctionService.getAllBudgets(draftId);
-      res.status(200).json({ budgets });
+      res.status(200).json({ budgets: budgets.map(budgetToResponse) });
     } catch (error) {
       next(error);
     }
@@ -288,20 +312,28 @@ export class DraftController {
         throw new ValidationException('Auction service not available');
       }
       const lots = await this.slowAuctionService.getActiveLots(draftId);
-      const activeLot = lots.length > 0 ? lots[0] : null;
+      const activeLot = lots.length > 0 ? auctionLotToResponse(lots[0]) : null;
 
       // Get budgets
       const budgets = await this.slowAuctionService.getAllBudgets(draftId);
 
-      // Build response
+      // Build response with snake_case conversion
       const state = {
-        auctionMode,
-        activeLot,
-        activeLots: lots, // Include all for slow auction
-        currentNominatorRosterId: auctionMode === 'fast' ? draft.currentRosterId : null,
-        nominationNumber: auctionMode === 'fast' ? draft.currentPick : null,
-        settings: auctionSettings,
-        budgets,
+        auction_mode: auctionMode,
+        active_lot: activeLot,
+        active_lots: lots.map(auctionLotToResponse), // Include all for slow auction
+        current_nominator_roster_id: auctionMode === 'fast' ? draft.currentRosterId : null,
+        nomination_number: auctionMode === 'fast' ? draft.currentPick : null,
+        settings: {
+          auction_mode: auctionSettings.auctionMode,
+          bid_window_seconds: auctionSettings.bidWindowSeconds,
+          max_active_nominations_per_team: auctionSettings.maxActiveNominationsPerTeam,
+          nomination_seconds: auctionSettings.nominationSeconds,
+          reset_on_bid_seconds: auctionSettings.resetOnBidSeconds,
+          min_bid: auctionSettings.minBid,
+          min_increment: auctionSettings.minIncrement,
+        },
+        budgets: budgets.map(budgetToResponse),
       };
 
       res.status(200).json(state);
