@@ -16,12 +16,13 @@ export class PickActionHandler implements ActionHandler {
     params: Record<string, any>
   ): Promise<any> {
     if (action === 'pick') {
-      return this.draftService.makePick(
+      const result = await this.draftService.makePick(
         ctx.leagueId,
         ctx.draftId,
         ctx.userId,
         params.playerId
       );
+      return { ok: true, action: 'pick', data: { pick: result } };
     }
     throw new Error(`PickActionHandler: Unknown action ${action}`);
   }

@@ -16,14 +16,22 @@ export class StateActionHandler implements ActionHandler {
     _params: Record<string, any>
   ): Promise<any> {
     switch (action) {
-      case 'start':
-        return this.draftService.startDraft(ctx.draftId, ctx.userId);
-      case 'pause':
-        return this.draftService.pauseDraft(ctx.draftId, ctx.userId);
-      case 'resume':
-        return this.draftService.resumeDraft(ctx.draftId, ctx.userId);
-      case 'complete':
-        return this.draftService.completeDraft(ctx.draftId, ctx.userId);
+      case 'start': {
+        const result = await this.draftService.startDraft(ctx.draftId, ctx.userId);
+        return { ok: true, action: 'start', data: { draft: result } };
+      }
+      case 'pause': {
+        const result = await this.draftService.pauseDraft(ctx.draftId, ctx.userId);
+        return { ok: true, action: 'pause', data: { draft: result } };
+      }
+      case 'resume': {
+        const result = await this.draftService.resumeDraft(ctx.draftId, ctx.userId);
+        return { ok: true, action: 'resume', data: { draft: result } };
+      }
+      case 'complete': {
+        const result = await this.draftService.completeDraft(ctx.draftId, ctx.userId);
+        return { ok: true, action: 'complete', data: { draft: result } };
+      }
       default:
         throw new Error(`StateActionHandler: Unknown action ${action}`);
     }

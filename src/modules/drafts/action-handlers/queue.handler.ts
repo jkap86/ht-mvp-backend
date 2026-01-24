@@ -27,16 +27,18 @@ export class QueueActionHandler implements ActionHandler {
     }
 
     switch (action) {
-      case 'queue_add':
-        return this.queueService.addToQueue(ctx.draftId, roster.id, params.playerId);
+      case 'queue_add': {
+        const result = await this.queueService.addToQueue(ctx.draftId, roster.id, params.playerId);
+        return { ok: true, action: 'queue_add', data: { queueEntry: result } };
+      }
 
       case 'queue_remove':
         await this.queueService.removeFromQueueByPlayer(ctx.draftId, roster.id, params.playerId);
-        return { success: true };
+        return { ok: true, action: 'queue_remove', data: null };
 
       case 'queue_reorder':
         await this.queueService.reorderQueue(ctx.draftId, roster.id, params.playerIds);
-        return { success: true };
+        return { ok: true, action: 'queue_reorder', data: null };
 
       default:
         throw new Error(`QueueActionHandler: Unknown action ${action}`);

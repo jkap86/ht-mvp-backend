@@ -2,7 +2,7 @@ import { Pool } from 'pg';
 import { container, KEYS } from '../container';
 import { SlowAuctionService } from '../modules/drafts/auction/slow-auction.service';
 import { getSocketService } from '../socket/socket.service';
-import { logger } from '../config/env.config';
+import { logger } from '../config/logger.config';
 
 let intervalId: NodeJS.Timeout | null = null;
 
@@ -12,6 +12,9 @@ const SLOW_AUCTION_LOCK_ID = 999998;
 async function processExpiredLots(): Promise<void> {
   const pool = container.resolve<Pool>(KEYS.POOL);
   const client = await pool.connect();
+  const tickStart = Date.now();
+  let lotsSettled = 0;
+  let lotsPassed = 0;
 
   try {
     // Try to acquire advisory lock (non-blocking)
@@ -22,8 +25,11 @@ async function processExpiredLots(): Promise<void> {
 
     if (!lockResult.rows[0].acquired) {
       // Another instance has the lock, skip this tick
+      logger.debug('slow-auction lock not acquired, skipping', { jobName: 'slow-auction' });
       return;
     }
+
+    logger.debug('slow-auction tick started', { jobName: 'slow-auction' });
 
     try {
       const slowAuctionService = container.resolve<SlowAuctionService>(KEYS.SLOW_AUCTION_SERVICE);
@@ -31,11 +37,13 @@ async function processExpiredLots(): Promise<void> {
 
       for (const result of results) {
         if (result.winner) {
+          lotsSettled++;
           logger.info(
             `Lot ${result.lot.id} settled: player ${result.lot.playerId} ` +
             `won by roster ${result.winner.rosterId} for $${result.winner.amount}`
           );
         } else {
+          lotsPassed++;
           logger.info(
             `Lot ${result.lot.id} passed: player ${result.lot.playerId} received no bids`
           );
@@ -64,12 +72,15 @@ async function processExpiredLots(): Promise<void> {
           logger.warn(`Failed to emit lot settlement event for lot ${result.lot.id}: ${socketError}`);
         }
       }
+
+      const durationMs = Date.now() - tickStart;
+      logger.info('slow-auction tick complete', { jobName: 'slow-auction', lotsSettled, lotsPassed, durationMs });
     } finally {
       // Always release advisory lock
       await client.query('SELECT pg_advisory_unlock($1)', [SLOW_AUCTION_LOCK_ID]);
     }
   } catch (error) {
-    logger.error(`Slow auction job error: ${error}`);
+    logger.error('slow-auction job error', { jobName: 'slow-auction', error });
   } finally {
     client.release();
   }
@@ -87,7 +98,7 @@ export function startSlowAuctionJob(): void {
     try {
       await processExpiredLots();
     } catch (error) {
-      logger.error(`Slow auction job tick error: ${error}`);
+      logger.error('slow-auction job error', { jobName: 'slow-auction', error });
     }
   }, SETTLEMENT_INTERVAL_MS);
 }

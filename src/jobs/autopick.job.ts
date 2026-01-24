@@ -2,7 +2,7 @@ import { Pool } from 'pg';
 import { container, KEYS } from '../container';
 import { DraftEngineFactory } from '../engines';
 import { DraftRepository } from '../modules/drafts/drafts.repository';
-import { logger } from '../config/env.config';
+import { logger } from '../config/logger.config';
 
 let intervalId: NodeJS.Timeout | null = null;
 
@@ -19,6 +19,9 @@ const AUTOPICK_LOCK_ID = 999999;
 async function processAutopicks(): Promise<void> {
   const pool = container.resolve<Pool>(KEYS.POOL);
   const client = await pool.connect();
+  const tickStart = Date.now();
+  let draftsProcessed = 0;
+  let picksAutomated = 0;
 
   try {
     // Try to acquire advisory lock (non-blocking)
@@ -29,8 +32,11 @@ async function processAutopicks(): Promise<void> {
 
     if (!lockResult.rows[0].acquired) {
       // Another instance has the lock, skip this tick
+      logger.debug('autopick lock not acquired, skipping', { jobName: 'autopick' });
       return;
     }
+
+    logger.debug('autopick tick started', { jobName: 'autopick' });
 
     try {
       const draftRepo = container.resolve<DraftRepository>(KEYS.DRAFT_REPO);
@@ -40,18 +46,23 @@ async function processAutopicks(): Promise<void> {
       const expiredDrafts = await draftRepo.findExpiredDrafts();
 
       for (const draft of expiredDrafts) {
+        draftsProcessed++;
         try {
           // Get the appropriate engine for this draft type
           const engine = engineFactory.createEngine(draft.draftType);
           const result = await engine.tick(draft.id);
 
           if (result.actionTaken) {
+            picksAutomated++;
             logger.info(`Draft ${draft.id}: autopick via engine.tick() (${result.reason})`);
           }
         } catch (error) {
-          logger.error(`Failed to process draft ${draft.id}: ${error}`);
+          logger.error('autopick draft error', { jobName: 'autopick', draftId: draft.id, error });
         }
       }
+
+      const durationMs = Date.now() - tickStart;
+      logger.info('autopick tick complete', { jobName: 'autopick', draftsProcessed, picksAutomated, durationMs });
     } finally {
       // Always release advisory lock
       await client.query('SELECT pg_advisory_unlock($1)', [AUTOPICK_LOCK_ID]);
@@ -77,7 +88,7 @@ export function startAutopickJob(): void {
     try {
       await processAutopicks();
     } catch (error) {
-      logger.error(`Autopick job error: ${error}`);
+      logger.error('autopick job error', { jobName: 'autopick', error });
     }
   }, AUTOPICK_INTERVAL_MS);
 }

@@ -54,7 +54,7 @@ export class AuctionActionHandler implements ActionHandler {
       console.warn(`Failed to emit lot created event: ${socketError}`);
     }
 
-    return result;
+    return { ok: true, action: 'nominate', data: { lot: result.lot }, message: result.message };
   }
 
   private async handleSetMaxBid(
@@ -81,6 +81,15 @@ export class AuctionActionHandler implements ActionHandler {
       console.warn(`Failed to emit auction events: ${socketError}`);
     }
 
-    return result;
+    return {
+      ok: true,
+      action: 'set_max_bid',
+      data: {
+        proxyBid: result.proxyBid,
+        lot: result.lot,
+        outbidNotifications: result.outbidNotifications
+      },
+      message: result.message
+    };
   }
 }
