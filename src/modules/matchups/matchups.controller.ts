@@ -2,7 +2,7 @@ import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../../middleware/auth.middleware';
 import { MatchupService } from './matchups.service';
 import { ScoringService } from '../scoring/scoring.service';
-import { matchupDetailsToResponse, standingToResponse } from './matchups.model';
+import { matchupDetailsToResponse, matchupWithLineupsToResponse, standingToResponse } from './matchups.model';
 import { requireUserId, requireLeagueId } from '../../utils/controller-helpers';
 import { parseIntParam } from '../../utils/params';
 import { ValidationException } from '../../utils/exceptions';
@@ -15,6 +15,7 @@ export class MatchupsController {
     // Bind methods to preserve 'this' context
     this.getMatchups = this.getMatchups.bind(this);
     this.getMatchup = this.getMatchup.bind(this);
+    this.getMatchupWithLineups = this.getMatchupWithLineups.bind(this);
     this.getStandings = this.getStandings.bind(this);
     this.generateSchedule = this.generateSchedule.bind(this);
     this.finalizeMatchups = this.finalizeMatchups.bind(this);
@@ -50,6 +51,25 @@ export class MatchupsController {
         return;
       }
       res.json({ matchup: matchupDetailsToResponse(matchup) });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // GET /api/leagues/:leagueId/matchups/:matchupId/detail
+  async getMatchupWithLineups(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const matchupId = parseIntParam(req.params.matchupId);
+      const userId = requireUserId(req);
+
+      if (isNaN(matchupId)) throw new ValidationException('Invalid matchup ID');
+
+      const matchup = await this.matchupService.getMatchupWithLineups(matchupId, userId);
+      if (!matchup) {
+        res.status(404).json({ error: 'Matchup not found' });
+        return;
+      }
+      res.json({ matchup: matchupWithLineupsToResponse(matchup) });
     } catch (error) {
       next(error);
     }

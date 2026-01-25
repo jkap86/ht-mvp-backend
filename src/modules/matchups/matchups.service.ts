@@ -3,7 +3,18 @@ import { MatchupsRepository } from './matchups.repository';
 import { LineupsRepository } from '../lineups/lineups.repository';
 import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import { ScoringService } from '../scoring/scoring.service';
-import { Matchup, MatchupDetails, Standing } from './matchups.model';
+import { PlayerStatsRepository } from '../scoring/scoring.repository';
+import { ScoringRules, DEFAULT_SCORING_RULES, ScoringType } from '../scoring/scoring.model';
+import { PlayerRepository } from '../players/players.repository';
+import {
+  Matchup,
+  MatchupDetails,
+  Standing,
+  MatchupWithLineups,
+  MatchupTeamLineup,
+  MatchupPlayerPerformance,
+} from './matchups.model';
+import { LineupSlots, PositionSlot } from '../lineups/lineups.model';
 import {
   NotFoundException,
   ForbiddenException,
@@ -17,7 +28,9 @@ export class MatchupService {
     private readonly lineupsRepo: LineupsRepository,
     private readonly rosterRepo: RosterRepository,
     private readonly leagueRepo: LeagueRepository,
-    private readonly scoringService: ScoringService
+    private readonly scoringService: ScoringService,
+    private readonly playerRepo: PlayerRepository,
+    private readonly statsRepo: PlayerStatsRepository
   ) {}
 
   /**
@@ -187,6 +200,167 @@ export class MatchupService {
     );
 
     return matchups.find(m => m.id === matchupId) || null;
+  }
+
+  /**
+   * Get a matchup with full lineup details for both teams
+   */
+  async getMatchupWithLineups(
+    matchupId: number,
+    userId: string
+  ): Promise<MatchupWithLineups | null> {
+    // Get basic matchup details first
+    const matchupDetails = await this.getMatchup(matchupId, userId);
+    if (!matchupDetails) return null;
+
+    // Get lineups for both rosters
+    const [lineup1, lineup2] = await Promise.all([
+      this.lineupsRepo.findByRosterAndWeek(
+        matchupDetails.roster1Id,
+        matchupDetails.season,
+        matchupDetails.week
+      ),
+      this.lineupsRepo.findByRosterAndWeek(
+        matchupDetails.roster2Id,
+        matchupDetails.season,
+        matchupDetails.week
+      ),
+    ]);
+
+    // Build team lineups
+    const team1 = await this.buildTeamLineup(
+      matchupDetails.roster1Id,
+      matchupDetails.roster1TeamName,
+      lineup1?.lineup,
+      matchupDetails.season,
+      matchupDetails.week,
+      matchupDetails.roster1Points
+    );
+
+    const team2 = await this.buildTeamLineup(
+      matchupDetails.roster2Id,
+      matchupDetails.roster2TeamName,
+      lineup2?.lineup,
+      matchupDetails.season,
+      matchupDetails.week,
+      matchupDetails.roster2Points
+    );
+
+    return {
+      ...matchupDetails,
+      team1,
+      team2,
+    };
+  }
+
+  /**
+   * Build team lineup with player details and points
+   */
+  private async buildTeamLineup(
+    rosterId: number,
+    teamName: string,
+    lineup: LineupSlots | undefined,
+    season: number,
+    week: number,
+    totalPoints: number | null
+  ): Promise<MatchupTeamLineup> {
+    if (!lineup) {
+      return {
+        rosterId,
+        teamName,
+        totalPoints: totalPoints ?? 0,
+        players: [],
+      };
+    }
+
+    // Collect all player IDs
+    const allPlayerIds: number[] = [];
+    const starterSlots: PositionSlot[] = ['QB', 'RB', 'WR', 'TE', 'FLEX', 'K', 'DEF'];
+
+    for (const slot of starterSlots) {
+      allPlayerIds.push(...(lineup[slot] || []));
+    }
+    allPlayerIds.push(...(lineup.BN || []));
+
+    if (allPlayerIds.length === 0) {
+      return {
+        rosterId,
+        teamName,
+        totalPoints: totalPoints ?? 0,
+        players: [],
+      };
+    }
+
+    // Fetch players and stats in parallel
+    const [players, stats] = await Promise.all([
+      this.playerRepo.findByIds(allPlayerIds),
+      this.statsRepo.findByPlayersAndWeek(allPlayerIds, season, week),
+    ]);
+
+    // Create maps for lookup
+    const playerMap = new Map(players.map(p => [p.id, p]));
+    const statsMap = new Map(stats.map(s => [s.playerId, s]));
+
+    // Get scoring rules for this league
+    const roster = await this.rosterRepo.findById(rosterId);
+    const league = roster ? await this.leagueRepo.findById(roster.leagueId) : null;
+    const scoringType: ScoringType = league?.scoringSettings?.type || 'ppr';
+    const customRules = league?.scoringSettings?.rules;
+    const scoringRules: ScoringRules = customRules
+      ? { ...DEFAULT_SCORING_RULES[scoringType], ...customRules }
+      : DEFAULT_SCORING_RULES[scoringType];
+
+    // Build player performance list
+    const performances: MatchupPlayerPerformance[] = [];
+
+    // Process starters
+    for (const slot of starterSlots) {
+      const playerIds = lineup[slot] || [];
+      for (const playerId of playerIds) {
+        const player = playerMap.get(playerId);
+        const playerStats = statsMap.get(playerId);
+        const points = playerStats
+          ? this.scoringService.calculatePlayerPoints(playerStats, scoringRules)
+          : 0;
+
+        performances.push({
+          playerId,
+          fullName: player?.fullName || 'Unknown Player',
+          position: player?.position || '',
+          team: player?.team || null,
+          slot,
+          points,
+          isStarter: true,
+        });
+      }
+    }
+
+    // Process bench
+    const benchIds = lineup.BN || [];
+    for (const playerId of benchIds) {
+      const player = playerMap.get(playerId);
+      const playerStats = statsMap.get(playerId);
+      const points = playerStats
+        ? this.scoringService.calculatePlayerPoints(playerStats, scoringRules)
+        : 0;
+
+      performances.push({
+        playerId,
+        fullName: player?.fullName || 'Unknown Player',
+        position: player?.position || '',
+        team: player?.team || null,
+        slot: 'BN',
+        points,
+        isStarter: false,
+      });
+    }
+
+    return {
+      rosterId,
+      teamName,
+      totalPoints: totalPoints ?? 0,
+      players: performances,
+    };
   }
 
   /**

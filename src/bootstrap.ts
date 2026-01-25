@@ -32,6 +32,7 @@ import { SleeperApiClient } from './modules/players/sleeper.client';
 import { RosterService as RosterPlayerService } from './modules/rosters/rosters.service';
 import { LineupService } from './modules/lineups/lineups.service';
 import { ScoringService } from './modules/scoring/scoring.service';
+import { StatsService } from './modules/scoring/stats.service';
 import { MatchupService } from './modules/matchups/matchups.service';
 import { TradesService } from './modules/trades/trades.service';
 import { WaiversService } from './modules/waivers/waivers.service';
@@ -224,6 +225,14 @@ function bootstrap(): void {
     )
   );
 
+  container.register(KEYS.STATS_SERVICE, () =>
+    new StatsService(
+      container.resolve(KEYS.SLEEPER_CLIENT),
+      container.resolve(KEYS.PLAYER_STATS_REPO),
+      container.resolve(KEYS.PLAYER_REPO)
+    )
+  );
+
   container.register(KEYS.MATCHUP_SERVICE, () =>
     new MatchupService(
       container.resolve(KEYS.POOL),
@@ -231,7 +240,9 @@ function bootstrap(): void {
       container.resolve(KEYS.LINEUPS_REPO),
       container.resolve(KEYS.ROSTER_REPO),
       container.resolve(KEYS.LEAGUE_REPO),
-      container.resolve(KEYS.SCORING_SERVICE)
+      container.resolve(KEYS.SCORING_SERVICE),
+      container.resolve(KEYS.PLAYER_REPO),
+      container.resolve(KEYS.PLAYER_STATS_REPO)
     )
   );
 

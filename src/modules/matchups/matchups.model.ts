@@ -92,3 +92,68 @@ export function standingToResponse(standing: Standing) {
     rank: standing.rank,
   };
 }
+
+/**
+ * Player performance in a matchup lineup
+ */
+export interface MatchupPlayerPerformance {
+  playerId: number;
+  fullName: string;
+  position: string;
+  team: string | null;
+  slot: string;
+  points: number;
+  isStarter: boolean;
+}
+
+/**
+ * Team lineup within a matchup
+ */
+export interface MatchupTeamLineup {
+  rosterId: number;
+  teamName: string;
+  totalPoints: number;
+  players: MatchupPlayerPerformance[];
+}
+
+/**
+ * Full matchup detail with both team lineups
+ */
+export interface MatchupWithLineups extends MatchupDetails {
+  team1: MatchupTeamLineup;
+  team2: MatchupTeamLineup;
+}
+
+export function matchupWithLineupsToResponse(matchup: MatchupWithLineups) {
+  return {
+    ...matchupDetailsToResponse(matchup),
+    team1: {
+      roster_id: matchup.team1.rosterId,
+      team_name: matchup.team1.teamName,
+      total_points: matchup.team1.totalPoints,
+      players: matchup.team1.players.map(p => ({
+        player_id: p.playerId,
+        full_name: p.fullName,
+        position: p.position,
+        team: p.team,
+        slot: p.slot,
+        points: p.points,
+        is_starter: p.isStarter,
+      })),
+    },
+    team2: {
+      roster_id: matchup.team2.rosterId,
+      team_name: matchup.team2.teamName,
+      total_points: matchup.team2.totalPoints,
+      players: matchup.team2.players.map(p => ({
+        player_id: p.playerId,
+        full_name: p.fullName,
+        position: p.position,
+        team: p.team,
+        slot: p.slot,
+        points: p.points,
+        is_starter: p.isStarter,
+      })),
+    },
+  };
+}

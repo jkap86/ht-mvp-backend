@@ -24,6 +24,49 @@ export interface SleeperPlayer {
   number: number;
 }
 
+/**
+ * Weekly player stats from Sleeper API
+ */
+export interface SleeperPlayerStats {
+  // Passing
+  pass_yd?: number;
+  pass_td?: number;
+  pass_int?: number;
+  pass_att?: number;
+  pass_cmp?: number;
+  // Rushing
+  rush_yd?: number;
+  rush_td?: number;
+  rush_att?: number;
+  // Receiving
+  rec?: number;
+  rec_yd?: number;
+  rec_td?: number;
+  rec_tgt?: number;
+  // Misc
+  fum_lost?: number;
+  pass_2pt?: number;
+  rush_2pt?: number;
+  rec_2pt?: number;
+  // Kicking
+  fgm?: number;
+  fgmiss?: number;
+  xpm?: number;
+  xpmiss?: number;
+  // Defense/Special Teams
+  def_td?: number;
+  int?: number;
+  sack?: number;
+  fum_rec?: number;
+  safe?: number;
+  pts_allow?: number;
+  blk_kick?: number;
+  // Pre-calculated fantasy points (for reference)
+  pts_std?: number;
+  pts_half_ppr?: number;
+  pts_ppr?: number;
+}
+
 export class SleeperApiClient {
   private readonly client: AxiosInstance;
 
@@ -54,6 +97,42 @@ export class SleeperApiClient {
     } catch (error) {
       if (axios.isAxiosError(error)) {
         throw new Error(`Sleeper players API failed: ${error.message}`);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Fetch weekly player stats from Sleeper API
+   * @param season - NFL season year (e.g., "2024")
+   * @param week - Week number (1-18 for regular season)
+   * @returns Map of sleeper_player_id -> stats
+   */
+  async fetchWeeklyStats(season: string, week: number): Promise<Record<string, SleeperPlayerStats>> {
+    try {
+      const response = await this.client.get(`/stats/nfl/regular/${season}/${week}`);
+      return response.data;
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        throw new Error(`Sleeper stats API failed: ${error.message}`);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Fetch weekly player projections from Sleeper API
+   * @param season - NFL season year (e.g., "2024")
+   * @param week - Week number (1-18 for regular season)
+   * @returns Map of sleeper_player_id -> projected stats
+   */
+  async fetchWeeklyProjections(season: string, week: number): Promise<Record<string, SleeperPlayerStats>> {
+    try {
+      const response = await this.client.get(`/projections/nfl/regular/${season}/${week}`);
+      return response.data;
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        throw new Error(`Sleeper projections API failed: ${error.message}`);
       }
       throw error;
     }

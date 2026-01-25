@@ -19,6 +19,9 @@ router.get('/', matchupsController.getMatchups);
 // GET /api/leagues/:leagueId/matchups/:matchupId
 router.get('/:matchupId', matchupsController.getMatchup);
 
+// GET /api/leagues/:leagueId/matchups/:matchupId/detail
+router.get('/:matchupId/detail', matchupsController.getMatchupWithLineups);
+
 // POST /api/leagues/:leagueId/matchups/finalize
 router.post('/finalize', matchupsController.finalizeMatchups);
 

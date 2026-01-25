@@ -18,6 +18,15 @@ export class PlayerRepository {
     return result.rows.length > 0 ? playerFromDatabase(result.rows[0]) : null;
   }
 
+  async findByIds(ids: number[]): Promise<Player[]> {
+    if (ids.length === 0) return [];
+    const result = await this.db.query(
+      'SELECT * FROM players WHERE id = ANY($1)',
+      [ids]
+    );
+    return result.rows.map(playerFromDatabase);
+  }
+
   async findBySleeperId(sleeperId: string): Promise<Player | null> {
     const result = await this.db.query('SELECT * FROM players WHERE sleeper_id = $1', [sleeperId]);
     return result.rows.length > 0 ? playerFromDatabase(result.rows[0]) : null;
@@ -86,6 +95,21 @@ export class PlayerRepository {
   async getPlayerCount(): Promise<number> {
     const result = await this.db.query('SELECT COUNT(*) as count FROM players WHERE active = true');
     return parseInt(result.rows[0].count, 10);
+  }
+
+  /**
+   * Get mapping of sleeper_id to internal player_id for all players
+   * Used for efficient bulk stats syncing
+   */
+  async getSleeperIdMap(): Promise<Map<string, number>> {
+    const result = await this.db.query(
+      'SELECT sleeper_id, id FROM players WHERE sleeper_id IS NOT NULL'
+    );
+    const map = new Map<string, number>();
+    for (const row of result.rows) {
+      map.set(row.sleeper_id, row.id);
+    }
+    return map;
   }
 
   /**

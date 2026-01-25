@@ -83,6 +83,7 @@ export const KEYS = {
   SOCKET_SERVICE: 'socketService',
   TRADES_SERVICE: 'tradesService',
   WAIVERS_SERVICE: 'waiversService',
+  STATS_SERVICE: 'statsService',
 
   // Engines
   DRAFT_ENGINE_FACTORY: 'draftEngineFactory',
