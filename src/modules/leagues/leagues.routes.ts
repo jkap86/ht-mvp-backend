@@ -9,6 +9,10 @@ import draftRoutes from '../drafts/drafts.routes';
 import chatRoutes from '../chat/chat.routes';
 import rosterRoutes from '../rosters/rosters.routes';
 import matchupRoutes from '../matchups/matchups.routes';
+import tradesRoutes from '../trades/trades.routes';
+import { createWaiversRoutes } from '../waivers/waivers.routes';
+import { WaiversController } from '../waivers/waivers.controller';
+import { WaiversService } from '../waivers/waivers.service';
 import { RostersController } from '../rosters/rosters.controller';
 import { MatchupsController } from '../matchups/matchups.controller';
 import { RosterService } from '../rosters/rosters.service';
@@ -27,6 +31,12 @@ const matchupService = container.resolve<MatchupService>(KEYS.MATCHUP_SERVICE);
 const scoringService = container.resolve<ScoringService>(KEYS.SCORING_SERVICE);
 const rostersController = new RostersController(rosterService, lineupService);
 const matchupsController = new MatchupsController(matchupService, scoringService);
+
+// Resolve waivers dependencies
+const waiversService = container.resolve<WaiversService>(KEYS.WAIVERS_SERVICE);
+const leagueRepo = container.resolve<any>(KEYS.LEAGUE_REPO);
+const rosterRepo = container.resolve<any>(KEYS.ROSTER_REPO);
+const waiversController = new WaiversController(waiversService, leagueRepo, rosterRepo);
 
 const router = Router();
 
@@ -71,6 +81,12 @@ router.use('/:leagueId/rosters', rosterRoutes);
 
 // Mount matchup routes - /api/leagues/:leagueId/matchups/*
 router.use('/:leagueId/matchups', matchupRoutes);
+
+// Mount trade routes - /api/leagues/:leagueId/trades/*
+router.use('/:leagueId/trades', tradesRoutes);
+
+// Mount waiver routes - /api/leagues/:leagueId/waivers/*
+router.use('/:leagueId/waivers', createWaiversRoutes(waiversController));
 
 // Free agents - GET /api/leagues/:leagueId/free-agents
 router.get('/:leagueId/free-agents', rostersController.getFreeAgents);

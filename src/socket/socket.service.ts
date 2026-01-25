@@ -287,6 +287,100 @@ export class SocketService {
     }
   }
 
+  // Trade events (emitted to league room)
+
+  // Emit trade proposed event
+  emitTradeProposed(leagueId: number, trade: any): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.TRADE.PROPOSED, trade);
+  }
+
+  // Emit trade accepted event
+  emitTradeAccepted(leagueId: number, trade: any): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.TRADE.ACCEPTED, trade);
+  }
+
+  // Emit trade rejected event
+  emitTradeRejected(leagueId: number, trade: any): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.TRADE.REJECTED, trade);
+  }
+
+  // Emit trade countered event
+  emitTradeCountered(leagueId: number, data: any): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.TRADE.COUNTERED, data);
+  }
+
+  // Emit trade cancelled event
+  emitTradeCancelled(leagueId: number, trade: any): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.TRADE.CANCELLED, trade);
+  }
+
+  // Emit trade expired event
+  emitTradeExpired(leagueId: number, trade: any): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.TRADE.EXPIRED, trade);
+  }
+
+  // Emit trade completed event (players swapped)
+  emitTradeCompleted(leagueId: number, trade: any): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.TRADE.COMPLETED, trade);
+  }
+
+  // Emit trade vetoed event
+  emitTradeVetoed(leagueId: number, trade: any): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.TRADE.VETOED, trade);
+  }
+
+  // Emit trade vote cast event
+  emitTradeVoteCast(leagueId: number, data: any): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.TRADE.VOTE_CAST, data);
+  }
+
+  // Emit trade invalidated event (player dropped)
+  emitTradeInvalidated(leagueId: number, data: { tradeId: number; reason: string }): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.TRADE.INVALIDATED, data);
+  }
+
+  // Waiver events (emitted to league room)
+
+  // Emit waiver claim submitted event
+  emitWaiverClaimSubmitted(leagueId: number, claim: any): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.WAIVER.CLAIM_SUBMITTED, claim);
+  }
+
+  // Emit waiver claim cancelled event
+  emitWaiverClaimCancelled(leagueId: number, data: { claimId: number; rosterId: number }): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.WAIVER.CLAIM_CANCELLED, data);
+  }
+
+  // Emit waiver claim updated event
+  emitWaiverClaimUpdated(leagueId: number, claim: any): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.WAIVER.CLAIM_UPDATED, claim);
+  }
+
+  // Emit waivers processed event (batch processing complete)
+  emitWaiversProcessed(leagueId: number, data: { processed: number; successful: number }): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.WAIVER.PROCESSED, data);
+  }
+
+  // Emit waiver claim successful to specific user
+  emitWaiverClaimSuccessful(userId: string, claim: any): void {
+    this.emitToUser(userId, SOCKET_EVENTS.WAIVER.CLAIM_SUCCESSFUL, claim);
+  }
+
+  // Emit waiver claim failed to specific user
+  emitWaiverClaimFailed(userId: string, claim: any): void {
+    this.emitToUser(userId, SOCKET_EVENTS.WAIVER.CLAIM_FAILED, claim);
+  }
+
+  // Emit waiver priority updated event
+  emitWaiverPriorityUpdated(leagueId: number, priorities: any[]): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.WAIVER.PRIORITY_UPDATED, { priorities });
+  }
+
+  // Emit FAAB budget updated event
+  emitWaiverBudgetUpdated(leagueId: number, budgets: any[]): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.WAIVER.BUDGET_UPDATED, { budgets });
+  }
+
   getIO(): Server {
     return this.io;
   }

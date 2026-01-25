@@ -54,6 +54,13 @@ export const KEYS = {
   LINEUPS_REPO: 'lineupsRepo',
   PLAYER_STATS_REPO: 'playerStatsRepo',
   MATCHUPS_REPO: 'matchupsRepo',
+  TRADES_REPO: 'tradesRepo',
+  TRADE_ITEMS_REPO: 'tradeItemsRepo',
+  TRADE_VOTES_REPO: 'tradeVotesRepo',
+  WAIVER_PRIORITY_REPO: 'waiverPriorityRepo',
+  FAAB_BUDGET_REPO: 'faabBudgetRepo',
+  WAIVER_CLAIMS_REPO: 'waiverClaimsRepo',
+  WAIVER_WIRE_REPO: 'waiverWireRepo',
 
   // Services
   AUTH_SERVICE: 'authService',
@@ -74,6 +81,8 @@ export const KEYS = {
   CHAT_SERVICE: 'chatService',
   PLAYER_SERVICE: 'playerService',
   SOCKET_SERVICE: 'socketService',
+  TRADES_SERVICE: 'tradesService',
+  WAIVERS_SERVICE: 'waiversService',
 
   // Engines
   DRAFT_ENGINE_FACTORY: 'draftEngineFactory',

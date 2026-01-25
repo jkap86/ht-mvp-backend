@@ -11,6 +11,8 @@ import { RosterPlayersRepository, RosterTransactionsRepository } from './modules
 import { LineupsRepository } from './modules/lineups/lineups.repository';
 import { PlayerStatsRepository } from './modules/scoring/scoring.repository';
 import { MatchupsRepository } from './modules/matchups/matchups.repository';
+import { TradesRepository, TradeItemsRepository, TradeVotesRepository } from './modules/trades/trades.repository';
+import { WaiverPriorityRepository, FaabBudgetRepository, WaiverClaimsRepository, WaiverWireRepository } from './modules/waivers/waivers.repository';
 
 // Services
 import { AuthService } from './modules/auth/auth.service';
@@ -31,6 +33,8 @@ import { RosterService as RosterPlayerService } from './modules/rosters/rosters.
 import { LineupService } from './modules/lineups/lineups.service';
 import { ScoringService } from './modules/scoring/scoring.service';
 import { MatchupService } from './modules/matchups/matchups.service';
+import { TradesService } from './modules/trades/trades.service';
+import { WaiversService } from './modules/waivers/waivers.service';
 
 // Engines
 import { DraftEngineFactory } from './engines';
@@ -51,6 +55,9 @@ function bootstrap(): void {
   container.register(KEYS.LINEUPS_REPO, () => new LineupsRepository(container.resolve(KEYS.POOL)));
   container.register(KEYS.PLAYER_STATS_REPO, () => new PlayerStatsRepository(container.resolve(KEYS.POOL)));
   container.register(KEYS.MATCHUPS_REPO, () => new MatchupsRepository(container.resolve(KEYS.POOL)));
+  container.register(KEYS.TRADES_REPO, () => new TradesRepository(container.resolve(KEYS.POOL)));
+  container.register(KEYS.TRADE_ITEMS_REPO, () => new TradeItemsRepository(container.resolve(KEYS.POOL)));
+  container.register(KEYS.TRADE_VOTES_REPO, () => new TradeVotesRepository(container.resolve(KEYS.POOL)));
 
   // External Clients
   container.register(KEYS.SLEEPER_CLIENT, () => new SleeperApiClient());
@@ -171,6 +178,20 @@ function bootstrap(): void {
     )
   );
 
+  // Waiver repositories (needed by roster service for waiver wire integration)
+  container.register(KEYS.WAIVER_PRIORITY_REPO, () =>
+    new WaiverPriorityRepository(container.resolve(KEYS.POOL))
+  );
+  container.register(KEYS.FAAB_BUDGET_REPO, () =>
+    new FaabBudgetRepository(container.resolve(KEYS.POOL))
+  );
+  container.register(KEYS.WAIVER_CLAIMS_REPO, () =>
+    new WaiverClaimsRepository(container.resolve(KEYS.POOL))
+  );
+  container.register(KEYS.WAIVER_WIRE_REPO, () =>
+    new WaiverWireRepository(container.resolve(KEYS.POOL))
+  );
+
   // Season management services
   container.register(KEYS.ROSTER_PLAYER_SERVICE, () =>
     new RosterPlayerService(
@@ -178,7 +199,8 @@ function bootstrap(): void {
       container.resolve(KEYS.ROSTER_PLAYERS_REPO),
       container.resolve(KEYS.ROSTER_TRANSACTIONS_REPO),
       container.resolve(KEYS.ROSTER_REPO),
-      container.resolve(KEYS.LEAGUE_REPO)
+      container.resolve(KEYS.LEAGUE_REPO),
+      container.resolve(KEYS.WAIVER_WIRE_REPO)
     )
   );
 
@@ -209,6 +231,34 @@ function bootstrap(): void {
       container.resolve(KEYS.ROSTER_REPO),
       container.resolve(KEYS.LEAGUE_REPO),
       container.resolve(KEYS.SCORING_SERVICE)
+    )
+  );
+
+  container.register(KEYS.TRADES_SERVICE, () =>
+    new TradesService(
+      container.resolve(KEYS.POOL),
+      container.resolve(KEYS.TRADES_REPO),
+      container.resolve(KEYS.TRADE_ITEMS_REPO),
+      container.resolve(KEYS.TRADE_VOTES_REPO),
+      container.resolve(KEYS.ROSTER_REPO),
+      container.resolve(KEYS.ROSTER_PLAYERS_REPO),
+      container.resolve(KEYS.ROSTER_TRANSACTIONS_REPO),
+      container.resolve(KEYS.LEAGUE_REPO)
+    )
+  );
+
+  // Waiver service
+  container.register(KEYS.WAIVERS_SERVICE, () =>
+    new WaiversService(
+      container.resolve(KEYS.POOL),
+      container.resolve(KEYS.WAIVER_PRIORITY_REPO),
+      container.resolve(KEYS.FAAB_BUDGET_REPO),
+      container.resolve(KEYS.WAIVER_CLAIMS_REPO),
+      container.resolve(KEYS.WAIVER_WIRE_REPO),
+      container.resolve(KEYS.ROSTER_REPO),
+      container.resolve(KEYS.ROSTER_PLAYERS_REPO),
+      container.resolve(KEYS.ROSTER_TRANSACTIONS_REPO),
+      container.resolve(KEYS.LEAGUE_REPO)
     )
   );
 }

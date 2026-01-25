@@ -46,6 +46,32 @@ export const SOCKET_EVENTS = {
     NOMINATOR_CHANGED: 'draft:auction_nominator_changed',
     ERROR: 'draft:auction_error',
   },
+
+  // Trade events
+  TRADE: {
+    PROPOSED: 'trade:proposed',
+    ACCEPTED: 'trade:accepted',
+    REJECTED: 'trade:rejected',
+    COUNTERED: 'trade:countered',
+    CANCELLED: 'trade:cancelled',
+    EXPIRED: 'trade:expired',
+    COMPLETED: 'trade:completed',
+    VETOED: 'trade:vetoed',
+    VOTE_CAST: 'trade:vote_cast',
+    INVALIDATED: 'trade:invalidated',
+  },
+
+  // Waiver events
+  WAIVER: {
+    CLAIM_SUBMITTED: 'waiver:claim_submitted',
+    CLAIM_CANCELLED: 'waiver:claim_cancelled',
+    CLAIM_UPDATED: 'waiver:claim_updated',
+    PROCESSED: 'waiver:processed',
+    CLAIM_SUCCESSFUL: 'waiver:claim_successful',
+    CLAIM_FAILED: 'waiver:claim_failed',
+    PRIORITY_UPDATED: 'waiver:priority_updated',
+    BUDGET_UPDATED: 'waiver:budget_updated',
+  },
 } as const;
 
 // Room name helpers

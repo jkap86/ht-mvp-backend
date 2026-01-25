@@ -1,7 +1,9 @@
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import { RosterPlayersRepository, RosterTransactionsRepository } from './rosters.repository';
 import { RosterRepository, LeagueRepository } from '../leagues/leagues.repository';
 import { RosterPlayer, RosterPlayerWithDetails, RosterTransaction } from './rosters.model';
+import { WaiverWireRepository } from '../waivers/waivers.repository';
+import { parseWaiverSettings } from '../waivers/waivers.model';
 import {
   NotFoundException,
   ForbiddenException,
@@ -15,8 +17,41 @@ export class RosterService {
     private readonly rosterPlayersRepo: RosterPlayersRepository,
     private readonly transactionsRepo: RosterTransactionsRepository,
     private readonly rosterRepo: RosterRepository,
-    private readonly leagueRepo: LeagueRepository
+    private readonly leagueRepo: LeagueRepository,
+    private readonly waiverWireRepo?: WaiverWireRepository
   ) {}
+
+  /**
+   * Add a player to the waiver wire if the league has waivers enabled
+   */
+  private async addToWaiverWireIfEnabled(
+    league: any,
+    playerId: number,
+    droppedByRosterId: number,
+    client?: PoolClient
+  ): Promise<void> {
+    if (!this.waiverWireRepo) return;
+
+    const waiverSettings = parseWaiverSettings(league.settings);
+
+    // If waiver type is 'none', don't add to waiver wire
+    if (waiverSettings.waiverType === 'none') return;
+
+    // Calculate waiver expiration based on waiver_period_days
+    const waiverPeriodDays = waiverSettings.waiverPeriodDays || 2;
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + waiverPeriodDays);
+
+    await this.waiverWireRepo.addPlayer(
+      league.id,
+      playerId,
+      droppedByRosterId,
+      expiresAt,
+      parseInt(league.season, 10),
+      league.currentWeek,
+      client
+    );
+  }
 
   /**
    * Get all players on a roster
@@ -164,6 +199,9 @@ export class RosterService {
         client
       );
 
+      // Add to waiver wire if league has waivers enabled
+      await this.addToWaiverWireIfEnabled(league, playerId, rosterId, client);
+
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK');
@@ -254,6 +292,9 @@ export class RosterService {
         dropTx.id,
         client
       );
+
+      // Add dropped player to waiver wire if league has waivers enabled
+      await this.addToWaiverWireIfEnabled(league, dropPlayerId, rosterId, client);
 
       await client.query('COMMIT');
       return rosterPlayer;
