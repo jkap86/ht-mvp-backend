@@ -180,10 +180,11 @@ export class RosterService {
       throw new NotFoundException('League not found');
     }
 
-    // Use transaction
+    // Use transaction with advisory lock to prevent race with waiver claims
     const client = await this.db.connect();
     try {
       await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock($1)', [leagueId]);
 
       await this.rosterPlayersRepo.removePlayer(rosterId, playerId, client);
 

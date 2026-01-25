@@ -445,7 +445,7 @@ describe('TradesService', () => {
       const result = await tradesService.rejectTrade(1, 'user-456');
 
       expect(result.status).toBe('rejected');
-      expect(mockTradesRepo.updateStatus).toHaveBeenCalledWith(1, 'rejected');
+      expect(mockTradesRepo.updateStatus).toHaveBeenCalledWith(1, 'rejected', expect.anything());
     });
   });
 
@@ -478,7 +478,7 @@ describe('TradesService', () => {
       const result = await tradesService.cancelTrade(1, 'user-123');
 
       expect(result.status).toBe('cancelled');
-      expect(mockTradesRepo.updateStatus).toHaveBeenCalledWith(1, 'cancelled');
+      expect(mockTradesRepo.updateStatus).toHaveBeenCalledWith(1, 'cancelled', expect.anything());
     });
   });
 

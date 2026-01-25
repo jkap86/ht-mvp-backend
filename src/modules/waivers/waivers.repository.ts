@@ -85,6 +85,7 @@ export class WaiverPriorityRepository {
 
   /**
    * Rotate priorities - move successful claimer to last place
+   * Uses a single atomic statement to avoid UNIQUE constraint violations
    */
   async rotatePriority(
     leagueId: number,
@@ -94,38 +95,26 @@ export class WaiverPriorityRepository {
   ): Promise<void> {
     const conn = client || this.db;
 
-    // Get current priority of claimer
-    const claimerResult = await conn.query(
-      'SELECT priority FROM waiver_priority WHERE league_id = $1 AND season = $2 AND roster_id = $3',
+    // Use a single atomic UPDATE with CASE to avoid UNIQUE constraint violations
+    // This updates all priorities in one statement:
+    // - The claimer moves to max priority
+    // - Everyone with priority > claimer's priority shifts down by 1
+    await conn.query(
+      `WITH claimer_info AS (
+        SELECT priority as claimer_priority,
+               (SELECT MAX(priority) FROM waiver_priority WHERE league_id = $1 AND season = $2) as max_priority
+        FROM waiver_priority
+        WHERE league_id = $1 AND season = $2 AND roster_id = $3
+      )
+      UPDATE waiver_priority wp
+      SET priority = CASE
+        WHEN wp.roster_id = $3 THEN ci.max_priority
+        WHEN wp.priority > ci.claimer_priority THEN wp.priority - 1
+        ELSE wp.priority
+      END
+      FROM claimer_info ci
+      WHERE wp.league_id = $1 AND wp.season = $2`,
       [leagueId, season, claimerRosterId]
-    );
-
-    if (claimerResult.rows.length === 0) return;
-
-    const claimerPriority = claimerResult.rows[0].priority;
-
-    // Get max priority
-    const maxResult = await conn.query(
-      'SELECT MAX(priority) as max_priority FROM waiver_priority WHERE league_id = $1 AND season = $2',
-      [leagueId, season]
-    );
-
-    const maxPriority = maxResult.rows[0].max_priority;
-
-    // Move everyone below claimer up one spot
-    await conn.query(
-      `UPDATE waiver_priority
-       SET priority = priority - 1
-       WHERE league_id = $1 AND season = $2 AND priority > $3`,
-      [leagueId, season, claimerPriority]
-    );
-
-    // Move claimer to last place
-    await conn.query(
-      `UPDATE waiver_priority
-       SET priority = $4
-       WHERE league_id = $1 AND season = $2 AND roster_id = $3`,
-      [leagueId, season, claimerRosterId, maxPriority]
     );
   }
 }

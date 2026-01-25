@@ -35,11 +35,13 @@ export class TradesService {
 
   /**
    * Propose a new trade
+   * @param existingClient - Optional: If provided, uses this client and skips transaction management (for counter trades)
    */
   async proposeTrade(
     leagueId: number,
     userId: string,
-    request: ProposeTradeRequest
+    request: ProposeTradeRequest,
+    existingClient?: PoolClient
   ): Promise<TradeWithDetails> {
     // Validate user owns a roster in this league
     const proposerRoster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId);
@@ -72,10 +74,15 @@ export class TradesService {
       throw new ValidationException('Trade must include at least one player');
     }
 
-    const client = await this.db.connect();
+    // If using an existing client (from counter trade), skip transaction management
+    const manageTransaction = !existingClient;
+    const client = existingClient || await this.db.connect();
+
     try {
-      await client.query('BEGIN');
-      await client.query('SELECT pg_advisory_xact_lock($1)', [leagueId + 2000000]); // Trade lock
+      if (manageTransaction) {
+        await client.query('BEGIN');
+        await client.query('SELECT pg_advisory_xact_lock($1)', [leagueId + 2000000]); // Trade lock
+      }
 
       // Validate offering players belong to proposer
       for (const playerId of request.offeringPlayerIds) {
@@ -196,26 +203,34 @@ export class TradesService {
 
       await this.tradeItemsRepo.createBulk(trade.id, items, client);
 
-      await client.query('COMMIT');
+      if (manageTransaction) {
+        await client.query('COMMIT');
+      }
 
       // Get full trade details
       const tradeWithDetails = await this.tradesRepo.findByIdWithDetails(trade.id, proposerRoster.id);
       if (!tradeWithDetails) throw new Error('Failed to create trade');
 
-      // Emit socket event
-      try {
-        const socket = getSocketService();
-        socket.emitTradeProposed(leagueId, tradeWithDetailsToResponse(tradeWithDetails));
-      } catch (socketError) {
-        console.warn('Failed to emit trade proposed event:', socketError);
+      // Emit socket event (only for standalone trades, counter emits its own event)
+      if (manageTransaction) {
+        try {
+          const socket = getSocketService();
+          socket.emitTradeProposed(leagueId, tradeWithDetailsToResponse(tradeWithDetails));
+        } catch (socketError) {
+          console.warn('Failed to emit trade proposed event:', socketError);
+        }
       }
 
       return tradeWithDetails;
     } catch (error) {
-      await client.query('ROLLBACK');
+      if (manageTransaction) {
+        await client.query('ROLLBACK');
+      }
       throw error;
     } finally {
-      client.release();
+      if (manageTransaction) {
+        client.release();
+      }
     }
   }
 
@@ -317,11 +332,31 @@ export class TradesService {
       throw new ForbiddenException('Only the recipient can reject this trade');
     }
 
+    // Initial status check (will be re-verified inside transaction)
     if (trade.status !== 'pending') {
       throw new ValidationException(`Cannot reject trade with status: ${trade.status}`);
     }
 
-    await this.tradesRepo.updateStatus(tradeId, 'rejected');
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock($1)', [trade.leagueId + 2000000]);
+
+      // Re-verify status after acquiring lock (another transaction may have changed it)
+      const currentTrade = await this.tradesRepo.findById(tradeId, client);
+      if (!currentTrade || currentTrade.status !== 'pending') {
+        throw new ValidationException(`Cannot reject trade with status: ${currentTrade?.status || 'unknown'}`);
+      }
+
+      await this.tradesRepo.updateStatus(tradeId, 'rejected', client);
+
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
 
     const tradeWithDetails = await this.tradesRepo.findByIdWithDetails(tradeId, roster.id);
     if (!tradeWithDetails) throw new Error('Failed to get trade details');
@@ -348,11 +383,31 @@ export class TradesService {
       throw new ForbiddenException('Only the proposer can cancel this trade');
     }
 
+    // Initial status check (will be re-verified inside transaction)
     if (trade.status !== 'pending') {
       throw new ValidationException(`Cannot cancel trade with status: ${trade.status}`);
     }
 
-    await this.tradesRepo.updateStatus(tradeId, 'cancelled');
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock($1)', [trade.leagueId + 2000000]);
+
+      // Re-verify status after acquiring lock (another transaction may have changed it)
+      const currentTrade = await this.tradesRepo.findById(tradeId, client);
+      if (!currentTrade || currentTrade.status !== 'pending') {
+        throw new ValidationException(`Cannot cancel trade with status: ${currentTrade?.status || 'unknown'}`);
+      }
+
+      await this.tradesRepo.updateStatus(tradeId, 'cancelled', client);
+
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
 
     const tradeWithDetails = await this.tradesRepo.findByIdWithDetails(tradeId, roster.id);
     if (!tradeWithDetails) throw new Error('Failed to get trade details');
@@ -387,16 +442,37 @@ export class TradesService {
       throw new ValidationException(`Cannot counter trade with status: ${originalTrade.status}`);
     }
 
-    // Mark original as countered
-    await this.tradesRepo.updateStatus(tradeId, 'countered');
+    // Use transaction to ensure atomicity - both status update and new trade succeed or fail together
+    const client = await this.db.connect();
+    let newTrade: TradeWithDetails;
 
-    // Create new trade with swapped proposer/recipient
-    const newTrade = await this.proposeTrade(originalTrade.leagueId, userId, {
-      recipientRosterId: originalTrade.proposerRosterId,
-      offeringPlayerIds: request.offeringPlayerIds,
-      requestingPlayerIds: request.requestingPlayerIds,
-      message: request.message,
-    });
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock($1)', [originalTrade.leagueId + 2000000]);
+
+      // Mark original as countered within the transaction
+      await this.tradesRepo.updateStatus(tradeId, 'countered', client);
+
+      // Create new trade with swapped proposer/recipient (using same transaction)
+      newTrade = await this.proposeTrade(
+        originalTrade.leagueId,
+        userId,
+        {
+          recipientRosterId: originalTrade.proposerRosterId,
+          offeringPlayerIds: request.offeringPlayerIds,
+          requestingPlayerIds: request.requestingPlayerIds,
+          message: request.message,
+        },
+        client  // Pass the client to use existing transaction
+      );
+
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
 
     try {
       const socket = getSocketService();

@@ -29,7 +29,8 @@ import {
   ConflictException,
 } from '../../utils/exceptions';
 
-const WAIVER_LOCK_OFFSET = 3000000;
+// REMOVED: WAIVER_LOCK_OFFSET - waivers and rosters must share the same advisory lock
+// to prevent race conditions between free agent adds and waiver claims
 
 export class WaiversService {
   constructor(
@@ -75,7 +76,7 @@ export class WaiversService {
     const client = await this.db.connect();
     try {
       await client.query('BEGIN');
-      await client.query('SELECT pg_advisory_xact_lock($1)', [leagueId + WAIVER_LOCK_OFFSET]);
+      await client.query('SELECT pg_advisory_xact_lock($1)', [leagueId]);
 
       // Check if player is already owned
       const playerOwner = await this.rosterPlayersRepo.findOwner(leagueId, request.playerId, client);
@@ -116,12 +117,10 @@ export class WaiversService {
         }
       }
 
-      // Get priority snapshot for standard waivers
+      // Get priority snapshot for ALL claim types (used as tiebreaker in FAAB mode)
       let priorityAtClaim: number | null = null;
-      if (settings.waiverType === 'standard') {
-        const priority = await this.priorityRepo.getByRoster(roster.id, season, client);
-        priorityAtClaim = priority?.priority ?? null;
-      }
+      const priority = await this.priorityRepo.getByRoster(roster.id, season, client);
+      priorityAtClaim = priority?.priority ?? null;
 
       // Create the claim
       const claim = await this.claimsRepo.create(
@@ -236,8 +235,12 @@ export class WaiversService {
       if (!budget) {
         throw new ValidationException('FAAB budget not initialized');
       }
-      if (request.bidAmount > budget.remainingBudget) {
-        throw new ValidationException(`Bid exceeds available budget ($${budget.remainingBudget})`);
+      // Add back the old bid to get actual available budget
+      // (the old bid is conceptually "reserved" but not yet deducted)
+      const existingBid = claim.bidAmount;
+      const availableBudget = budget.remainingBudget + existingBid;
+      if (request.bidAmount > availableBudget) {
+        throw new ValidationException(`Bid exceeds available budget ($${availableBudget})`);
       }
       if (request.bidAmount < 0) {
         throw new ValidationException('Bid amount cannot be negative');
@@ -436,7 +439,7 @@ export class WaiversService {
 
     try {
       await client.query('BEGIN');
-      await client.query('SELECT pg_advisory_xact_lock($1)', [leagueId + WAIVER_LOCK_OFFSET]);
+      await client.query('SELECT pg_advisory_xact_lock($1)', [leagueId]);
 
       // Get all pending claims grouped by player
       const pendingClaims = await this.claimsRepo.getPendingByLeague(leagueId, client);
