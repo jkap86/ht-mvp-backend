@@ -70,8 +70,11 @@ export class DraftOrderService {
 
   async createInitialOrder(draftId: number, leagueId: number): Promise<void> {
     const rosters = await this.rosterRepo.findByLeagueId(leagueId);
-    for (let i = 0; i < rosters.length; i++) {
-      await this.draftRepo.createDraftOrder(draftId, rosters[i].id, i + 1);
+    if (rosters.length === 0) {
+      return;
     }
+    // Use batch insert instead of N separate queries
+    const rosterIds = rosters.map(r => r.id);
+    await this.draftRepo.updateDraftOrderAtomic(draftId, rosterIds);
   }
 }

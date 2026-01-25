@@ -135,14 +135,11 @@ describe('DraftOrderService', () => {
   describe('createInitialOrder', () => {
     it('should create order for all rosters', async () => {
       mockRosterRepo.findByLeagueId.mockResolvedValue(mockRosters as any);
-      mockDraftRepo.createDraftOrder.mockResolvedValue(undefined);
+      mockDraftRepo.updateDraftOrderAtomic.mockResolvedValue(undefined);
 
       await draftOrderService.createInitialOrder(1, 1);
 
-      expect(mockDraftRepo.createDraftOrder).toHaveBeenCalledTimes(3);
-      expect(mockDraftRepo.createDraftOrder).toHaveBeenCalledWith(1, 1, 1);
-      expect(mockDraftRepo.createDraftOrder).toHaveBeenCalledWith(1, 2, 2);
-      expect(mockDraftRepo.createDraftOrder).toHaveBeenCalledWith(1, 3, 3);
+      expect(mockDraftRepo.updateDraftOrderAtomic).toHaveBeenCalledWith(1, [1, 2, 3]);
     });
   });
 });

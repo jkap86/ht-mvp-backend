@@ -1,4 +1,4 @@
-import { PoolClient } from 'pg';
+import { Pool } from 'pg';
 import { AuctionLotRepository } from './auction-lot.repository';
 import { DraftRepository } from '../drafts.repository';
 import { RosterRepository, LeagueRepository } from '../../leagues/leagues.repository';
@@ -8,8 +8,10 @@ import { getSocketService } from '../../../socket/socket.service';
 import { PlayerRepository } from '../../players/players.repository';
 import { AuctionLot, AuctionProxyBid, auctionLotFromDatabase, auctionLotToResponse } from './auction.models';
 import { ValidationException, NotFoundException, ForbiddenException } from '../../../utils/exceptions';
-import { pool } from '../../../db/pool';
+import { getAuctionRosterLockId } from '../../../utils/locks';
 import { Draft } from '../drafts.model';
+import { getRosterBudgetDataWithClient } from './auction-budget-calculator';
+import { resolvePriceWithClient } from './auction-price-resolver';
 
 export interface NominationResult {
   lot: AuctionLot;
@@ -47,7 +49,8 @@ export class FastAuctionService {
     private readonly leagueRepo: LeagueRepository,
     private readonly orderService: DraftOrderService,
     private readonly slowAuctionService: SlowAuctionService,
-    private readonly playerRepo: PlayerRepository
+    private readonly playerRepo: PlayerRepository,
+    private readonly pool: Pool
   ) {}
 
   /**
@@ -192,7 +195,7 @@ export class FastAuctionService {
     }
 
     // Use transaction for atomic operations
-    const client = await pool.connect();
+    const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
 
@@ -201,7 +204,7 @@ export class FastAuctionService {
       if (!roster) {
         throw new ForbiddenException('You are not a member of this league');
       }
-      await client.query('SELECT pg_advisory_xact_lock(hashtext($1), $2)', ['auction_roster', roster.id]);
+      await client.query('SELECT pg_advisory_xact_lock($1)', [getAuctionRosterLockId(roster.id)]);
 
       // Get lot with lock
       const lotResult = await client.query(
@@ -234,7 +237,7 @@ export class FastAuctionService {
 
       const totalBudget = league.leagueSettings?.auctionBudget ?? 200;
       const rosterSlots = league.leagueSettings?.rosterSlots ?? 15;
-      const budgetInfo = await this.getRosterBudgetDataWithClient(client, draftId, roster.id);
+      const budgetInfo = await getRosterBudgetDataWithClient(client, draftId, roster.id);
 
       // Calculate remaining slots and required reserve
       const remainingSlots = rosterSlots - budgetInfo.wonCount - 1; // -1 for this lot
@@ -260,25 +263,20 @@ export class FastAuctionService {
         [lotId, roster.id, maxBid]
       );
 
-      // Resolve price
-      const oldPrice = lot.currentBid;
-      const oldLeader = lot.currentBidderRosterId;
-
-      const { updatedLot, outbidNotifications } = await this.resolvePriceWithClient(client, lot, settings);
+      // Resolve price using shared utility
+      const result = await resolvePriceWithClient(client, lot, settings);
 
       // Fast auction specific: reset timer on price/leader change
-      const priceChanged = updatedLot.currentBid > oldPrice;
-      const leaderChanged = updatedLot.currentBidderRosterId !== oldLeader;
-
-      if (priceChanged || leaderChanged) {
+      let finalLot = result.updatedLot;
+      if (result.priceChanged || result.leaderChanged) {
         const newDeadline = new Date(Date.now() + settings.resetOnBidSeconds * 1000);
         // Only extend deadline, never shorten it
-        if (newDeadline > updatedLot.bidDeadline) {
+        if (newDeadline > finalLot.bidDeadline) {
           await client.query(
             'UPDATE auction_lots SET bid_deadline = $1, updated_at = NOW() WHERE id = $2',
             [newDeadline, lotId]
           );
-          updatedLot.bidDeadline = newDeadline;
+          finalLot = { ...finalLot, bidDeadline: newDeadline };
         }
       }
 
@@ -286,14 +284,14 @@ export class FastAuctionService {
 
       // Emit lot updated event - convert to snake_case for frontend consistency
       const socket = getSocketService();
-      socket.emitAuctionLotUpdated(draftId, { lot: auctionLotToResponse(updatedLot) });
+      socket.emitAuctionLotUpdated(draftId, { lot: auctionLotToResponse(finalLot) });
 
       // Get proxy bid for response
       const proxyBidResult = await this.lotRepo.getProxyBid(lotId, roster.id);
 
       // Handle outbid notifications
       const userOutbidNotifications: Array<{ userId: string; lotId: number; playerId: number }> = [];
-      for (const notification of outbidNotifications) {
+      for (const notification of result.outbidNotifications) {
         const outbidRoster = await this.rosterRepo.findById(notification.rosterId);
         if (outbidRoster && outbidRoster.userId) {
           userOutbidNotifications.push({
@@ -304,14 +302,14 @@ export class FastAuctionService {
           socket.emitAuctionOutbid(outbidRoster.userId, {
             lotId: notification.lotId,
             playerId: lot.playerId,
-            newPrice: updatedLot.currentBid,
+            newPrice: finalLot.currentBid,
           });
         }
       }
 
       return {
         proxyBid: proxyBidResult!,
-        lot: updatedLot,
+        lot: finalLot,
         outbidNotifications: userOutbidNotifications,
         message: `Max bid set to $${maxBid}`,
       };
@@ -321,117 +319,6 @@ export class FastAuctionService {
     } finally {
       client.release();
     }
-  }
-
-  /**
-   * Helper: Get roster budget data using a specific client (for transactions)
-   */
-  private async getRosterBudgetDataWithClient(
-    client: PoolClient,
-    draftId: number,
-    rosterId: number
-  ): Promise<{ spent: number; wonCount: number; leadingCommitment: number }> {
-    const wonResult = await client.query(
-      `SELECT COALESCE(SUM(winning_bid), 0) as spent, COUNT(*) as won_count
-       FROM auction_lots
-       WHERE draft_id = $1 AND winning_roster_id = $2 AND status = 'won'`,
-      [draftId, rosterId]
-    );
-    const leadingResult = await client.query(
-      `SELECT COALESCE(SUM(current_bid), 0) as leading_commitment
-       FROM auction_lots
-       WHERE draft_id = $1 AND current_bidder_roster_id = $2 AND status = 'active'`,
-      [draftId, rosterId]
-    );
-    return {
-      spent: parseInt(wonResult.rows[0].spent, 10),
-      wonCount: parseInt(wonResult.rows[0].won_count, 10),
-      leadingCommitment: parseInt(leadingResult.rows[0].leading_commitment, 10),
-    };
-  }
-
-  /**
-   * Helper: Resolve price using a specific client (for transactions)
-   * Based on SlowAuctionService.resolvePriceWithClient but adapted for fast auction
-   */
-  private async resolvePriceWithClient(
-    client: PoolClient,
-    lot: AuctionLot,
-    settings: FastAuctionSettings
-  ): Promise<{ updatedLot: AuctionLot; outbidNotifications: Array<{ rosterId: number; lotId: number; previousBid: number; newLeadingBid: number }> }> {
-    const proxyBidsResult = await client.query(
-      `SELECT * FROM auction_proxy_bids
-       WHERE lot_id = $1
-       ORDER BY max_bid DESC, updated_at ASC`,
-      [lot.id]
-    );
-    const proxyBids: AuctionProxyBid[] = proxyBidsResult.rows.map(row => ({
-      id: row.id,
-      lotId: row.lot_id,
-      rosterId: row.roster_id,
-      maxBid: row.max_bid,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    }));
-
-    const outbidNotifications: Array<{ rosterId: number; lotId: number; previousBid: number; newLeadingBid: number }> = [];
-    let updatedLot = lot;
-
-    if (proxyBids.length === 0) {
-      return { updatedLot, outbidNotifications };
-    }
-
-    const previousLeader = lot.currentBidderRosterId;
-    let newLeader: number;
-    let newPrice: number;
-
-    if (proxyBids.length === 1) {
-      newLeader = proxyBids[0].rosterId;
-      newPrice = settings.minBid;
-    } else {
-      const highest = proxyBids[0];
-      const secondHighest = proxyBids[1];
-      newLeader = highest.rosterId;
-      newPrice = Math.min(highest.maxBid, secondHighest.maxBid + settings.minIncrement);
-    }
-
-    const leaderChanged = newLeader !== previousLeader;
-
-    if (leaderChanged || newPrice !== lot.currentBid) {
-      // For fast auction, we don't reset the timer here - that's handled by the caller
-      let newBidDeadline = lot.bidDeadline;
-
-      if (leaderChanged && previousLeader) {
-        outbidNotifications.push({
-          rosterId: previousLeader,
-          lotId: lot.id,
-          previousBid: lot.currentBid,
-          newLeadingBid: newPrice,
-        });
-      }
-
-      // bid_count tracks price changes only (not just leader changes)
-      const priceChanged = newPrice !== lot.currentBid;
-      const newBidCount = priceChanged ? lot.bidCount + 1 : lot.bidCount;
-
-      const updateResult = await client.query(
-        `UPDATE auction_lots
-         SET current_bidder_roster_id = $2, current_bid = $3, bid_count = $4, bid_deadline = $5, updated_at = CURRENT_TIMESTAMP
-         WHERE id = $1
-         RETURNING *`,
-        [lot.id, newLeader, newPrice, newBidCount, newBidDeadline]
-      );
-      updatedLot = auctionLotFromDatabase(updateResult.rows[0]);
-
-      // Record bid history
-      await client.query(
-        `INSERT INTO auction_bid_history (lot_id, roster_id, bid_amount, is_proxy)
-         VALUES ($1, $2, $3, $4)`,
-        [lot.id, newLeader, newPrice, true]
-      );
-    }
-
-    return { updatedLot, outbidNotifications };
   }
 
   /**

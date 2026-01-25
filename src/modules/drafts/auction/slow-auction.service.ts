@@ -5,7 +5,12 @@ import { DraftRepository } from '../drafts.repository';
 import { Draft } from '../drafts.model';
 import { RosterRepository, LeagueRepository } from '../../leagues/leagues.repository';
 import { PlayerRepository } from '../../players/players.repository';
-import { ValidationException, ForbiddenException, NotFoundException } from '../../../utils/exceptions';
+import { ValidationException, NotFoundException } from '../../../utils/exceptions';
+import { getRosterBudgetDataWithClient } from './auction-budget-calculator';
+import {
+  resolvePriceWithClient,
+  OutbidNotification,
+} from './auction-price-resolver';
 
 export interface NominationResult {
   lot: AuctionLot;
@@ -19,12 +24,8 @@ export interface SetMaxBidResult {
   message: string;
 }
 
-export interface OutbidNotification {
-  rosterId: number;
-  lotId: number;
-  previousBid: number;
-  newLeadingBid: number;
-}
+// Re-export OutbidNotification for backwards compatibility
+export { OutbidNotification } from './auction-price-resolver';
 
 export interface SettlementResult {
   lot: AuctionLot;
@@ -269,7 +270,7 @@ export class SlowAuctionService {
       }
 
       // 4. Budget validation within transaction (exclude current lot if already leading)
-      const budgetData = await this.getRosterBudgetDataWithClient(client, draftId, rosterId);
+      const budgetData = await getRosterBudgetDataWithClient(client, draftId, rosterId);
       const remainingSlots = rosterSlots - budgetData.wonCount - 1;
       const reservedForMinBids = Math.max(0, remainingSlots) * settings.minBid;
 
@@ -310,15 +311,26 @@ export class SlowAuctionService {
         updatedAt: proxyBidResult.rows[0].updated_at,
       };
 
-      // 6. Resolve price within transaction
-      const { updatedLot, outbidNotifications } = await this.resolvePriceWithClient(client, lot, settings);
+      // 6. Resolve price within transaction (don't pass deadline - we'll handle timer reset)
+      const result = await resolvePriceWithClient(client, lot, settings);
+
+      // For slow auction, reset timer only on leader change
+      let finalLot = result.updatedLot;
+      if (result.leaderChanged) {
+        const newBidDeadline = new Date(Date.now() + settings.bidWindowSeconds * 1000);
+        await client.query(
+          'UPDATE auction_lots SET bid_deadline = $1, updated_at = NOW() WHERE id = $2',
+          [newBidDeadline, lot.id]
+        );
+        finalLot = { ...finalLot, bidDeadline: newBidDeadline };
+      }
 
       await client.query('COMMIT');
 
       return {
         proxyBid,
-        lot: updatedLot,
-        outbidNotifications,
+        lot: finalLot,
+        outbidNotifications: result.outbidNotifications,
         message: 'Max bid set successfully',
       };
     } catch (error) {
@@ -329,114 +341,7 @@ export class SlowAuctionService {
     }
   }
 
-  // Helper: Get roster budget data using a specific client (for transactions)
-  private async getRosterBudgetDataWithClient(
-    client: PoolClient,
-    draftId: number,
-    rosterId: number
-  ): Promise<{ spent: number; wonCount: number; leadingCommitment: number }> {
-    const wonResult = await client.query(
-      `SELECT COALESCE(SUM(winning_bid), 0) as spent, COUNT(*) as won_count
-       FROM auction_lots
-       WHERE draft_id = $1 AND winning_roster_id = $2 AND status = 'won'`,
-      [draftId, rosterId]
-    );
-    const leadingResult = await client.query(
-      `SELECT COALESCE(SUM(current_bid), 0) as leading_commitment
-       FROM auction_lots
-       WHERE draft_id = $1 AND current_bidder_roster_id = $2 AND status = 'active'`,
-      [draftId, rosterId]
-    );
-    return {
-      spent: parseInt(wonResult.rows[0].spent, 10),
-      wonCount: parseInt(wonResult.rows[0].won_count, 10),
-      leadingCommitment: parseInt(leadingResult.rows[0].leading_commitment, 10),
-    };
-  }
-
-  // Helper: Resolve price using a specific client (for transactions)
-  private async resolvePriceWithClient(
-    client: PoolClient,
-    lot: AuctionLot,
-    settings: SlowAuctionSettings
-  ): Promise<{ updatedLot: AuctionLot; outbidNotifications: OutbidNotification[] }> {
-    const proxyBidsResult = await client.query(
-      `SELECT * FROM auction_proxy_bids
-       WHERE lot_id = $1
-       ORDER BY max_bid DESC, updated_at ASC`,
-      [lot.id]
-    );
-    const proxyBids: AuctionProxyBid[] = proxyBidsResult.rows.map(row => ({
-      id: row.id,
-      lotId: row.lot_id,
-      rosterId: row.roster_id,
-      maxBid: row.max_bid,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    }));
-
-    const outbidNotifications: OutbidNotification[] = [];
-    let updatedLot = lot;
-
-    if (proxyBids.length === 0) {
-      return { updatedLot, outbidNotifications };
-    }
-
-    const previousLeader = lot.currentBidderRosterId;
-    let newLeader: number;
-    let newPrice: number;
-
-    if (proxyBids.length === 1) {
-      newLeader = proxyBids[0].rosterId;
-      newPrice = settings.minBid;
-    } else {
-      const highest = proxyBids[0];
-      const secondHighest = proxyBids[1];
-      newLeader = highest.rosterId;
-      newPrice = Math.min(highest.maxBid, secondHighest.maxBid + settings.minIncrement);
-    }
-
-    const leaderChanged = newLeader !== previousLeader;
-
-    if (leaderChanged || newPrice !== lot.currentBid) {
-      let newBidDeadline = lot.bidDeadline;
-      if (leaderChanged) {
-        newBidDeadline = new Date(Date.now() + settings.bidWindowSeconds * 1000);
-        if (previousLeader) {
-          outbidNotifications.push({
-            rosterId: previousLeader,
-            lotId: lot.id,
-            previousBid: lot.currentBid,
-            newLeadingBid: newPrice,
-          });
-        }
-      }
-
-      // bid_count tracks price changes only (not just leader changes)
-      const priceChanged = newPrice !== lot.currentBid;
-      const newBidCount = priceChanged ? lot.bidCount + 1 : lot.bidCount;
-
-      const updateResult = await client.query(
-        `UPDATE auction_lots
-         SET current_bidder_roster_id = $2, current_bid = $3, bid_count = $4, bid_deadline = $5, updated_at = CURRENT_TIMESTAMP
-         WHERE id = $1
-         RETURNING *`,
-        [lot.id, newLeader, newPrice, newBidCount, newBidDeadline]
-      );
-      updatedLot = auctionLotFromDatabase(updateResult.rows[0]);
-
-      // Record bid history
-      await client.query(
-        `INSERT INTO auction_bid_history (lot_id, roster_id, bid_amount, is_proxy)
-         VALUES ($1, $2, $3, $4)`,
-        [lot.id, newLeader, newPrice, true]
-      );
-    }
-
-    return { updatedLot, outbidNotifications };
-  }
-
-  // Resolve price based on proxy bids (second-price auction)
+  // Resolve price based on proxy bids (second-price auction) - non-transactional version
   async resolvePrice(
     lot: AuctionLot,
     settings: SlowAuctionSettings
@@ -539,7 +444,7 @@ export class SlowAuctionService {
         const totalBudget = league.leagueSettings?.auctionBudget ?? 200;
         const rosterSlots = league.leagueSettings?.rosterSlots ?? 15;
         const settings = this.getSettings(draft);
-        const budgetData = await this.getRosterBudgetDataWithClient(client, lot.draftId, lot.currentBidderRosterId);
+        const budgetData = await getRosterBudgetDataWithClient(client, lot.draftId, lot.currentBidderRosterId);
 
         // Check roster not full
         if (budgetData.wonCount >= rosterSlots) {

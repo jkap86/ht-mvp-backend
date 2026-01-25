@@ -1,6 +1,7 @@
 import { Pool } from 'pg';
 import { Draft, DraftOrderEntry, DraftPick, draftFromDatabase } from './drafts.model';
 import { ConflictException } from '../../utils/exceptions';
+import { getDraftLockId } from '../../utils/locks';
 
 export class DraftRepository {
   constructor(private readonly db: Pool) {}
@@ -152,15 +153,20 @@ export class DraftRepository {
       // Clear existing order
       await client.query('DELETE FROM draft_order WHERE draft_id = $1', [draftId]);
 
-      // Insert new order - use a single multi-row INSERT for efficiency
+      // Insert new order using properly parameterized batch insert
       if (rosterIds.length > 0) {
-        const values = rosterIds.map((rosterId, index) =>
-          `($1, ${rosterId}, ${index + 1})`
-        ).join(', ');
+        // Build parameterized placeholders: ($1, $2, $3), ($1, $4, $5), etc.
+        const values: (number)[] = [draftId];
+        const placeholders = rosterIds.map((rosterId, index) => {
+          const rosterParamIndex = values.length + 1;
+          const positionParamIndex = values.length + 2;
+          values.push(rosterId, index + 1);
+          return `($1, $${rosterParamIndex}, $${positionParamIndex})`;
+        }).join(', ');
 
         await client.query(
-          `INSERT INTO draft_order (draft_id, roster_id, draft_position) VALUES ${values}`,
-          [draftId]
+          `INSERT INTO draft_order (draft_id, roster_id, draft_position) VALUES ${placeholders}`,
+          values
         );
       }
 
@@ -260,7 +266,7 @@ export class DraftRepository {
       await client.query('BEGIN');
 
       // Acquire advisory lock on draft to prevent race conditions
-      await client.query('SELECT pg_advisory_xact_lock($1)', [draftId]);
+      await client.query('SELECT pg_advisory_xact_lock($1)', [getDraftLockId(draftId)]);
 
       // Check idempotency - return existing pick if found
       if (idempotencyKey) {
@@ -343,7 +349,7 @@ export class DraftRepository {
       await client.query('BEGIN');
 
       // Acquire advisory lock on draft
-      await client.query('SELECT pg_advisory_xact_lock($1)', [draftId]);
+      await client.query('SELECT pg_advisory_xact_lock($1)', [getDraftLockId(draftId)]);
 
       // Get most recent pick with player info
       const lastPick = await client.query(
