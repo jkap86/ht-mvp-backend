@@ -6,7 +6,8 @@ import { logger } from '../config/logger.config';
 let intervalId: NodeJS.Timeout | null = null;
 
 const TRADE_CHECK_INTERVAL_MS = 60000; // 60 seconds (1 minute)
-const TRADE_EXPIRATION_LOCK_ID = 999997;
+// Advisory lock IDs: 900001 = trades, 900002 = waivers (must be distinct)
+const TRADE_EXPIRATION_LOCK_ID = 900001;
 
 /**
  * Process expired trades and completed review periods

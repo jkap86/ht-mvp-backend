@@ -247,6 +247,7 @@ export class TradesService {
       throw new ForbiddenException('Only the recipient can accept this trade');
     }
 
+    // Initial status check (will be re-verified inside transaction)
     if (trade.status !== 'pending') {
       throw new ValidationException(`Cannot accept trade with status: ${trade.status}`);
     }
@@ -258,6 +259,12 @@ export class TradesService {
     try {
       await client.query('BEGIN');
       await client.query('SELECT pg_advisory_xact_lock($1)', [trade.leagueId + 2000000]);
+
+      // Re-verify status after acquiring lock (another transaction may have changed it)
+      const currentTrade = await this.tradesRepo.findById(tradeId, client);
+      if (!currentTrade || currentTrade.status !== 'pending') {
+        throw new ValidationException(`Cannot accept trade with status: ${currentTrade?.status || 'unknown'}`);
+      }
 
       // Re-validate all players still on correct rosters
       const items = await this.tradeItemsRepo.findByTrade(tradeId);
@@ -276,19 +283,25 @@ export class TradesService {
       const reviewEnabled = league.settings?.trade_review_enabled === true;
       const votingEnabled = league.settings?.trade_voting_enabled === true;
 
-      let updatedTrade: Trade;
+      let updatedTrade: Trade | null;
 
       if (reviewEnabled || votingEnabled) {
-        // Set review period
+        // Set review period (conditional - only if still pending)
         const reviewHours = league.settings?.trade_review_hours || DEFAULT_REVIEW_HOURS;
         const reviewStartsAt = new Date();
         const reviewEndsAt = new Date(Date.now() + reviewHours * 60 * 60 * 1000);
 
         updatedTrade = await this.tradesRepo.setReviewPeriod(tradeId, reviewStartsAt, reviewEndsAt, client);
+        if (!updatedTrade) {
+          throw new ValidationException('Trade status changed during processing');
+        }
       } else {
         // Execute immediately
-        await this.executeTrade(trade, client);
-        updatedTrade = await this.tradesRepo.updateStatus(tradeId, 'completed', client);
+        await this.executeTrade(currentTrade, client);
+        updatedTrade = await this.tradesRepo.updateStatus(tradeId, 'completed', client, 'pending');
+        if (!updatedTrade) {
+          throw new ValidationException('Trade status changed during processing');
+        }
       }
 
       await client.query('COMMIT');
@@ -438,6 +451,7 @@ export class TradesService {
       throw new ForbiddenException('Only the recipient can counter this trade');
     }
 
+    // Initial status check (will be re-verified inside transaction)
     if (originalTrade.status !== 'pending') {
       throw new ValidationException(`Cannot counter trade with status: ${originalTrade.status}`);
     }
@@ -450,8 +464,17 @@ export class TradesService {
       await client.query('BEGIN');
       await client.query('SELECT pg_advisory_xact_lock($1)', [originalTrade.leagueId + 2000000]);
 
-      // Mark original as countered within the transaction
-      await this.tradesRepo.updateStatus(tradeId, 'countered', client);
+      // Re-verify status after acquiring lock (another transaction may have changed it)
+      const currentTrade = await this.tradesRepo.findById(tradeId, client);
+      if (!currentTrade || currentTrade.status !== 'pending') {
+        throw new ValidationException(`Cannot counter trade with status: ${currentTrade?.status || 'unknown'}`);
+      }
+
+      // Mark original as countered within the transaction (conditional)
+      const updated = await this.tradesRepo.updateStatus(tradeId, 'countered', client, 'pending');
+      if (!updated) {
+        throw new ValidationException('Trade status changed during processing');
+      }
 
       // Create new trade with swapped proposer/recipient (using same transaction)
       newTrade = await this.proposeTrade(
@@ -604,43 +627,58 @@ export class TradesService {
 
   /**
    * Invalidate pending trades containing a dropped player
+   * Uses conditional updates to handle concurrent modifications safely
    */
   async invalidateTradesWithPlayer(leagueId: number, playerId: number): Promise<void> {
     const pendingTrades = await this.tradesRepo.findPendingByPlayer(leagueId, playerId);
 
     for (const trade of pendingTrades) {
-      await this.tradesRepo.updateStatus(trade.id, 'expired');
+      // Try to expire - only succeeds if still in an active state
+      // Try 'pending' first, then 'in_review' if that fails
+      let updated = await this.tradesRepo.updateStatus(trade.id, 'expired', undefined, 'pending');
+      if (!updated) {
+        updated = await this.tradesRepo.updateStatus(trade.id, 'expired', undefined, 'in_review');
+      }
 
-      try {
-        const socket = getSocketService();
-        socket.emitTradeInvalidated(trade.leagueId, {
-          tradeId: trade.id,
-          reason: 'A player involved in this trade is no longer available',
-        });
-      } catch (socketError) {
-        console.warn('Failed to emit trade invalidated event:', socketError);
+      if (updated) {
+        try {
+          const socket = getSocketService();
+          socket.emitTradeInvalidated(trade.leagueId, {
+            tradeId: trade.id,
+            reason: 'A player involved in this trade is no longer available',
+          });
+        } catch (socketError) {
+          console.warn('Failed to emit trade invalidated event:', socketError);
+        }
       }
     }
   }
 
   /**
    * Process expired trades (called by job)
+   * Uses conditional update to prevent overwriting trades that were accepted/rejected concurrently
    */
   async processExpiredTrades(): Promise<number> {
     const expired = await this.tradesRepo.findExpiredTrades();
+    let expiredCount = 0;
 
     for (const trade of expired) {
-      await this.tradesRepo.updateStatus(trade.id, 'expired');
+      // Conditional update - only expire if still pending
+      const updated = await this.tradesRepo.updateStatus(trade.id, 'expired', undefined, 'pending');
 
-      try {
-        const socket = getSocketService();
-        socket.emitTradeExpired(trade.leagueId, { tradeId: trade.id });
-      } catch (socketError) {
-        console.warn('Failed to emit trade expired event:', socketError);
+      if (updated) {
+        expiredCount++;
+        try {
+          const socket = getSocketService();
+          socket.emitTradeExpired(trade.leagueId, { tradeId: trade.id });
+        } catch (socketError) {
+          console.warn('Failed to emit trade expired event:', socketError);
+        }
       }
+      // If not updated, trade was already accepted/rejected/etc - skip silently
     }
 
-    return expired.length;
+    return expiredCount;
   }
 
   /**

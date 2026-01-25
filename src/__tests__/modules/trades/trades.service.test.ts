@@ -623,13 +623,16 @@ describe('TradesService', () => {
         { ...mockTrade, id: 2 },
       ];
       mockTradesRepo.findExpiredTrades.mockResolvedValue(expiredTrades);
+      // updateStatus now returns the updated trade (or null if condition not met)
+      mockTradesRepo.updateStatus.mockResolvedValue({ ...mockTrade, status: 'expired' });
 
       const count = await tradesService.processExpiredTrades();
 
       expect(count).toBe(2);
       expect(mockTradesRepo.updateStatus).toHaveBeenCalledTimes(2);
-      expect(mockTradesRepo.updateStatus).toHaveBeenCalledWith(1, 'expired');
-      expect(mockTradesRepo.updateStatus).toHaveBeenCalledWith(2, 'expired');
+      // Now uses conditional update with expectedStatus='pending'
+      expect(mockTradesRepo.updateStatus).toHaveBeenCalledWith(1, 'expired', undefined, 'pending');
+      expect(mockTradesRepo.updateStatus).toHaveBeenCalledWith(2, 'expired', undefined, 'pending');
     });
   });
 

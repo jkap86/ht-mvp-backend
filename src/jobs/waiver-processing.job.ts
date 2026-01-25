@@ -10,7 +10,8 @@ let intervalId: NodeJS.Timeout | null = null;
 
 // Run every minute to check if any leagues need waiver processing
 const CHECK_INTERVAL_MS = 60000; // 1 minute
-const WAIVER_PROCESSING_LOCK_ID = 999997;
+// Advisory lock IDs: 900001 = trades, 900002 = waivers (must be distinct)
+const WAIVER_PROCESSING_LOCK_ID = 900002;
 
 /**
  * Check if the current time matches the waiver processing time for the given settings

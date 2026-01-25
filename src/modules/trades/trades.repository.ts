@@ -163,34 +163,55 @@ export class TradesRepository {
 
   /**
    * Update trade status
+   * @param expectedStatus - If provided, only update if current status matches (prevents race conditions)
+   * @returns Trade if updated, null if expectedStatus didn't match
    */
-  async updateStatus(tradeId: number, status: TradeStatus, client?: PoolClient): Promise<Trade> {
+  async updateStatus(
+    tradeId: number,
+    status: TradeStatus,
+    client?: PoolClient,
+    expectedStatus?: TradeStatus
+  ): Promise<Trade | null> {
     const conn = client || this.db;
     const completedAt = status === 'completed' ? new Date() : null;
-    const result = await conn.query(
-      `UPDATE trades SET status = $1, completed_at = COALESCE($2, completed_at), updated_at = NOW()
-      WHERE id = $3 RETURNING *`,
-      [status, completedAt, tradeId]
-    );
-    return tradeFromDatabase(result.rows[0]);
+
+    let query: string;
+    let params: any[];
+
+    if (expectedStatus) {
+      // Conditional update - only if status matches expected
+      query = `UPDATE trades SET status = $1, completed_at = COALESCE($2, completed_at), updated_at = NOW()
+        WHERE id = $3 AND status = $4 RETURNING *`;
+      params = [status, completedAt, tradeId, expectedStatus];
+    } else {
+      // Unconditional update (for backwards compatibility in non-race-sensitive paths)
+      query = `UPDATE trades SET status = $1, completed_at = COALESCE($2, completed_at), updated_at = NOW()
+        WHERE id = $3 RETURNING *`;
+      params = [status, completedAt, tradeId];
+    }
+
+    const result = await conn.query(query, params);
+    return result.rows.length > 0 ? tradeFromDatabase(result.rows[0]) : null;
   }
 
   /**
    * Set review period for a trade
+   * Only updates if trade is still in 'pending' status (prevents race conditions)
+   * @returns Trade if updated, null if trade was no longer pending
    */
   async setReviewPeriod(
     tradeId: number,
     reviewStartsAt: Date,
     reviewEndsAt: Date,
     client?: PoolClient
-  ): Promise<Trade> {
+  ): Promise<Trade | null> {
     const conn = client || this.db;
     const result = await conn.query(
       `UPDATE trades SET status = 'in_review', review_starts_at = $1, review_ends_at = $2, updated_at = NOW()
-      WHERE id = $3 RETURNING *`,
+      WHERE id = $3 AND status = 'pending' RETURNING *`,
       [reviewStartsAt, reviewEndsAt, tradeId]
     );
-    return tradeFromDatabase(result.rows[0]);
+    return result.rows.length > 0 ? tradeFromDatabase(result.rows[0]) : null;
   }
 
   /**

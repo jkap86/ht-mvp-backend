@@ -28,6 +28,7 @@ import {
   ValidationException,
   ConflictException,
 } from '../../utils/exceptions';
+import { TradesRepository } from '../trades/trades.repository';
 
 // REMOVED: WAIVER_LOCK_OFFSET - waivers and rosters must share the same advisory lock
 // to prevent race conditions between free agent adds and waiver claims
@@ -42,7 +43,8 @@ export class WaiversService {
     private readonly rosterRepo: RosterRepository,
     private readonly rosterPlayersRepo: RosterPlayersRepository,
     private readonly transactionsRepo: RosterTransactionsRepository,
-    private readonly leagueRepo: LeagueRepository
+    private readonly leagueRepo: LeagueRepository,
+    private readonly tradesRepo?: TradesRepository
   ) {}
 
   // ==================== CLAIM MANAGEMENT ====================
@@ -510,6 +512,15 @@ export class WaiversService {
         // Remove player from waiver wire after being claimed
         if (winner) {
           await this.waiverWireRepo.removePlayer(leagueId, playerId, client);
+
+          // Invalidate pending trades involving the claimed player
+          if (this.tradesRepo) {
+            await this.invalidateTradesForPlayer(leagueId, playerId, client);
+            // Also invalidate trades involving the dropped player if any
+            if (winner.dropPlayerId) {
+              await this.invalidateTradesForPlayer(leagueId, winner.dropPlayerId, client);
+            }
+          }
         }
       }
 
@@ -663,6 +674,40 @@ export class WaiversService {
     // Rotate priority for standard waivers
     if (waiverType === 'standard') {
       await this.priorityRepo.rotatePriority(claim.leagueId, season, claim.rosterId, client);
+    }
+  }
+
+  /**
+   * Invalidate pending trades involving a player (called after roster changes)
+   */
+  private async invalidateTradesForPlayer(
+    leagueId: number,
+    playerId: number,
+    client: PoolClient
+  ): Promise<void> {
+    if (!this.tradesRepo) return;
+
+    // Find pending trades involving this player
+    const pendingTrades = await this.tradesRepo.findPendingByPlayer(leagueId, playerId);
+
+    for (const trade of pendingTrades) {
+      // Conditional update - only expire if still in pending/accepted/in_review status
+      await client.query(
+        `UPDATE trades SET status = 'expired', updated_at = NOW()
+         WHERE id = $1 AND status IN ('pending', 'accepted', 'in_review')`,
+        [trade.id]
+      );
+
+      // Emit socket event
+      try {
+        const socket = getSocketService();
+        socket.emitTradeInvalidated(trade.leagueId, {
+          tradeId: trade.id,
+          reason: 'A player involved in this trade is no longer available',
+        });
+      } catch (socketError) {
+        console.warn('Failed to emit trade invalidated event:', socketError);
+      }
     }
   }
 }
