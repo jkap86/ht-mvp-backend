@@ -126,10 +126,15 @@ export class AuthService {
         throw new InvalidCredentialsException('Invalid refresh token');
       }
 
-      // Validate that this refresh token matches the stored one
-      const storedToken = await this.userRepository.getRefreshToken(user.userId);
+      // Validate that this refresh token matches the stored one AND is not expired
+      const { token: storedToken, expiresAt } = await this.userRepository.getRefreshTokenWithExpiry(user.userId);
       if (storedToken !== refreshToken) {
         throw new InvalidCredentialsException('Invalid refresh token');
+      }
+
+      // Check if refresh token has expired in the database
+      if (!expiresAt || expiresAt < new Date()) {
+        throw new InvalidCredentialsException('Refresh token has expired');
       }
 
       const newAccessToken = this.generateAccessToken(user);

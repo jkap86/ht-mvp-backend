@@ -160,7 +160,8 @@ function bootstrap(): void {
       container.resolve(KEYS.LEAGUE_REPO),
       container.resolve(KEYS.DRAFT_ORDER_SERVICE),
       container.resolve(KEYS.SLOW_AUCTION_SERVICE),
-      container.resolve(KEYS.PLAYER_REPO)
+      container.resolve(KEYS.PLAYER_REPO),
+      container.resolve(KEYS.POOL)
     )
   );
 

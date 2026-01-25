@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import { createServer } from 'http';
 
 import { env } from './config/env.config';
@@ -47,8 +48,14 @@ const corsOptions: cors.CorsOptions = {
 };
 
 // Middleware
+app.use(helmet({
+  // Disable contentSecurityPolicy for API server (no HTML served)
+  contentSecurityPolicy: false,
+  // Enable all other security headers
+  crossOriginEmbedderPolicy: false, // Allow embedding from mobile apps
+}));
 app.use(cors(corsOptions));
-app.use(express.json());
+app.use(express.json({ limit: '10kb' })); // Limit payload size to prevent DoS
 app.use(requestTimingMiddleware);
 
 // Routes

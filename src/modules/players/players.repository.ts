@@ -87,4 +87,69 @@ export class PlayerRepository {
     const result = await this.db.query('SELECT COUNT(*) as count FROM players WHERE active = true');
     return parseInt(result.rows[0].count, 10);
   }
+
+  /**
+   * Batch upsert players from Sleeper API for better performance.
+   * Processes players in batches to avoid memory issues and improve throughput.
+   */
+  async batchUpsertFromSleeper(sleeperPlayers: SleeperPlayer[], batchSize = 100): Promise<number> {
+    if (sleeperPlayers.length === 0) {
+      return 0;
+    }
+
+    let totalUpserted = 0;
+
+    // Process in batches
+    for (let i = 0; i < sleeperPlayers.length; i += batchSize) {
+      const batch = sleeperPlayers.slice(i, i + batchSize);
+
+      // Build parameterized batch insert
+      const values: any[] = [];
+      const placeholders = batch.map((player, idx) => {
+        const baseIdx = idx * 13;
+        values.push(
+          player.player_id,
+          player.first_name || null,
+          player.last_name || null,
+          player.full_name || `${player.first_name} ${player.last_name}`,
+          player.fantasy_positions || [],
+          player.position || null,
+          player.team || null,
+          player.years_exp || null,
+          player.age || null,
+          player.active ?? true,
+          player.status || null,
+          player.injury_status || null,
+          player.number || null
+        );
+        return `($${baseIdx + 1}, $${baseIdx + 2}, $${baseIdx + 3}, $${baseIdx + 4}, $${baseIdx + 5}, $${baseIdx + 6}, $${baseIdx + 7}, $${baseIdx + 8}, $${baseIdx + 9}, $${baseIdx + 10}, $${baseIdx + 11}, $${baseIdx + 12}, $${baseIdx + 13})`;
+      }).join(', ');
+
+      await this.db.query(
+        `INSERT INTO players (
+          sleeper_id, first_name, last_name, full_name, fantasy_positions,
+          position, team, years_exp, age, active, status, injury_status, jersey_number
+        ) VALUES ${placeholders}
+        ON CONFLICT (sleeper_id) DO UPDATE SET
+          first_name = EXCLUDED.first_name,
+          last_name = EXCLUDED.last_name,
+          full_name = EXCLUDED.full_name,
+          fantasy_positions = EXCLUDED.fantasy_positions,
+          position = EXCLUDED.position,
+          team = EXCLUDED.team,
+          years_exp = EXCLUDED.years_exp,
+          age = EXCLUDED.age,
+          active = EXCLUDED.active,
+          status = EXCLUDED.status,
+          injury_status = EXCLUDED.injury_status,
+          jersey_number = EXCLUDED.jersey_number,
+          updated_at = CURRENT_TIMESTAMP`,
+        values
+      );
+
+      totalUpserted += batch.length;
+    }
+
+    return totalUpserted;
+  }
 }

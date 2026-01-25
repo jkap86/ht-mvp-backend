@@ -33,36 +33,27 @@ export class PlayerService {
     const players = await this.sleeperClient.fetchNflPlayers();
     const playerIds = Object.keys(players);
 
-    let syncedCount = 0;
-
     // Filter for fantasy-relevant players only (QB, RB, WR, TE, K, DEF)
     const relevantPositions = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'];
 
-    for (const playerId of playerIds) {
-      const player = players[playerId];
-
-      // Skip players without relevant fantasy positions
-      if (!player.position || !relevantPositions.includes(player.position)) {
-        continue;
-      }
-
-      // Skip players without a name
-      if (!player.full_name && !player.first_name) {
-        continue;
-      }
-
-      try {
-        await this.playerRepo.upsertFromSleeper(player);
-        syncedCount++;
-
-        // Log progress every 500 players
-        if (syncedCount % 500 === 0) {
-          console.log(`Synced ${syncedCount} players...`);
+    const playersToSync = playerIds
+      .map(id => players[id])
+      .filter(player => {
+        // Must have a relevant position
+        if (!player.position || !relevantPositions.includes(player.position)) {
+          return false;
         }
-      } catch (error) {
-        console.error(`Failed to sync player ${playerId}:`, error);
-      }
-    }
+        // Must have a name
+        if (!player.full_name && !player.first_name) {
+          return false;
+        }
+        return true;
+      });
+
+    console.log(`Found ${playersToSync.length} fantasy-relevant players to sync...`);
+
+    // Use batch upsert for much better performance (100 players per batch)
+    const syncedCount = await this.playerRepo.batchUpsertFromSleeper(playersToSync, 100);
 
     console.log(`Player sync complete. Synced ${syncedCount} fantasy-relevant players.`);
 

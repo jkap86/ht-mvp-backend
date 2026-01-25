@@ -84,3 +84,23 @@ export const draftModifyLimiter = rateLimit({
   legacyHeaders: false,
   store: getRedisStore(),
 });
+
+/**
+ * Rate limiter for refresh token endpoint
+ * Limits to 30 attempts per hour per IP to prevent brute force attacks
+ * More lenient than login since refresh is automated
+ */
+export const refreshTokenLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 30, // 30 refresh attempts per hour
+  message: {
+    error: {
+      code: "RATE_LIMITED",
+      message: "Too many token refresh attempts. Please try again later.",
+    },
+  },
+  keyGenerator: (req: Request) => req.ip || "unknown",
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: getRedisStore(),
+});

@@ -108,4 +108,20 @@ export class UserRepository {
 
     return result.rows[0].refresh_token;
   }
+
+  async getRefreshTokenWithExpiry(userId: string): Promise<{ token: string | null; expiresAt: Date | null }> {
+    const result = await this.db.query(
+      'SELECT refresh_token, refresh_token_expires_at FROM users WHERE id = $1',
+      [userId]
+    );
+
+    if (result.rows.length === 0) {
+      return { token: null, expiresAt: null };
+    }
+
+    return {
+      token: result.rows[0].refresh_token,
+      expiresAt: result.rows[0].refresh_token_expires_at,
+    };
+  }
 }
