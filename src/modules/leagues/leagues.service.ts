@@ -56,6 +56,7 @@ export class LeagueService {
       totalRosters: params.totalRosters,
       settings: params.settings || {},
       scoringSettings: params.scoringSettings || {},
+      isPublic: params.isPublic || false,
     });
 
     // Create first roster for the creator (commissioner) via RosterService
@@ -124,5 +125,29 @@ export class LeagueService {
     userId: string
   ): Promise<{ message: string; teamName: string }> {
     return this.rosterService.kickMember(leagueId, rosterId, userId);
+  }
+
+  async discoverPublicLeagues(userId: string, limit?: number, offset?: number): Promise<any[]> {
+    return this.leagueRepo.findPublicLeagues(userId, limit, offset);
+  }
+
+  async joinPublicLeague(leagueId: number, userId: string): Promise<any> {
+    // Find the league first
+    const league = await this.leagueRepo.findById(leagueId);
+    if (!league) {
+      throw new NotFoundException('League not found');
+    }
+
+    // Check if the league is public
+    if (!league.isPublic) {
+      throw new ForbiddenException('This league is private. Use an invite code to join.');
+    }
+
+    // Join the league
+    const result = await this.rosterService.joinLeague(league.id, userId);
+
+    // Return the league with user's roster info
+    const updatedLeague = await this.leagueRepo.findByIdWithUserRoster(league.id, userId);
+    return updatedLeague!.toResponse();
   }
 }

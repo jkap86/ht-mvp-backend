@@ -47,6 +47,9 @@ router.use(authMiddleware);
 // GET /api/leagues/my-leagues
 router.get('/my-leagues', leagueController.getMyLeagues);
 
+// GET /api/leagues/discover - Discover public leagues
+router.get('/discover', leagueController.discoverLeagues);
+
 // POST /api/leagues/join/:inviteCode - Join league by invite code
 router.post('/join/:inviteCode', leagueController.joinLeagueByInviteCode);
 
@@ -56,8 +59,8 @@ router.get('/:id', leagueController.getLeague);
 // POST /api/leagues
 router.post('/', validateRequest(createLeagueSchema, 'body'), leagueController.createLeague);
 
-// POST /api/leagues/:id/join
-router.post('/:id/join', leagueController.joinLeague);
+// POST /api/leagues/:id/join - Join league (for public leagues or internal use)
+router.post('/:id/join', leagueController.joinPublicLeague);
 
 // PUT /api/leagues/:id
 router.put('/:id', validateRequest(updateLeagueSchema, 'body'), leagueController.updateLeague);

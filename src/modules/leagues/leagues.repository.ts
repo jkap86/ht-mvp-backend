@@ -9,6 +9,7 @@ export interface CreateLeagueParams {
   scoringSettings?: Record<string, any>;
   mode?: string;
   leagueSettings?: Record<string, any>;
+  isPublic?: boolean;
 }
 
 export class LeagueRepository {
@@ -76,8 +77,8 @@ export class LeagueRepository {
 
   async create(params: CreateLeagueParams): Promise<League> {
     const result = await this.db.query(
-      `INSERT INTO leagues (name, total_rosters, season, settings, scoring_settings, mode, league_settings)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO leagues (name, total_rosters, season, settings, scoring_settings, mode, league_settings, is_public)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
       [
         params.name,
@@ -87,6 +88,7 @@ export class LeagueRepository {
         JSON.stringify(params.scoringSettings || {}),
         params.mode || 'redraft',
         JSON.stringify(params.leagueSettings || {}),
+        params.isPublic || false,
       ]
     );
 
@@ -126,6 +128,11 @@ export class LeagueRepository {
     if (updates.leagueSettings) {
       setClauses.push(`league_settings = COALESCE(league_settings, '{}'::jsonb) || $${paramIndex++}::jsonb`);
       values.push(JSON.stringify(updates.leagueSettings));
+    }
+
+    if (updates.isPublic !== undefined) {
+      setClauses.push(`is_public = $${paramIndex++}`);
+      values.push(updates.isPublic);
     }
 
     if (setClauses.length === 0) {
@@ -185,6 +192,44 @@ export class LeagueRepository {
        WHERE id = $2`,
       [rosterId, leagueId]
     );
+  }
+
+  /**
+   * Find public leagues that the user hasn't joined yet
+   * Returns leagues with member count for discovery
+   */
+  async findPublicLeagues(userId: string, limit: number = 50, offset: number = 0): Promise<any[]> {
+    const result = await this.db.query(
+      `SELECT
+        l.id,
+        l.name,
+        l.season,
+        l.mode,
+        l.total_rosters,
+        l.is_public,
+        COUNT(r.id) as member_count
+       FROM leagues l
+       LEFT JOIN rosters r ON r.league_id = l.id
+       WHERE l.is_public = true
+         AND NOT EXISTS (
+           SELECT 1 FROM rosters r2
+           WHERE r2.league_id = l.id AND r2.user_id = $1
+         )
+       GROUP BY l.id
+       ORDER BY l.created_at DESC
+       LIMIT $2 OFFSET $3`,
+      [userId, limit, offset]
+    );
+
+    return result.rows.map(row => ({
+      id: row.id,
+      name: row.name,
+      season: row.season,
+      mode: row.mode,
+      total_rosters: row.total_rosters,
+      is_public: row.is_public,
+      member_count: parseInt(row.member_count, 10),
+    }));
   }
 }
 

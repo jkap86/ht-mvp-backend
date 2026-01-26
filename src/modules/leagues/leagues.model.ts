@@ -29,7 +29,8 @@ export class League {
     public readonly leagueSettings: LeagueSettings = {},
     public readonly currentWeek: number = 1,
     public readonly seasonStatus: SeasonStatus = 'pre_season',
-    public readonly inviteCode?: string
+    public readonly inviteCode?: string,
+    public readonly isPublic: boolean = false
   ) {}
 
   static fromDatabase(row: any): League {
@@ -49,7 +50,8 @@ export class League {
       row.league_settings || {},
       row.current_week || 1,
       row.season_status || 'pre_season',
-      row.invite_code
+      row.invite_code,
+      row.is_public || false
     );
   }
 
@@ -71,6 +73,7 @@ export class League {
       current_week: this.currentWeek,
       season_status: this.seasonStatus,
       invite_code: this.inviteCode,
+      is_public: this.isPublic,
     };
   }
 }

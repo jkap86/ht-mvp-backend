@@ -21,6 +21,7 @@ export const createLeagueSchema = z.object({
   scoring_settings: z.record(z.string(), z.any()).optional(),
   mode: leagueModeEnum.optional(),
   league_settings: leagueSettingsSchema.optional(),
+  is_public: z.boolean().default(false).optional(),
 });
 
 export const updateLeagueSchema = z.object({
@@ -30,6 +31,7 @@ export const updateLeagueSchema = z.object({
   scoring_settings: z.record(z.string(), z.any()).optional(),
   mode: leagueModeEnum.optional(),
   league_settings: leagueSettingsSchema.optional(),
+  is_public: z.boolean().optional(),
 });
 
 export type CreateLeagueInput = z.infer<typeof createLeagueSchema>;

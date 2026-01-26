@@ -36,7 +36,7 @@ export class LeagueController {
     try {
       const userId = requireUserId(req);
 
-      const { name, season, total_rosters = 12, settings = {}, scoring_settings = {} } = req.body;
+      const { name, season, total_rosters = 12, settings = {}, scoring_settings = {}, is_public = false } = req.body;
 
       const league = await this.leagueService.createLeague(
         {
@@ -45,6 +45,7 @@ export class LeagueController {
           totalRosters: total_rosters,
           settings,
           scoringSettings: scoring_settings,
+          isPublic: is_public,
         },
         userId
       );
@@ -93,6 +94,7 @@ export class LeagueController {
       if (req.body.settings) updates.settings = req.body.settings;
       if (req.body.scoring_settings) updates.scoringSettings = req.body.scoring_settings;
       if (req.body.status) updates.status = req.body.status;
+      if (req.body.is_public !== undefined) updates.isPublic = req.body.is_public;
 
       const league = await this.leagueService.updateLeague(leagueId, userId, updates);
       res.status(200).json(league);
@@ -153,6 +155,31 @@ export class LeagueController {
 
       const results = await this.leagueService.devBulkAddUsers(leagueId, usernames);
       res.status(200).json({ results });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  discoverLeagues = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const userId = requireUserId(req);
+      const limit = parseInt(req.query.limit as string, 10) || 50;
+      const offset = parseInt(req.query.offset as string, 10) || 0;
+
+      const leagues = await this.leagueService.discoverPublicLeagues(userId, limit, offset);
+      res.status(200).json(leagues);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  joinPublicLeague = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const userId = requireUserId(req);
+      const leagueId = requireLeagueId(req);
+
+      const league = await this.leagueService.joinPublicLeague(leagueId, userId);
+      res.status(200).json(league);
     } catch (error) {
       next(error);
     }
