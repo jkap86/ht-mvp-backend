@@ -21,7 +21,33 @@ const mockLeague = new League(
   new Date(),             // createdAt
   new Date(),             // updatedAt
   1,                      // userRosterId
-  1                       // commissionerRosterId
+  1,                      // commissionerRosterId
+  'redraft',              // mode
+  {},                     // leagueSettings
+  1,                      // currentWeek
+  'pre_season',           // seasonStatus
+  'ABC12345',             // inviteCode
+  false                   // isPublic
+);
+
+const mockPublicLeague = new League(
+  2,                      // id
+  'Public League',        // name
+  'active',               // status
+  {},                     // settings
+  { rec: 1.0 },           // scoringSettings
+  '2024',                 // season
+  12,                     // totalRosters
+  new Date(),             // createdAt
+  new Date(),             // updatedAt
+  undefined,              // userRosterId
+  1,                      // commissionerRosterId
+  'redraft',              // mode
+  {},                     // leagueSettings
+  1,                      // currentWeek
+  'pre_season',           // seasonStatus
+  'XYZ98765',             // inviteCode
+  true                    // isPublic
 );
 
 const mockRoster = {
@@ -41,13 +67,16 @@ const mockRoster = {
 
 // Mock repositories
 const createMockLeagueRepo = (): jest.Mocked<LeagueRepository> => ({
+  findById: jest.fn(),
   findByUserId: jest.fn(),
   findByIdWithUserRoster: jest.fn(),
+  findByInviteCode: jest.fn(),
   isUserMember: jest.fn(),
   isCommissioner: jest.fn(),
   create: jest.fn(),
   update: jest.fn(),
   delete: jest.fn(),
+  findPublicLeagues: jest.fn(),
 } as unknown as jest.Mocked<LeagueRepository>);
 
 const createMockRosterRepo = (): jest.Mocked<RosterRepository> => ({
@@ -209,6 +238,98 @@ describe('LeagueService', () => {
       await expect(
         leagueService.deleteLeague(1, 'other-user')
       ).rejects.toThrow('commissioner');
+    });
+  });
+
+  describe('discoverPublicLeagues', () => {
+    it('should return public leagues from repository', async () => {
+      const mockPublicLeagues = [
+        { id: 1, name: 'Public League 1', member_count: 5, total_rosters: 10 },
+        { id: 2, name: 'Public League 2', member_count: 8, total_rosters: 12 },
+      ];
+      mockLeagueRepo.findPublicLeagues.mockResolvedValue(mockPublicLeagues);
+
+      const result = await leagueService.discoverPublicLeagues('user-123');
+
+      expect(mockLeagueRepo.findPublicLeagues).toHaveBeenCalledWith('user-123', undefined, undefined);
+      expect(result).toEqual(mockPublicLeagues);
+    });
+
+    it('should pass limit and offset to repository', async () => {
+      mockLeagueRepo.findPublicLeagues.mockResolvedValue([]);
+
+      await leagueService.discoverPublicLeagues('user-123', 10, 20);
+
+      expect(mockLeagueRepo.findPublicLeagues).toHaveBeenCalledWith('user-123', 10, 20);
+    });
+  });
+
+  describe('joinPublicLeague', () => {
+    it('should allow joining a public league', async () => {
+      mockLeagueRepo.findById.mockResolvedValue(mockPublicLeague);
+      mockRosterService.joinLeague.mockResolvedValue({ message: 'Joined', roster: mockRoster });
+      mockLeagueRepo.findByIdWithUserRoster.mockResolvedValue(mockPublicLeague);
+
+      const result = await leagueService.joinPublicLeague(2, 'user-456');
+
+      expect(mockLeagueRepo.findById).toHaveBeenCalledWith(2);
+      expect(mockRosterService.joinLeague).toHaveBeenCalledWith(2, 'user-456');
+      expect(result.name).toBe('Public League');
+    });
+
+    it('should throw NotFoundException when league not found', async () => {
+      mockLeagueRepo.findById.mockResolvedValue(null);
+
+      await expect(
+        leagueService.joinPublicLeague(999, 'user-123')
+      ).rejects.toThrow(NotFoundException);
+      await expect(
+        leagueService.joinPublicLeague(999, 'user-123')
+      ).rejects.toThrow('not found');
+    });
+
+    it('should throw ForbiddenException when joining a private league', async () => {
+      mockLeagueRepo.findById.mockResolvedValue(mockLeague); // mockLeague has isPublic: false
+
+      await expect(
+        leagueService.joinPublicLeague(1, 'user-456')
+      ).rejects.toThrow(ForbiddenException);
+      await expect(
+        leagueService.joinPublicLeague(1, 'user-456')
+      ).rejects.toThrow('private');
+    });
+  });
+
+  describe('createLeague with isPublic', () => {
+    it('should create a public league when isPublic is true', async () => {
+      mockLeagueRepo.create.mockResolvedValue(mockPublicLeague);
+      mockRosterService.createInitialRoster.mockResolvedValue(mockRoster as any);
+      mockLeagueRepo.findByIdWithUserRoster.mockResolvedValue(mockPublicLeague);
+
+      const result = await leagueService.createLeague(
+        { name: 'Public League', season: '2024', totalRosters: 12, isPublic: true },
+        'user-123'
+      );
+
+      expect(mockLeagueRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ isPublic: true })
+      );
+      expect(result.is_public).toBe(true);
+    });
+
+    it('should create a private league by default', async () => {
+      mockLeagueRepo.create.mockResolvedValue(mockLeague);
+      mockRosterService.createInitialRoster.mockResolvedValue(mockRoster as any);
+      mockLeagueRepo.findByIdWithUserRoster.mockResolvedValue(mockLeague);
+
+      await leagueService.createLeague(
+        { name: 'Test League', season: '2024', totalRosters: 10 },
+        'user-123'
+      );
+
+      expect(mockLeagueRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ isPublic: false })
+      );
     });
   });
 });
