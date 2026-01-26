@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "HypeTrainFF MVP Backend",
   "main": "dist/server.js",
+  "engines": {
+    "node": "20.x"
+  },
   "scripts": {
     "dev": "nodemon src/server.ts",
     "build": "tsc",

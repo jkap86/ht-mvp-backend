@@ -72,7 +72,7 @@ const server = createServer(app);
 // Initialize Socket.IO
 initializeSocket(server);
 
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 MVP Backend running on port ${PORT}`);
   console.log(`📡 Health check: http://localhost:${PORT}/api/health`);
 
