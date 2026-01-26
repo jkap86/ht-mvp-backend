@@ -11,6 +11,7 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "migrate": "ts-node src/db/migrate.ts",
+    "migrate:prod": "node dist/db/migrate.js",
     "seed:users": "ts-node src/db/seed-test-users.ts",
     "test": "jest",
     "test:watch": "jest --watch",

@@ -1,11 +1,9 @@
 import fs from 'fs';
 import path from 'path';
 import { Pool } from 'pg';
-import { env } from '../config/env.config';
+import { getDatabaseConfig } from '../config/database.config';
 
-const pool = new Pool({
-  connectionString: env.DATABASE_URL,
-});
+const pool = new Pool(getDatabaseConfig());
 
 const MIGRATIONS_TABLE = 'migrations';
 
