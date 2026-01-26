@@ -1,6 +1,9 @@
 import { Pool } from 'pg';
 import { LeagueRepository, RosterRepository } from './leagues.repository';
 import { UserRepository } from '../auth/auth.repository';
+import { RosterPlayersRepository } from '../rosters/rosters.repository';
+import { getSocketService } from '../../socket/socket.service';
+import { logger } from '../../config/env.config';
 import {
   NotFoundException,
   ForbiddenException,
@@ -13,7 +16,8 @@ export class RosterService {
     private readonly db: Pool,
     private readonly leagueRepo: LeagueRepository,
     private readonly rosterRepo: RosterRepository,
-    private readonly userRepo?: UserRepository
+    private readonly userRepo?: UserRepository,
+    private readonly rosterPlayersRepo?: RosterPlayersRepository
   ) {}
 
   /**
@@ -143,5 +147,106 @@ export class RosterService {
     }
 
     return results;
+  }
+
+  /**
+   * Kick a member from the league (commissioner only)
+   * Removes their roster and releases all their players
+   */
+  async kickMember(
+    leagueId: number,
+    targetRosterId: number,
+    userId: string
+  ): Promise<{ message: string; teamName: string }> {
+    // Check if user is commissioner
+    const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
+    if (!isCommissioner) {
+      throw new ForbiddenException('Only the commissioner can kick members');
+    }
+
+    // Get target roster
+    const targetRoster = await this.rosterRepo.findById(targetRosterId);
+    if (!targetRoster) {
+      throw new NotFoundException('Roster not found');
+    }
+
+    // Verify roster belongs to this league
+    if (targetRoster.leagueId !== leagueId) {
+      throw new ValidationException('Roster does not belong to this league');
+    }
+
+    // Get commissioner's roster to prevent self-kick
+    const commissionerRoster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId);
+    if (commissionerRoster && commissionerRoster.id === targetRosterId) {
+      throw new ValidationException('Cannot kick yourself from the league');
+    }
+
+    // Get team name before deletion
+    const teamName = await this.rosterRepo.getTeamName(targetRosterId) || 'Unknown Team';
+
+    // Use transaction to delete everything
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+      // Advisory lock on roster to prevent race conditions
+      await client.query('SELECT pg_advisory_xact_lock($1)', [targetRosterId + 1000000]);
+
+      // Delete roster players (release all players)
+      if (this.rosterPlayersRepo) {
+        await this.rosterPlayersRepo.deleteAllByRosterId(targetRosterId, client);
+      } else {
+        await client.query('DELETE FROM roster_players WHERE roster_id = $1', [targetRosterId]);
+      }
+
+      // Delete roster lineups
+      await client.query('DELETE FROM roster_lineups WHERE roster_id = $1', [targetRosterId]);
+
+      // Cancel pending trades involving this roster
+      await client.query(
+        `UPDATE trades SET status = 'cancelled'
+         WHERE (proposer_roster_id = $1 OR recipient_roster_id = $1)
+           AND status IN ('pending', 'in_review')`,
+        [targetRosterId]
+      );
+
+      // Cancel pending waiver claims
+      await client.query(
+        `UPDATE waiver_claims SET status = 'cancelled'
+         WHERE roster_id = $1 AND status = 'pending'`,
+        [targetRosterId]
+      );
+
+      // Delete waiver priority entry
+      await client.query(
+        'DELETE FROM waiver_priority WHERE roster_id = $1',
+        [targetRosterId]
+      );
+
+      // Delete FAAB budget entry
+      await client.query(
+        'DELETE FROM faab_budgets WHERE roster_id = $1',
+        [targetRosterId]
+      );
+
+      // Delete the roster itself
+      await this.rosterRepo.delete(targetRosterId, client);
+
+      await client.query('COMMIT');
+
+      // Emit socket event
+      try {
+        const socketService = getSocketService();
+        socketService.emitMemberKicked(leagueId, { rosterId: targetRosterId, teamName });
+      } catch (socketError) {
+        logger.warn(`Failed to emit member kicked event: ${socketError}`);
+      }
+
+      return { message: `${teamName} has been removed from the league`, teamName };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 }

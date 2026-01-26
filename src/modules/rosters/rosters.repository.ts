@@ -187,6 +187,18 @@ export class RosterPlayersRepository {
 
     return rosterPlayer;
   }
+
+  /**
+   * Delete all players from a roster (for kick member)
+   */
+  async deleteAllByRosterId(rosterId: number, client?: PoolClient): Promise<number> {
+    const db = client || this.db;
+    const result = await db.query(
+      'DELETE FROM roster_players WHERE roster_id = $1',
+      [rosterId]
+    );
+    return result.rowCount || 0;
+  }
 }
 
 export class RosterTransactionsRepository {

@@ -125,6 +125,23 @@ export class LeagueController {
     }
   };
 
+  kickMember = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const userId = requireUserId(req);
+      const leagueId = requireLeagueId(req);
+      const rosterId = parseInt(req.params.rosterId as string, 10);
+
+      if (isNaN(rosterId)) {
+        throw new ValidationException('Invalid roster ID');
+      }
+
+      const result = await this.leagueService.kickMember(leagueId, rosterId, userId);
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   devAddUsers = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const leagueId = requireLeagueId(req);

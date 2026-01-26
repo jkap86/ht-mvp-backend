@@ -263,4 +263,18 @@ export class MatchupsRepository {
       [leagueId, season]
     );
   }
+
+  /**
+   * Get all league IDs with non-finalized matchups for a given week
+   * Used by stats sync to notify relevant leagues
+   */
+  async getLeaguesWithActiveMatchups(season: number, week: number): Promise<number[]> {
+    const result = await this.db.query(
+      `SELECT DISTINCT league_id FROM matchups
+       WHERE season = $1 AND week = $2 AND is_final = false`,
+      [season, week]
+    );
+
+    return result.rows.map((row) => row.league_id);
+  }
 }

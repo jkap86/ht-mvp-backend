@@ -309,4 +309,31 @@ export class RosterRepository {
     );
     return parseInt(result.rows[0].count, 10);
   }
+
+  /**
+   * Delete a roster by ID (used for kicking members)
+   */
+  async delete(rosterId: number, client?: PoolClient): Promise<boolean> {
+    const db = client || this.db;
+    const result = await db.query(
+      'DELETE FROM rosters WHERE id = $1',
+      [rosterId]
+    );
+    return result.rowCount !== null && result.rowCount > 0;
+  }
+
+  /**
+   * Get team name for a roster
+   */
+  async getTeamName(rosterId: number): Promise<string | null> {
+    const result = await this.db.query(
+      `SELECT COALESCE(r.settings->>'team_name', u.username, 'Team ' || r.roster_id) as team_name
+       FROM rosters r
+       LEFT JOIN users u ON r.user_id = u.id
+       WHERE r.id = $1`,
+      [rosterId]
+    );
+    if (result.rows.length === 0) return null;
+    return result.rows[0].team_name;
+  }
 }

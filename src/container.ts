@@ -61,6 +61,7 @@ export const KEYS = {
   FAAB_BUDGET_REPO: 'faabBudgetRepo',
   WAIVER_CLAIMS_REPO: 'waiverClaimsRepo',
   WAIVER_WIRE_REPO: 'waiverWireRepo',
+  PLAYOFF_REPO: 'playoffRepo',
 
   // Services
   AUTH_SERVICE: 'authService',
@@ -84,6 +85,7 @@ export const KEYS = {
   TRADES_SERVICE: 'tradesService',
   WAIVERS_SERVICE: 'waiversService',
   STATS_SERVICE: 'statsService',
+  PLAYOFF_SERVICE: 'playoffService',
 
   // Engines
   DRAFT_ENGINE_FACTORY: 'draftEngineFactory',

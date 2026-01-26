@@ -36,6 +36,8 @@ import { StatsService } from './modules/scoring/stats.service';
 import { MatchupService } from './modules/matchups/matchups.service';
 import { TradesService } from './modules/trades/trades.service';
 import { WaiversService } from './modules/waivers/waivers.service';
+import { PlayoffRepository } from './modules/playoffs/playoff.repository';
+import { PlayoffService } from './modules/playoffs/playoff.service';
 
 // Engines
 import { DraftEngineFactory } from './engines';
@@ -73,7 +75,8 @@ function bootstrap(): void {
       container.resolve(KEYS.POOL),
       container.resolve(KEYS.LEAGUE_REPO),
       container.resolve(KEYS.ROSTER_REPO),
-      container.resolve(KEYS.USER_REPO)
+      container.resolve(KEYS.USER_REPO),
+      container.resolve(KEYS.ROSTER_PLAYERS_REPO)
     )
   );
 
@@ -193,6 +196,9 @@ function bootstrap(): void {
   container.register(KEYS.WAIVER_WIRE_REPO, () =>
     new WaiverWireRepository(container.resolve(KEYS.POOL))
   );
+  container.register(KEYS.PLAYOFF_REPO, () =>
+    new PlayoffRepository(container.resolve(KEYS.POOL))
+  );
 
   // Season management services
   container.register(KEYS.ROSTER_PLAYER_SERVICE, () =>
@@ -272,6 +278,17 @@ function bootstrap(): void {
       container.resolve(KEYS.ROSTER_TRANSACTIONS_REPO),
       container.resolve(KEYS.LEAGUE_REPO),
       container.resolve(KEYS.TRADES_REPO)
+    )
+  );
+
+  // Playoff service
+  container.register(KEYS.PLAYOFF_SERVICE, () =>
+    new PlayoffService(
+      container.resolve(KEYS.POOL),
+      container.resolve(KEYS.PLAYOFF_REPO),
+      container.resolve(KEYS.MATCHUPS_REPO),
+      container.resolve(KEYS.LEAGUE_REPO),
+      container.resolve(KEYS.ROSTER_REPO)
     )
   );
 }

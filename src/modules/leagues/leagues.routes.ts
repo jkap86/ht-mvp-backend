@@ -11,6 +11,7 @@ import rosterRoutes from '../rosters/rosters.routes';
 import matchupRoutes from '../matchups/matchups.routes';
 import tradesRoutes from '../trades/trades.routes';
 import { createWaiversRoutes } from '../waivers/waivers.routes';
+import playoffRoutes from '../playoffs/playoff.routes';
 import { WaiversController } from '../waivers/waivers.controller';
 import { WaiversService } from '../waivers/waivers.service';
 import { RostersController } from '../rosters/rosters.controller';
@@ -67,6 +68,9 @@ router.delete('/:id', leagueController.deleteLeague);
 // GET /api/leagues/:id/members
 router.get('/:id/members', leagueController.getMembers);
 
+// DELETE /api/leagues/:id/members/:rosterId - Kick member from league (commissioner only)
+router.delete('/:id/members/:rosterId', leagueController.kickMember);
+
 // POST /api/leagues/:id/dev/add-users - Dev endpoint to add multiple users to league
 router.post('/:id/dev/add-users', leagueController.devAddUsers);
 
@@ -87,6 +91,9 @@ router.use('/:leagueId/trades', tradesRoutes);
 
 // Mount waiver routes - /api/leagues/:leagueId/waivers/*
 router.use('/:leagueId/waivers', createWaiversRoutes(waiversController));
+
+// Mount playoff routes - /api/leagues/:leagueId/playoffs/*
+router.use('/:leagueId/playoffs', playoffRoutes);
 
 // Free agents - GET /api/leagues/:leagueId/free-agents
 router.get('/:leagueId/free-agents', rostersController.getFreeAgents);

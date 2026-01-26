@@ -381,6 +381,30 @@ export class SocketService {
     this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.WAIVER.BUDGET_UPDATED, { budgets });
   }
 
+  // Scoring events (emitted to league room)
+
+  // Emit scores updated event (after stats sync)
+  emitScoresUpdated(leagueId: number, data: { week: number; matchups: any[] }): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.SCORING.SCORES_UPDATED, data);
+  }
+
+  // Emit week finalized event
+  emitWeekFinalized(leagueId: number, data: { week: number }): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.SCORING.WEEK_FINALIZED, data);
+  }
+
+  // Member events (emitted to league room)
+
+  // Emit member kicked event
+  emitMemberKicked(leagueId: number, data: { rosterId: number; teamName: string }): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.MEMBER.KICKED, data);
+  }
+
+  // Emit member joined event
+  emitMemberJoined(leagueId: number, data: { rosterId: number; teamName: string; userId: string }): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.MEMBER.JOINED, data);
+  }
+
   getIO(): Server {
     return this.io;
   }

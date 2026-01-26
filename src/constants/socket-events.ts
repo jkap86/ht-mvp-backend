@@ -72,6 +72,18 @@ export const SOCKET_EVENTS = {
     PRIORITY_UPDATED: 'waiver:priority_updated',
     BUDGET_UPDATED: 'waiver:budget_updated',
   },
+
+  // Scoring events
+  SCORING: {
+    SCORES_UPDATED: 'scoring:scores_updated',
+    WEEK_FINALIZED: 'scoring:week_finalized',
+  },
+
+  // Member events
+  MEMBER: {
+    KICKED: 'member:kicked',
+    JOINED: 'member:joined',
+  },
 } as const;
 
 // Room name helpers

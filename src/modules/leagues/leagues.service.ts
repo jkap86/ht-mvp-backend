@@ -117,4 +117,12 @@ export class LeagueService {
   ): Promise<Array<{ username: string; success: boolean; error?: string }>> {
     return this.rosterService.devBulkAddUsers(leagueId, usernames);
   }
+
+  async kickMember(
+    leagueId: number,
+    rosterId: number,
+    userId: string
+  ): Promise<{ message: string; teamName: string }> {
+    return this.rosterService.kickMember(leagueId, rosterId, userId);
+  }
 }
