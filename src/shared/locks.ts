@@ -1,0 +1,340 @@
+/**
+ * Centralized Advisory Lock Helper
+ *
+ * Provides consistent lock ordering across the backend to prevent deadlocks.
+ * Uses PostgreSQL advisory locks with deterministic ordering.
+ *
+ * Lock Ordering Priority (always acquire in this order):
+ * 1. LEAGUE - League-level operations
+ * 2. ROSTER - Roster-level operations (sorted by id)
+ * 3. TRADE - Trade operations
+ * 4. WAIVER - Waiver claim operations
+ * 5. AUCTION - Auction lot operations
+ * 6. LINEUP - Lineup operations
+ *
+ * Usage:
+ *   await withLocks(client, [
+ *     { domain: LockDomain.LEAGUE, id: leagueId },
+ *     { domain: LockDomain.ROSTER, id: rosterId1 },
+ *     { domain: LockDomain.ROSTER, id: rosterId2 },
+ *   ], async () => {
+ *     // Your transactional code here
+ *   });
+ *
+ * ============================================================================
+ * EXISTING pg_advisory_lock USAGE IN CODEBASE (for future refactoring)
+ * ============================================================================
+ *
+ * The following files currently use pg_advisory_lock directly and should be
+ * migrated to use this centralized helper for consistent lock ordering:
+ *
+ * DRAFT OPERATIONS (uses getDraftLockId from src/utils/locks.ts):
+ * - src/modules/drafts/drafts.repository.ts
+ *   - createDraftPickWithCleanup(): locks draft for pick creation
+ *   - undoLastPick(): locks draft for undo operation
+ *
+ * TRADE OPERATIONS (uses getTradeLockId from src/utils/locks.ts):
+ * - src/modules/trades/use-cases/propose-trade.use-case.ts: locks league for trade proposal
+ * - src/modules/trades/use-cases/accept-trade.use-case.ts: locks league for trade acceptance
+ * - src/modules/trades/use-cases/reject-trade.use-case.ts: locks league for trade rejection
+ * - src/modules/trades/use-cases/cancel-trade.use-case.ts: locks league for trade cancellation
+ * - src/modules/trades/use-cases/counter-trade.use-case.ts: locks league for counter-offers
+ * - src/modules/trades/use-cases/process-trades.use-case.ts: locks league for trade processing
+ *
+ * WAIVER OPERATIONS (uses getWaiverLockId from src/utils/locks.ts):
+ * - src/modules/waivers/use-cases/process-waivers.use-case.ts: locks league for waiver processing
+ * - src/modules/waivers/use-cases/submit-claim.use-case.ts: locks league for claim submission
+ *
+ * ROSTER OPERATIONS (direct lock IDs):
+ * - src/modules/leagues/roster.service.ts
+ *   - joinLeague(): locks league (using raw leagueId) for concurrent join prevention
+ *   - kickMember(): locks roster (using rosterId + 1000000 offset) for member removal
+ * - src/modules/rosters/rosters.service.ts
+ *   - addPlayer(): locks league for free agent claims
+ *   - dropPlayer(): locks league for player drops
+ *   - addDropPlayer(): locks league for add/drop transactions
+ *
+ * AUCTION OPERATIONS (uses getAuctionRosterLockId from src/utils/locks.ts):
+ * - src/modules/drafts/auction/fast-auction.service.ts
+ *   - placeBid(): locks roster for bid placement
+ * - src/modules/drafts/auction/slow-auction.service.ts
+ *   - placeBid(): locks roster using hashtext('auction_roster', rosterId)
+ *   - settleLot(): locks winner's roster for settlement
+ *
+ * JOB-LEVEL LOCKS (session-level locks, not transaction-level):
+ * - src/jobs/autopick.job.ts: AUTOPICK_LOCK_ID = 999999001
+ * - src/jobs/waiver-processing.job.ts: WAIVER_PROCESSING_LOCK_ID = 999999002
+ * - src/jobs/trade-expiration.job.ts: TRADE_EXPIRATION_LOCK_ID = 999999003
+ * - src/jobs/slow-auction.job.ts: SLOW_AUCTION_LOCK_ID = 999999004
+ *
+ * NOTE: The existing src/utils/locks.ts provides namespace-based lock IDs but
+ * does not enforce ordering. This new helper (src/shared/locks.ts) should be
+ * used for all new code requiring multiple locks to prevent deadlocks.
+ * ============================================================================
+ */
+
+import type { PoolClient } from 'pg';
+
+/**
+ * Lock domain enum with priority values.
+ * Lower number = higher priority = acquired first.
+ */
+export enum LockDomain {
+  LEAGUE = 1,
+  ROSTER = 2,
+  TRADE = 3,
+  WAIVER = 4,
+  AUCTION = 5,
+  LINEUP = 6,
+}
+
+/**
+ * Lock specification for acquiring an advisory lock.
+ */
+export interface LockSpec {
+  domain: LockDomain;
+  id: number;
+}
+
+/**
+ * Namespace offsets to prevent lock ID collisions between domains.
+ * Each domain gets 100 million IDs.
+ */
+const LOCK_NAMESPACE_OFFSET: Record<LockDomain, number> = {
+  [LockDomain.LEAGUE]: 100_000_000,
+  [LockDomain.ROSTER]: 200_000_000,
+  [LockDomain.TRADE]: 300_000_000,
+  [LockDomain.WAIVER]: 400_000_000,
+  [LockDomain.AUCTION]: 500_000_000,
+  [LockDomain.LINEUP]: 600_000_000,
+};
+
+/**
+ * Generates a deterministic lock ID from domain and entity ID.
+ * Uses namespace offset + entity ID to avoid collisions.
+ */
+export function getLockId(domain: LockDomain, id: number): number {
+  return LOCK_NAMESPACE_OFFSET[domain] + id;
+}
+
+/**
+ * Sorts locks by domain priority, then by entity ID.
+ * This ensures consistent ordering to prevent deadlocks.
+ */
+function sortLocks(locks: LockSpec[]): LockSpec[] {
+  return [...locks].sort((a, b) => {
+    // First sort by domain priority (lower = first)
+    if (a.domain !== b.domain) {
+      return a.domain - b.domain;
+    }
+    // Then sort by ID (lower = first)
+    return a.id - b.id;
+  });
+}
+
+/**
+ * Acquires multiple advisory locks in consistent order and executes the callback.
+ * Uses pg_advisory_xact_lock for transactional locks (auto-released on commit/rollback).
+ *
+ * @param client - PostgreSQL pool client (must be in a transaction)
+ * @param locks - Array of lock specifications to acquire
+ * @param fn - Async function to execute while holding locks
+ * @returns Result of the callback function
+ *
+ * @example
+ * await withLocks(client, [
+ *   { domain: LockDomain.ROSTER, id: 5 },
+ *   { domain: LockDomain.ROSTER, id: 3 },
+ * ], async () => {
+ *   // Locks acquired in order: ROSTER(3), ROSTER(5)
+ *   await performOperation();
+ * });
+ */
+export async function withLocks<T>(
+  client: PoolClient,
+  locks: LockSpec[],
+  fn: () => Promise<T>
+): Promise<T> {
+  // Sort locks to ensure consistent ordering
+  const sortedLocks = sortLocks(locks);
+
+  // Acquire all locks in order
+  for (const lock of sortedLocks) {
+    const lockId = getLockId(lock.domain, lock.id);
+    await client.query('SELECT pg_advisory_xact_lock($1)', [lockId]);
+  }
+
+  // Execute the callback
+  return fn();
+}
+
+/**
+ * Helper: Lock a single league.
+ */
+export async function lockLeague<T>(
+  client: PoolClient,
+  leagueId: number,
+  fn: () => Promise<T>
+): Promise<T> {
+  return withLocks(client, [{ domain: LockDomain.LEAGUE, id: leagueId }], fn);
+}
+
+/**
+ * Helper: Lock a single roster.
+ */
+export async function lockRoster<T>(
+  client: PoolClient,
+  rosterId: number,
+  fn: () => Promise<T>
+): Promise<T> {
+  return withLocks(client, [{ domain: LockDomain.ROSTER, id: rosterId }], fn);
+}
+
+/**
+ * Helper: Lock multiple rosters (sorted automatically).
+ */
+export async function lockRosters<T>(
+  client: PoolClient,
+  rosterIds: number[],
+  fn: () => Promise<T>
+): Promise<T> {
+  const locks = rosterIds.map((id) => ({ domain: LockDomain.ROSTER, id }));
+  return withLocks(client, locks, fn);
+}
+
+/**
+ * Helper: Lock a trade (uses league-scoped locking).
+ */
+export async function lockTrade<T>(
+  client: PoolClient,
+  leagueId: number,
+  fn: () => Promise<T>
+): Promise<T> {
+  return withLocks(client, [{ domain: LockDomain.TRADE, id: leagueId }], fn);
+}
+
+/**
+ * Helper: Lock waiver operations for a league.
+ */
+export async function lockWaiver<T>(
+  client: PoolClient,
+  leagueId: number,
+  fn: () => Promise<T>
+): Promise<T> {
+  return withLocks(client, [{ domain: LockDomain.WAIVER, id: leagueId }], fn);
+}
+
+/**
+ * Helper: Lock an auction lot.
+ */
+export async function lockAuction<T>(
+  client: PoolClient,
+  lotId: number,
+  fn: () => Promise<T>
+): Promise<T> {
+  return withLocks(client, [{ domain: LockDomain.AUCTION, id: lotId }], fn);
+}
+
+/**
+ * Helper: Lock a lineup.
+ */
+export async function lockLineup<T>(
+  client: PoolClient,
+  lineupId: number,
+  fn: () => Promise<T>
+): Promise<T> {
+  return withLocks(client, [{ domain: LockDomain.LINEUP, id: lineupId }], fn);
+}
+
+/**
+ * Lock helper service for dependency injection.
+ */
+export class LockHelper {
+  /**
+   * Acquire multiple locks in consistent order.
+   */
+  async withLocks<T>(
+    client: PoolClient,
+    locks: LockSpec[],
+    fn: () => Promise<T>
+  ): Promise<T> {
+    return withLocks(client, locks, fn);
+  }
+
+  /**
+   * Lock a league.
+   */
+  async lockLeague<T>(
+    client: PoolClient,
+    leagueId: number,
+    fn: () => Promise<T>
+  ): Promise<T> {
+    return lockLeague(client, leagueId, fn);
+  }
+
+  /**
+   * Lock a roster.
+   */
+  async lockRoster<T>(
+    client: PoolClient,
+    rosterId: number,
+    fn: () => Promise<T>
+  ): Promise<T> {
+    return lockRoster(client, rosterId, fn);
+  }
+
+  /**
+   * Lock multiple rosters.
+   */
+  async lockRosters<T>(
+    client: PoolClient,
+    rosterIds: number[],
+    fn: () => Promise<T>
+  ): Promise<T> {
+    return lockRosters(client, rosterIds, fn);
+  }
+
+  /**
+   * Lock trade operations for a league.
+   */
+  async lockTrade<T>(
+    client: PoolClient,
+    leagueId: number,
+    fn: () => Promise<T>
+  ): Promise<T> {
+    return lockTrade(client, leagueId, fn);
+  }
+
+  /**
+   * Lock waiver operations for a league.
+   */
+  async lockWaiver<T>(
+    client: PoolClient,
+    leagueId: number,
+    fn: () => Promise<T>
+  ): Promise<T> {
+    return lockWaiver(client, leagueId, fn);
+  }
+
+  /**
+   * Lock an auction lot.
+   */
+  async lockAuction<T>(
+    client: PoolClient,
+    lotId: number,
+    fn: () => Promise<T>
+  ): Promise<T> {
+    return lockAuction(client, lotId, fn);
+  }
+
+  /**
+   * Lock a lineup.
+   */
+  async lockLineup<T>(
+    client: PoolClient,
+    lineupId: number,
+    fn: () => Promise<T>
+  ): Promise<T> {
+    return lockLineup(client, lineupId, fn);
+  }
+}

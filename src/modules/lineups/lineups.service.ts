@@ -370,4 +370,17 @@ export class LineupService {
     const season = parseInt(league.season, 10);
     await this.lineupsRepo.lockLineups(leagueId, season, week);
   }
+
+  /**
+   * Lock all lineups for a week across all leagues with a specific lock time setting
+   * Used by the automated lineup lock job
+   * @returns number of lineups locked
+   */
+  async lockWeekLineupsByLockTime(
+    season: number,
+    week: number,
+    lockTimeSetting: string
+  ): Promise<number> {
+    return this.lineupsRepo.lockLineupsForWeekByLockTime(season, week, lockTimeSetting);
+  }
 }

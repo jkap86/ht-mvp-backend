@@ -34,6 +34,8 @@ import { LineupService } from './modules/lineups/lineups.service';
 import { ScoringService } from './modules/scoring/scoring.service';
 import { StatsService } from './modules/scoring/stats.service';
 import { MatchupService } from './modules/matchups/matchups.service';
+import { ScheduleGeneratorService } from './modules/matchups/schedule-generator.service';
+import { StandingsService } from './modules/matchups/standings.service';
 import { TradesService } from './modules/trades/trades.service';
 import { WaiversService } from './modules/waivers/waivers.service';
 import { PlayoffRepository } from './modules/playoffs/playoff.repository';
@@ -41,6 +43,9 @@ import { PlayoffService } from './modules/playoffs/playoff.service';
 
 // Engines
 import { DraftEngineFactory } from './engines';
+
+// Helpers
+import { LockHelper } from './shared/locks';
 
 function bootstrap(): void {
   // Database
@@ -239,6 +244,22 @@ function bootstrap(): void {
     )
   );
 
+  container.register(KEYS.SCHEDULE_GENERATOR_SERVICE, () =>
+    new ScheduleGeneratorService(
+      container.resolve(KEYS.POOL),
+      container.resolve(KEYS.MATCHUPS_REPO),
+      container.resolve(KEYS.ROSTER_REPO),
+      container.resolve(KEYS.LEAGUE_REPO)
+    )
+  );
+
+  container.register(KEYS.STANDINGS_SERVICE, () =>
+    new StandingsService(
+      container.resolve(KEYS.MATCHUPS_REPO),
+      container.resolve(KEYS.LEAGUE_REPO)
+    )
+  );
+
   container.register(KEYS.MATCHUP_SERVICE, () =>
     new MatchupService(
       container.resolve(KEYS.POOL),
@@ -248,7 +269,9 @@ function bootstrap(): void {
       container.resolve(KEYS.LEAGUE_REPO),
       container.resolve(KEYS.SCORING_SERVICE),
       container.resolve(KEYS.PLAYER_REPO),
-      container.resolve(KEYS.PLAYER_STATS_REPO)
+      container.resolve(KEYS.PLAYER_STATS_REPO),
+      container.resolve(KEYS.SCHEDULE_GENERATOR_SERVICE),
+      container.resolve(KEYS.STANDINGS_SERVICE)
     )
   );
 
@@ -291,6 +314,9 @@ function bootstrap(): void {
       container.resolve(KEYS.ROSTER_REPO)
     )
   );
+
+  // Helpers
+  container.register(KEYS.LOCK_HELPER, () => new LockHelper());
 }
 
 // Auto-run bootstrap when this module is imported

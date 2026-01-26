@@ -70,6 +70,8 @@ export const KEYS = {
   ROSTER_PLAYER_SERVICE: 'rosterPlayerService',
   LINEUP_SERVICE: 'lineupService',
   SCORING_SERVICE: 'scoringService',
+  SCHEDULE_GENERATOR_SERVICE: 'scheduleGeneratorService',
+  STANDINGS_SERVICE: 'standingsService',
   MATCHUP_SERVICE: 'matchupService',
   DRAFT_SERVICE: 'draftService',
   DRAFT_ORDER_SERVICE: 'draftOrderService',
@@ -92,4 +94,7 @@ export const KEYS = {
 
   // External Clients
   SLEEPER_CLIENT: 'sleeperClient',
+
+  // Helpers
+  LOCK_HELPER: 'lockHelper',
 };

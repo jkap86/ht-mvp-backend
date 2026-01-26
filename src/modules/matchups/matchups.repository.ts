@@ -240,6 +240,9 @@ export class MatchupsRepository {
       [leagueId, season]
     );
 
+    // Helper to round to 2 decimal places
+    const roundPoints = (pts: number) => Math.round(pts * 100) / 100;
+
     return result.rows.map((row) => ({
       rosterId: row.roster_id,
       teamName: row.team_name,
@@ -247,8 +250,8 @@ export class MatchupsRepository {
       wins: parseInt(row.wins, 10),
       losses: parseInt(row.losses, 10),
       ties: parseInt(row.ties, 10),
-      pointsFor: parseFloat(row.points_for) || 0,
-      pointsAgainst: parseFloat(row.points_against) || 0,
+      pointsFor: roundPoints(parseFloat(row.points_for) || 0),
+      pointsAgainst: roundPoints(parseFloat(row.points_against) || 0),
       streak: '', // Would need to calculate from recent matchups
       rank: parseInt(row.rank, 10),
     }));

@@ -1,6 +1,7 @@
 import { container, KEYS } from '../container';
 import { StatsService } from '../modules/scoring/stats.service';
 import { MatchupsRepository } from '../modules/matchups/matchups.repository';
+import { LineupService } from '../modules/lineups/lineups.service';
 import { getSocketService } from '../socket/socket.service';
 import { logger } from '../config/env.config';
 
@@ -9,6 +10,38 @@ let isRunning = false;
 
 // 1 hour in milliseconds - check for stats updates hourly
 const SYNC_INTERVAL_MS = 60 * 60 * 1000;
+
+// Thursday 8:20 PM ET (20:20 in 24h format)
+const THURSDAY_LOCK_HOUR = 20;
+const THURSDAY_LOCK_MINUTE = 20;
+
+/**
+ * Check if current time is past Thursday 8:20 PM ET for the current week
+ * Thursday is day 4 in JavaScript (0 = Sunday, 4 = Thursday)
+ */
+function isPastThursdayLockTime(): boolean {
+  // Get current time in ET (Eastern Time)
+  const now = new Date();
+  const etOptions = { timeZone: 'America/New_York' };
+  const etString = now.toLocaleString('en-US', etOptions);
+  const etDate = new Date(etString);
+
+  const dayOfWeek = etDate.getDay(); // 0 = Sunday, 4 = Thursday
+  const hours = etDate.getHours();
+  const minutes = etDate.getMinutes();
+
+  // If it's Thursday, check if past 8:20 PM
+  if (dayOfWeek === 4) {
+    return hours > THURSDAY_LOCK_HOUR ||
+           (hours === THURSDAY_LOCK_HOUR && minutes >= THURSDAY_LOCK_MINUTE);
+  }
+
+  // If it's Friday (5), Saturday (6), Sunday (0), Monday (1), Tuesday (2), or Wednesday (3) after Thursday
+  // Friday through Wednesday before Thursday = past lock time for current NFL week
+  // We consider Friday, Saturday, and Sunday as past Thursday
+  // Monday, Tuesday, Wednesday are before the next Thursday
+  return dayOfWeek === 5 || dayOfWeek === 6 || dayOfWeek === 0;
+}
 
 /**
  * Notify leagues with active matchups that scores have been updated
@@ -33,6 +66,35 @@ async function notifyLeaguesOfScoreUpdate(
   } catch (error) {
     // Don't fail the sync if socket notification fails
     logger.warn(`Failed to notify leagues of score update: ${error}`);
+  }
+}
+
+/**
+ * Lock lineups for all leagues with thursday_2020 lock time setting
+ * This runs as part of the stats sync job
+ */
+async function checkAndLockLineups(season: number, week: number): Promise<void> {
+  if (!isPastThursdayLockTime()) {
+    logger.info('Not past Thursday 8:20 PM ET, skipping lineup lock check');
+    return;
+  }
+
+  try {
+    const lineupService = container.resolve<LineupService>(KEYS.LINEUP_SERVICE);
+    const lockedCount = await lineupService.lockWeekLineupsByLockTime(
+      season,
+      week,
+      'thursday_2020'
+    );
+
+    if (lockedCount > 0) {
+      logger.info(`Locked ${lockedCount} lineups for ${season} week ${week} (thursday_2020)`);
+    } else {
+      logger.info(`No unlocked lineups to lock for ${season} week ${week}`);
+    }
+  } catch (error) {
+    // Don't fail the sync if lineup locking fails
+    logger.warn(`Failed to lock lineups: ${error}`);
   }
 }
 
@@ -65,6 +127,9 @@ export async function runStatsSync(): Promise<void> {
     if (result.synced > 0) {
       await notifyLeaguesOfScoreUpdate(matchupsRepo, seasonNum, week);
     }
+
+    // Check and lock lineups if past Thursday 8:20 PM ET
+    await checkAndLockLineups(seasonNum, week);
   } catch (error) {
     logger.error(`Stats sync error: ${error}`);
   } finally {

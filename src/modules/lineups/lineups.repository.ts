@@ -108,4 +108,29 @@ export class LineupsRepository {
     if (result.rows.length === 0) return false;
     return result.rows[0].is_locked;
   }
+
+  /**
+   * Lock all lineups for a specific week across all leagues with a given lock time setting
+   * Returns the number of lineups locked
+   */
+  async lockLineupsForWeekByLockTime(
+    season: number,
+    week: number,
+    lockTimeSetting: string
+  ): Promise<number> {
+    const result = await this.db.query(
+      `UPDATE roster_lineups rl
+       SET is_locked = true, updated_at = CURRENT_TIMESTAMP
+       FROM rosters r
+       INNER JOIN leagues l ON r.league_id = l.id
+       WHERE rl.roster_id = r.id
+         AND rl.season = $1
+         AND rl.week = $2
+         AND l.lineup_lock_time = $3
+         AND rl.is_locked = false`,
+      [season, week, lockTimeSetting]
+    );
+
+    return result.rowCount || 0;
+  }
 }
