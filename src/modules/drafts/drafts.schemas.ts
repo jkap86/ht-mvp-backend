@@ -23,13 +23,14 @@ export const auctionSettingsSchema = z.object({
 });
 
 export const createDraftSchema = z.object({
-  draft_type: draftTypeSchema,
-  rounds: z.number().int().min(1, 'Rounds must be at least 1').max(30, 'Rounds cannot exceed 30'),
+  draft_type: draftTypeSchema.default('snake'),
+  rounds: z.number().int().min(1, 'Rounds must be at least 1').max(30, 'Rounds cannot exceed 30').default(15),
   pick_time_seconds: z
     .number()
     .int()
     .min(30, 'Pick time must be at least 30 seconds')
-    .max(600, 'Pick time cannot exceed 600 seconds'),
+    .max(600, 'Pick time cannot exceed 600 seconds')
+    .default(90),
   auction_settings: auctionSettingsSchema.optional(),
 });
 
