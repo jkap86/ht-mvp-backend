@@ -202,6 +202,11 @@ export class SocketService {
     this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.DRAFT.PICK_MADE, pick);
   }
 
+  // Emit draft created event to all users in league room
+  emitDraftCreated(leagueId: number, draft: any): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.DRAFT.CREATED, draft);
+  }
+
   // Emit draft started event
   emitDraftStarted(draftId: number, draft: any): void {
     this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.DRAFT.STARTED, draft);
