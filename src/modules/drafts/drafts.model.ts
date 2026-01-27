@@ -41,6 +41,7 @@ export interface Draft {
   completedAt: Date | null;
   settings: AuctionSettings | Record<string, any>;
   draftState: Record<string, any>;
+  orderConfirmed: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -85,6 +86,7 @@ export function draftFromDatabase(row: any): Draft {
     completedAt: row.completed_at,
     settings: row.settings || {},
     draftState: row.draft_state || {},
+    orderConfirmed: row.order_confirmed ?? false,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -106,6 +108,7 @@ export function draftToResponse(draft: Draft) {
     completed_at: draft.completedAt,
     settings: draft.settings,
     draft_state: draft.draftState,
+    order_confirmed: draft.orderConfirmed,
     created_at: draft.createdAt,
     updated_at: draft.updatedAt,
   };

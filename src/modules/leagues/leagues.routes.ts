@@ -68,6 +68,9 @@ router.put('/:id', validateRequest(updateLeagueSchema, 'body'), leagueController
 // DELETE /api/leagues/:id
 router.delete('/:id', leagueController.deleteLeague);
 
+// POST /api/leagues/:id/reset - Reset league for new season (commissioner only)
+router.post('/:id/reset', leagueController.resetLeague);
+
 // GET /api/leagues/:id/members
 router.get('/:id/members', leagueController.getMembers);
 

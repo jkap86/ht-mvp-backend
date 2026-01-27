@@ -94,6 +94,13 @@ export class DraftRepository {
     await this.db.query('DELETE FROM drafts WHERE id = $1', [id]);
   }
 
+  async setOrderConfirmed(draftId: number, confirmed: boolean): Promise<void> {
+    await this.db.query(
+      'UPDATE drafts SET order_confirmed = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [confirmed, draftId]
+    );
+  }
+
   // Draft Order
   async getDraftOrder(draftId: number, limit?: number, offset?: number): Promise<DraftOrderEntry[]> {
     let query = `SELECT dord.*, u.username, r.user_id

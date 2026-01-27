@@ -21,6 +21,20 @@ export class DraftService {
     private readonly stateService: DraftStateService
   ) {}
 
+  private calculateTotalRosterSlots(leagueSettings: any): number {
+    const rosterConfig = leagueSettings?.roster_config;
+    if (!rosterConfig) return 15; // fallback default
+
+    return (rosterConfig.QB || 0) +
+           (rosterConfig.RB || 0) +
+           (rosterConfig.WR || 0) +
+           (rosterConfig.TE || 0) +
+           (rosterConfig.FLEX || 0) +
+           (rosterConfig.K || 0) +
+           (rosterConfig.DEF || 0) +
+           (rosterConfig.BN || 0);
+  }
+
   async getLeagueDrafts(leagueId: number, userId: string): Promise<any[]> {
     const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
     if (!isMember) {
@@ -98,10 +112,14 @@ export class DraftService {
       }
     }
 
+    // Get league for roster config to calculate default rounds
+    const league = await this.leagueRepo.findById(leagueId);
+    const defaultRounds = this.calculateTotalRosterSlots(league?.leagueSettings || league?.settings);
+
     const draft = await this.draftRepo.create(
       leagueId,
       options.draftType || 'snake',
-      options.rounds || 15,
+      options.rounds || defaultRounds,
       options.pickTimeSeconds || 90,
       Object.keys(settings).length > 0 ? settings : undefined
     );
@@ -161,6 +179,7 @@ export class DraftService {
     // Get league settings for overrides
     const league = await this.leagueRepo.findById(leagueId);
     const leagueSettings = league?.leagueSettings || {};
+    const totalRosterSlots = this.calculateTotalRosterSlots(leagueSettings);
 
     return {
       draftTypes: [
@@ -170,7 +189,7 @@ export class DraftService {
       ],
       defaults: {
         draftType: 'snake',
-        rounds: 15,
+        rounds: totalRosterSlots,
         pickTimeSeconds: 90,
         auctionSettings: {
           bidWindowSeconds: 43200,         // 12 hours

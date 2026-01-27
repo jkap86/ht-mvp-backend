@@ -65,6 +65,9 @@ export class DraftOrderService {
     const rosterIds = shuffled.map(r => r.id);
     await this.draftRepo.updateDraftOrderAtomic(draftId, rosterIds);
 
+    // Mark order as confirmed after successful randomization
+    await this.draftRepo.setOrderConfirmed(draftId, true);
+
     return this.draftRepo.getDraftOrder(draftId);
   }
 

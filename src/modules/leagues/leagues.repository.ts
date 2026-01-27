@@ -185,6 +185,91 @@ export class LeagueRepository {
     return parseInt(row.commissioner_roster_id, 10) === row.roster_id;
   }
 
+  async resetForNewSeason(
+    leagueId: number,
+    newSeason: string,
+    options: { keepMembers?: boolean; clearChat?: boolean }
+  ): Promise<League> {
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Lock the league to prevent concurrent modifications
+      await client.query('SELECT pg_advisory_xact_lock($1)', [leagueId]);
+
+      // Clear season data (CASCADE handles child tables)
+      await client.query('DELETE FROM drafts WHERE league_id = $1', [leagueId]);
+      await client.query('DELETE FROM matchups WHERE league_id = $1', [leagueId]);
+      await client.query('DELETE FROM trades WHERE league_id = $1', [leagueId]);
+      await client.query('DELETE FROM waiver_claims WHERE league_id = $1', [leagueId]);
+      await client.query('DELETE FROM waiver_wire WHERE league_id = $1', [leagueId]);
+      await client.query('DELETE FROM waiver_priority WHERE league_id = $1', [leagueId]);
+      await client.query('DELETE FROM faab_budgets WHERE league_id = $1', [leagueId]);
+      await client.query('DELETE FROM playoff_brackets WHERE league_id = $1', [leagueId]);
+      await client.query('DELETE FROM roster_transactions WHERE league_id = $1', [leagueId]);
+
+      // Clear roster player data
+      await client.query(`
+        DELETE FROM roster_players WHERE roster_id IN
+        (SELECT id FROM rosters WHERE league_id = $1)
+      `, [leagueId]);
+      await client.query(`
+        DELETE FROM roster_lineups WHERE roster_id IN
+        (SELECT id FROM rosters WHERE league_id = $1)
+      `, [leagueId]);
+
+      // Optionally clear chat
+      if (options.clearChat !== false) {
+        await client.query('DELETE FROM league_chat_messages WHERE league_id = $1', [leagueId]);
+      }
+
+      // Get commissioner roster ID from league settings
+      const leagueResult = await client.query(
+        `SELECT settings->>'commissioner_roster_id' as commissioner_roster_id FROM leagues WHERE id = $1`,
+        [leagueId]
+      );
+      const commissionerRosterId = leagueResult.rows[0]?.commissioner_roster_id
+        ? parseInt(leagueResult.rows[0].commissioner_roster_id, 10)
+        : null;
+
+      // Clear or reset rosters (always preserve commissioner)
+      if (!options.keepMembers) {
+        // Delete all rosters EXCEPT the commissioner
+        if (commissionerRosterId) {
+          await client.query('DELETE FROM rosters WHERE league_id = $1 AND id != $2', [leagueId, commissionerRosterId]);
+        } else {
+          await client.query('DELETE FROM rosters WHERE league_id = $1', [leagueId]);
+        }
+      }
+
+      // Always reset roster data for remaining rosters
+      await client.query(`
+        UPDATE rosters SET starters = '[]', bench = '[]', updated_at = CURRENT_TIMESTAMP
+        WHERE league_id = $1
+      `, [leagueId]);
+
+      // Update league for new season
+      const result = await client.query(`
+        UPDATE leagues SET
+          season = $2,
+          season_status = 'pre_season',
+          current_week = 1,
+          status = 'pre_draft',
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+        RETURNING *
+      `, [leagueId, newSeason]);
+
+      await client.query('COMMIT');
+      return League.fromDatabase(result.rows[0]);
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async updateCommissionerRosterId(leagueId: number, rosterId: number): Promise<void> {
     await this.db.query(
       `UPDATE leagues

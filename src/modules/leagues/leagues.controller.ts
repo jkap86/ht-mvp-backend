@@ -184,4 +184,32 @@ export class LeagueController {
       next(error);
     }
   };
+
+  resetLeague = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const userId = requireUserId(req);
+      const leagueId = requireLeagueId(req);
+
+      const { new_season, keep_members, clear_chat, confirmation_name } = req.body;
+
+      if (!new_season || !confirmation_name) {
+        throw new ValidationException('new_season and confirmation_name are required');
+      }
+
+      const league = await this.leagueService.resetLeagueForNewSeason(
+        leagueId,
+        userId,
+        new_season,
+        {
+          keepMembers: keep_members ?? false,
+          clearChat: clear_chat ?? true,
+          confirmationName: confirmation_name,
+        }
+      );
+
+      res.status(200).json(league);
+    } catch (error) {
+      next(error);
+    }
+  };
 }

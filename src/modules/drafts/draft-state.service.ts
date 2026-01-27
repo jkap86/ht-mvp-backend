@@ -42,6 +42,11 @@ export class DraftStateService {
       throw new ValidationException('Draft order positions must be unique and contiguous from 1 to N');
     }
 
+    // Ensure commissioner has explicitly confirmed the draft order
+    if (!draft.orderConfirmed) {
+      throw new ValidationException('Draft order must be confirmed before starting');
+    }
+
     const firstPicker = draftOrder.find(o => o.draftPosition === 1);
 
     // Check if this is a fast auction draft

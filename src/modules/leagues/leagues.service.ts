@@ -150,4 +150,50 @@ export class LeagueService {
     const updatedLeague = await this.leagueRepo.findByIdWithUserRoster(league.id, userId);
     return updatedLeague!.toResponse();
   }
+
+  async resetLeagueForNewSeason(
+    leagueId: number,
+    userId: string,
+    newSeason: string,
+    options: {
+      keepMembers?: boolean;
+      clearChat?: boolean;
+      confirmationName: string;
+    }
+  ): Promise<any> {
+    // Verify commissioner
+    const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
+    if (!isCommissioner) {
+      throw new ForbiddenException('Only the commissioner can reset the league');
+    }
+
+    // Get league and validate
+    const league = await this.leagueRepo.findById(leagueId);
+    if (!league) {
+      throw new NotFoundException('League not found');
+    }
+
+    // Validate season status
+    if (league.seasonStatus !== 'offseason' && league.seasonStatus !== 'pre_season') {
+      throw new ValidationException('League can only be reset during pre-season or offseason. Current status: ' + league.seasonStatus);
+    }
+
+    // Validate confirmation name
+    if (options.confirmationName.trim().toLowerCase() !== league.name.trim().toLowerCase()) {
+      throw new ValidationException('League name confirmation does not match');
+    }
+
+    // Validate new season format
+    if (!/^\d{4}$/.test(newSeason)) {
+      throw new ValidationException('Season must be a 4-digit year');
+    }
+
+    // Perform reset
+    const updatedLeague = await this.leagueRepo.resetForNewSeason(leagueId, newSeason, {
+      keepMembers: options.keepMembers,
+      clearChat: options.clearChat,
+    });
+
+    return updatedLeague.toResponse();
+  }
 }
