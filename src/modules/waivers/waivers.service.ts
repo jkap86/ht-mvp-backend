@@ -174,8 +174,17 @@ export class WaiversService {
 
   /**
    * Initialize waivers for a new season
+   * If season is not provided, it will be fetched from the league
    */
-  async initializeForSeason(leagueId: number, season: number): Promise<void> {
+  async initializeForSeason(leagueId: number, season?: number): Promise<void> {
+    let actualSeason = season;
+    if (actualSeason === undefined) {
+      const league = await this.leagueRepo.findById(leagueId);
+      if (!league) {
+        throw new Error('League not found');
+      }
+      actualSeason = parseInt(league.season, 10);
+    }
     return initializeForSeasonUseCase(
       {
         db: this.db,
@@ -186,7 +195,7 @@ export class WaiversService {
         leagueRepo: this.leagueRepo,
       },
       leagueId,
-      season
+      actualSeason
     );
   }
 

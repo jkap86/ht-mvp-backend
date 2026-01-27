@@ -6,6 +6,7 @@ import { DraftQueueService } from './draft-queue.service';
 import { SlowAuctionService } from './auction/slow-auction.service';
 import { FastAuctionService } from './auction/fast-auction.service';
 import { RosterRepository } from '../leagues/leagues.repository';
+import { AuthorizationService } from '../auth/authorization.service';
 import { authMiddleware } from '../../middleware/auth.middleware';
 import { validateRequest } from '../../middleware/validation.middleware';
 import { draftPickLimiter, queueLimiter, draftModifyLimiter } from '../../middleware/rate-limit.middleware';
@@ -27,6 +28,7 @@ import { AuctionActionHandler } from './action-handlers/auction.handler';
 const draftService = container.resolve<DraftService>(KEYS.DRAFT_SERVICE);
 const queueService = container.resolve<DraftQueueService>(KEYS.DRAFT_QUEUE_SERVICE);
 const rosterRepo = container.resolve<RosterRepository>(KEYS.ROSTER_REPO);
+const authService = container.resolve<AuthorizationService>(KEYS.AUTHORIZATION_SERVICE);
 const slowAuctionService = container.resolve<SlowAuctionService>(KEYS.SLOW_AUCTION_SERVICE);
 const fastAuctionService = container.resolve<FastAuctionService>(KEYS.FAST_AUCTION_SERVICE);
 
@@ -41,7 +43,7 @@ actionDispatcher.register(new AuctionActionHandler(slowAuctionService, fastAucti
 const draftController = new DraftController(
   draftService,
   queueService,
-  rosterRepo,
+  authService,
   slowAuctionService,
   actionDispatcher
 );

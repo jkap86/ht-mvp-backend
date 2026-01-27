@@ -3,9 +3,9 @@ import { AuthRequest } from '../../middleware/auth.middleware';
 import { DraftService } from './drafts.service';
 import { DraftQueueService } from './draft-queue.service';
 import { SlowAuctionService } from './auction/slow-auction.service';
-import { RosterRepository } from '../leagues/leagues.repository';
+import { AuthorizationService } from '../auth/authorization.service';
 import { requireUserId, requireLeagueId, requireDraftId, requirePlayerId } from '../../utils/controller-helpers';
-import { ForbiddenException, ValidationException } from '../../utils/exceptions';
+import { ValidationException } from '../../utils/exceptions';
 import { ActionDispatcher } from './action-handlers';
 import { auctionLotToResponse } from './auction/auction.models';
 
@@ -38,7 +38,7 @@ export class DraftController {
   constructor(
     private readonly draftService: DraftService,
     private readonly queueService?: DraftQueueService,
-    private readonly rosterRepo?: RosterRepository,
+    private readonly authService?: AuthorizationService,
     private readonly slowAuctionService?: SlowAuctionService,
     actionDispatcher?: ActionDispatcher
   ) {
@@ -194,13 +194,10 @@ export class DraftController {
       const draftId = requireDraftId(req);
 
       // Verify user is a member of the league
-      if (!this.rosterRepo) {
-        throw new ValidationException('Roster repository not available');
+      if (!this.authService) {
+        throw new ValidationException('Authorization service not available');
       }
-      const roster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId);
-      if (!roster) {
-        throw new ForbiddenException('You are not a member of this league');
-      }
+      await this.authService.ensureLeagueMember(leagueId, userId);
 
       // Get status filter from query (supports: active, won, passed, all)
       const status = req.query.status as string | undefined;
@@ -230,13 +227,10 @@ export class DraftController {
         throw new ValidationException('Invalid lot ID');
       }
 
-      if (!this.rosterRepo) {
-        throw new ValidationException('Roster repository not available');
+      if (!this.authService) {
+        throw new ValidationException('Authorization service not available');
       }
-      const roster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId);
-      if (!roster) {
-        throw new ForbiddenException('You are not a member of this league');
-      }
+      const roster = await this.authService.ensureLeagueMember(leagueId, userId);
 
       if (!this.slowAuctionService) {
         throw new ValidationException('Auction service not available');
@@ -257,13 +251,10 @@ export class DraftController {
       const leagueId = requireLeagueId(req);
       const draftId = requireDraftId(req);
 
-      if (!this.rosterRepo) {
-        throw new ValidationException('Roster repository not available');
+      if (!this.authService) {
+        throw new ValidationException('Authorization service not available');
       }
-      const roster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId);
-      if (!roster) {
-        throw new ForbiddenException('You are not a member of this league');
-      }
+      await this.authService.ensureLeagueMember(leagueId, userId);
 
       if (!this.slowAuctionService) {
         throw new ValidationException('Auction service not available');
@@ -283,13 +274,10 @@ export class DraftController {
       const draftId = requireDraftId(req);
 
       // Verify user is league member
-      if (!this.rosterRepo) {
-        throw new ValidationException('Roster repository not available');
+      if (!this.authService) {
+        throw new ValidationException('Authorization service not available');
       }
-      const roster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId);
-      if (!roster) {
-        throw new ForbiddenException('You are not a member of this league');
-      }
+      await this.authService.ensureLeagueMember(leagueId, userId);
 
       // Get draft to determine auction mode
       const draft = await this.draftService.getDraftById(leagueId, draftId, userId);

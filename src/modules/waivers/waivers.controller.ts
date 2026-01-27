@@ -1,20 +1,18 @@
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../../middleware/auth.middleware';
 import { WaiversService } from './waivers.service';
-import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
+import { AuthorizationService } from '../auth/authorization.service';
 import {
   waiverClaimToResponse,
   waiverPriorityToResponse,
   faabBudgetToResponse,
 } from './waivers.model';
-import { ForbiddenException, NotFoundException } from '../../utils/exceptions';
 import { requireUserId, requireLeagueId } from '../../utils/controller-helpers';
 
 export class WaiversController {
   constructor(
     private readonly waiversService: WaiversService,
-    private readonly leagueRepo: LeagueRepository,
-    private readonly rosterRepo: RosterRepository
+    private readonly authService: AuthorizationService
   ) {}
 
   /**
@@ -144,10 +142,7 @@ export class WaiversController {
       const userId = requireUserId(req);
 
       // Verify user is in league
-      const roster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId);
-      if (!roster) {
-        throw new ForbiddenException('You are not a member of this league');
-      }
+      await this.authService.ensureLeagueMember(leagueId, userId);
 
       const players = await this.waiversService.getWaiverWirePlayers(leagueId);
 
@@ -169,21 +164,9 @@ export class WaiversController {
       const userId = requireUserId(req);
 
       // Verify user is commissioner
-      const roster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId);
-      if (!roster) {
-        throw new ForbiddenException('You are not a member of this league');
-      }
+      await this.authService.ensureCommissioner(leagueId, userId);
 
-      const league = await this.leagueRepo.findById(leagueId);
-      if (!league) {
-        throw new NotFoundException('League not found');
-      }
-
-      if (league.commissionerRosterId !== roster.id) {
-        throw new ForbiddenException('Only the commissioner can initialize waivers');
-      }
-
-      await this.waiversService.initializeForSeason(leagueId, parseInt(league.season, 10));
+      await this.waiversService.initializeForSeason(leagueId);
 
       res.status(200).json({ success: true, message: 'Waivers initialized' });
     } catch (error) {
@@ -201,19 +184,7 @@ export class WaiversController {
       const userId = requireUserId(req);
 
       // Verify user is commissioner
-      const roster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId);
-      if (!roster) {
-        throw new ForbiddenException('You are not a member of this league');
-      }
-
-      const league = await this.leagueRepo.findById(leagueId);
-      if (!league) {
-        throw new NotFoundException('League not found');
-      }
-
-      if (league.commissionerRosterId !== roster.id) {
-        throw new ForbiddenException('Only the commissioner can manually process waivers');
-      }
+      await this.authService.ensureCommissioner(leagueId, userId);
 
       const result = await this.waiversService.processLeagueClaims(leagueId);
 

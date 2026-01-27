@@ -14,6 +14,7 @@ import { createWaiversRoutes } from '../waivers/waivers.routes';
 import playoffRoutes from '../playoffs/playoff.routes';
 import { WaiversController } from '../waivers/waivers.controller';
 import { WaiversService } from '../waivers/waivers.service';
+import { AuthorizationService } from '../auth/authorization.service';
 import { RostersController } from '../rosters/rosters.controller';
 import { MatchupsController } from '../matchups/matchups.controller';
 import { RosterService } from '../rosters/rosters.service';
@@ -35,9 +36,8 @@ const matchupsController = new MatchupsController(matchupService, scoringService
 
 // Resolve waivers dependencies
 const waiversService = container.resolve<WaiversService>(KEYS.WAIVERS_SERVICE);
-const leagueRepo = container.resolve<any>(KEYS.LEAGUE_REPO);
-const rosterRepo = container.resolve<any>(KEYS.ROSTER_REPO);
-const waiversController = new WaiversController(waiversService, leagueRepo, rosterRepo);
+const authorizationService = container.resolve<AuthorizationService>(KEYS.AUTHORIZATION_SERVICE);
+const waiversController = new WaiversController(waiversService, authorizationService);
 
 const router = Router();
 
