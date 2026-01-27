@@ -41,6 +41,8 @@ import { TradesService } from './modules/trades/trades.service';
 import { WaiversService } from './modules/waivers/waivers.service';
 import { PlayoffRepository } from './modules/playoffs/playoff.repository';
 import { PlayoffService } from './modules/playoffs/playoff.service';
+import { InvitationsRepository } from './modules/invitations/invitations.repository';
+import { InvitationsService } from './modules/invitations/invitations.service';
 
 // Engines
 import { DraftEngineFactory } from './engines';
@@ -317,6 +319,21 @@ function bootstrap(): void {
       container.resolve(KEYS.MATCHUPS_REPO),
       container.resolve(KEYS.LEAGUE_REPO),
       container.resolve(KEYS.ROSTER_REPO)
+    )
+  );
+
+  // Invitations
+  container.register(KEYS.INVITATIONS_REPO, () =>
+    new InvitationsRepository(container.resolve(KEYS.POOL))
+  );
+
+  container.register(KEYS.INVITATIONS_SERVICE, () =>
+    new InvitationsService(
+      container.resolve(KEYS.INVITATIONS_REPO),
+      container.resolve(KEYS.LEAGUE_REPO),
+      container.resolve(KEYS.ROSTER_REPO),
+      container.resolve(KEYS.USER_REPO),
+      container.resolve(KEYS.ROSTER_SERVICE)
     )
   );
 

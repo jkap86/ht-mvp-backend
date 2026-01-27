@@ -6,6 +6,7 @@ export interface SleeperNflState {
   week: number;
   season_type: string;
   display_week: number;
+  league_create_season: string;
 }
 
 export interface SleeperPlayer {

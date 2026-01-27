@@ -2,6 +2,7 @@ import { Router } from 'express';
 import authRoutes from '../modules/auth/auth.routes';
 import leagueRoutes from '../modules/leagues/leagues.routes';
 import playerRoutes from '../modules/players/players.routes';
+import invitationRoutes from '../modules/invitations/invitations.routes';
 import { pool, getPoolMetrics } from '../db/pool';
 import { metrics } from '../services/metrics.service';
 import { checkRedisHealth } from '../config/redis.config';
@@ -47,5 +48,8 @@ router.use('/leagues', leagueRoutes);
 
 // Player routes
 router.use('/players', playerRoutes);
+
+// Invitation routes (top-level for user's invitations)
+router.use('/invitations', invitationRoutes);
 
 export default router;

@@ -62,6 +62,7 @@ export const KEYS = {
   WAIVER_CLAIMS_REPO: 'waiverClaimsRepo',
   WAIVER_WIRE_REPO: 'waiverWireRepo',
   PLAYOFF_REPO: 'playoffRepo',
+  INVITATIONS_REPO: 'invitationsRepo',
 
   // Services
   AUTH_SERVICE: 'authService',
@@ -89,6 +90,7 @@ export const KEYS = {
   WAIVERS_SERVICE: 'waiversService',
   STATS_SERVICE: 'statsService',
   PLAYOFF_SERVICE: 'playoffService',
+  INVITATIONS_SERVICE: 'invitationsService',
 
   // Engines
   DRAFT_ENGINE_FACTORY: 'draftEngineFactory',

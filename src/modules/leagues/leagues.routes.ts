@@ -12,6 +12,7 @@ import matchupRoutes from '../matchups/matchups.routes';
 import tradesRoutes from '../trades/trades.routes';
 import { createWaiversRoutes } from '../waivers/waivers.routes';
 import playoffRoutes from '../playoffs/playoff.routes';
+import { createLeagueInvitationRoutes, createUserSearchRoutes } from '../invitations/invitations.routes';
 import { WaiversController } from '../waivers/waivers.controller';
 import { WaiversService } from '../waivers/waivers.service';
 import { AuthorizationService } from '../auth/authorization.service';
@@ -106,6 +107,12 @@ router.use('/:leagueId/waivers', createWaiversRoutes(waiversController));
 
 // Mount playoff routes - /api/leagues/:leagueId/playoffs/*
 router.use('/:leagueId/playoffs', playoffRoutes);
+
+// Mount invitation routes - /api/leagues/:leagueId/invitations/*
+router.use('/:leagueId/invitations', createLeagueInvitationRoutes());
+
+// Mount user search routes - /api/leagues/:leagueId/users/*
+router.use('/:leagueId/users', createUserSearchRoutes());
 
 // Free agents - GET /api/leagues/:leagueId/free-agents
 router.get('/:leagueId/free-agents', rostersController.getFreeAgents);

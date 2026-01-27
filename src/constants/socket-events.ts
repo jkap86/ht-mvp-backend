@@ -85,6 +85,14 @@ export const SOCKET_EVENTS = {
     KICKED: 'member:kicked',
     JOINED: 'member:joined',
   },
+
+  // Invitation events
+  INVITATION: {
+    RECEIVED: 'invitation:received',
+    ACCEPTED: 'invitation:accepted',
+    DECLINED: 'invitation:declined',
+    CANCELLED: 'invitation:cancelled',
+  },
 } as const;
 
 // Room name helpers
