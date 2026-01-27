@@ -64,6 +64,18 @@ export class RosterService {
 
       await client.query('COMMIT');
 
+      // Emit socket event for real-time UI update
+      try {
+        const socketService = getSocketService();
+        socketService.emitMemberJoined(leagueId, {
+          rosterId: roster.rosterId,
+          teamName: `Team ${roster.rosterId}`,
+          userId,
+        });
+      } catch (socketError) {
+        logger.warn(`Failed to emit member joined event: ${socketError}`);
+      }
+
       return {
         message: 'Successfully joined the league',
         roster: {
