@@ -65,6 +65,7 @@ export const KEYS = {
 
   // Services
   AUTH_SERVICE: 'authService',
+  AUTHORIZATION_SERVICE: 'authorizationService',
   LEAGUE_SERVICE: 'leagueService',
   ROSTER_SERVICE: 'rosterService',
   ROSTER_PLAYER_SERVICE: 'rosterPlayerService',

@@ -16,6 +16,7 @@ import { WaiverPriorityRepository, FaabBudgetRepository, WaiverClaimsRepository,
 
 // Services
 import { AuthService } from './modules/auth/auth.service';
+import { AuthorizationService } from './modules/auth/authorization.service';
 import { LeagueService } from './modules/leagues/leagues.service';
 import { RosterService } from './modules/leagues/roster.service';
 import { DraftService } from './modules/drafts/drafts.service';
@@ -73,6 +74,13 @@ function bootstrap(): void {
   // Services
   container.register(KEYS.AUTH_SERVICE, () =>
     new AuthService(container.resolve(KEYS.USER_REPO))
+  );
+
+  container.register(KEYS.AUTHORIZATION_SERVICE, () =>
+    new AuthorizationService(
+      container.resolve(KEYS.ROSTER_REPO),
+      container.resolve(KEYS.LEAGUE_REPO)
+    )
   );
 
   container.register(KEYS.ROSTER_SERVICE, () =>
