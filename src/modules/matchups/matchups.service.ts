@@ -5,12 +5,10 @@ import { LeagueRepository, RosterRepository } from '../leagues/leagues.repositor
 import { ScoringService } from '../scoring/scoring.service';
 import { PlayerStatsRepository } from '../scoring/scoring.repository';
 import { ScoringRules, DEFAULT_SCORING_RULES, ScoringType } from '../scoring/scoring.model';
+import { calculatePlayerPoints } from '../scoring/scoring-calculator';
 import { PlayerRepository } from '../players/players.repository';
-import { ScheduleGeneratorService } from './schedule-generator.service';
-import { StandingsService } from './standings.service';
 import {
   MatchupDetails,
-  Standing,
   MatchupWithLineups,
   MatchupTeamLineup,
   MatchupPlayerPerformance,
@@ -23,8 +21,8 @@ import {
 
 /**
  * Core matchup service handling CRUD operations, detail fetching, and scoring updates.
- * Schedule generation is delegated to ScheduleGeneratorService.
- * Standings calculation is delegated to StandingsService.
+ * Note: Schedule generation and standings are now handled directly by their respective services
+ * (ScheduleGeneratorService and StandingsService) via the controller.
  */
 export class MatchupService {
   constructor(
@@ -35,22 +33,8 @@ export class MatchupService {
     private readonly leagueRepo: LeagueRepository,
     private readonly scoringService: ScoringService,
     private readonly playerRepo: PlayerRepository,
-    private readonly statsRepo: PlayerStatsRepository,
-    private readonly scheduleGeneratorService: ScheduleGeneratorService,
-    private readonly standingsService: StandingsService
+    private readonly statsRepo: PlayerStatsRepository
   ) {}
-
-  /**
-   * Generate round-robin schedule for regular season
-   * Delegates to ScheduleGeneratorService
-   */
-  async generateSchedule(
-    leagueId: number,
-    weeks: number,
-    userId: string
-  ): Promise<void> {
-    return this.scheduleGeneratorService.generateSchedule(leagueId, weeks, userId);
-  }
 
   /**
    * Get matchups for a week
@@ -218,7 +202,7 @@ export class MatchupService {
         const player = playerMap.get(playerId);
         const playerStats = statsMap.get(playerId);
         const points = playerStats
-          ? this.scoringService.calculatePlayerPoints(playerStats, scoringRules)
+          ? calculatePlayerPoints(playerStats, scoringRules)
           : 0;
 
         performances.push({
@@ -239,7 +223,7 @@ export class MatchupService {
       const player = playerMap.get(playerId);
       const playerStats = statsMap.get(playerId);
       const points = playerStats
-        ? this.scoringService.calculatePlayerPoints(playerStats, scoringRules)
+        ? calculatePlayerPoints(playerStats, scoringRules)
         : 0;
 
       performances.push({
@@ -321,16 +305,5 @@ export class MatchupService {
     } finally {
       client.release();
     }
-  }
-
-  /**
-   * Get current standings
-   * Delegates to StandingsService
-   */
-  async getStandings(
-    leagueId: number,
-    userId: string
-  ): Promise<Standing[]> {
-    return this.standingsService.getStandings(leagueId, userId);
   }
 }

@@ -1,11 +1,15 @@
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../../middleware/auth.middleware';
 import { LeagueService } from './leagues.service';
+import { RosterService } from './roster.service';
 import { ValidationException } from '../../utils/exceptions';
 import { requireUserId, requireLeagueId } from '../../utils/controller-helpers';
 
 export class LeagueController {
-  constructor(private readonly leagueService: LeagueService) {}
+  constructor(
+    private readonly leagueService: LeagueService,
+    private readonly rosterService?: RosterService
+  ) {}
 
   getMyLeagues = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
@@ -61,7 +65,10 @@ export class LeagueController {
       const userId = requireUserId(req);
       const leagueId = requireLeagueId(req);
 
-      const result = await this.leagueService.joinLeague(leagueId, userId);
+      if (!this.rosterService) {
+        throw new ValidationException('Roster service not available');
+      }
+      const result = await this.rosterService.joinLeague(leagueId, userId);
       res.status(200).json(result);
     } catch (error) {
       next(error);
@@ -120,7 +127,10 @@ export class LeagueController {
       const userId = requireUserId(req);
       const leagueId = requireLeagueId(req);
 
-      const members = await this.leagueService.getLeagueMembers(leagueId, userId);
+      if (!this.rosterService) {
+        throw new ValidationException('Roster service not available');
+      }
+      const members = await this.rosterService.getLeagueMembers(leagueId, userId);
       res.status(200).json(members);
     } catch (error) {
       next(error);
@@ -137,7 +147,10 @@ export class LeagueController {
         throw new ValidationException('Invalid roster ID');
       }
 
-      const result = await this.leagueService.kickMember(leagueId, rosterId, userId);
+      if (!this.rosterService) {
+        throw new ValidationException('Roster service not available');
+      }
+      const result = await this.rosterService.kickMember(leagueId, rosterId, userId);
       res.status(200).json(result);
     } catch (error) {
       next(error);
@@ -153,7 +166,10 @@ export class LeagueController {
         throw new ValidationException('usernames must be a non-empty array');
       }
 
-      const results = await this.leagueService.devBulkAddUsers(leagueId, usernames);
+      if (!this.rosterService) {
+        throw new ValidationException('Roster service not available');
+      }
+      const results = await this.rosterService.devBulkAddUsers(leagueId, usernames);
       res.status(200).json({ results });
     } catch (error) {
       next(error);

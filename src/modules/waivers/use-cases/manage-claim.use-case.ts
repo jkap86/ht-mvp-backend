@@ -4,7 +4,7 @@ import {
 } from '../waivers.repository';
 import { RosterPlayersRepository } from '../../rosters/rosters.repository';
 import { LeagueRepository, RosterRepository } from '../../leagues/leagues.repository';
-import { getSocketService } from '../../../socket';
+import { tryGetSocketService } from '../../../socket';
 import {
   WaiverClaimWithDetails,
   UpdateClaimRequest,
@@ -142,19 +142,11 @@ export async function updateClaim(
 }
 
 function emitClaimCancelled(leagueId: number, claimId: number, rosterId: number): void {
-  try {
-    const socket = getSocketService();
-    socket.emitWaiverClaimCancelled(leagueId, { claimId, rosterId });
-  } catch (socketError) {
-    console.warn('Failed to emit waiver claim cancelled event:', socketError);
-  }
+  const socket = tryGetSocketService();
+  socket?.emitWaiverClaimCancelled(leagueId, { claimId, rosterId });
 }
 
 function emitClaimUpdated(leagueId: number, claim: WaiverClaimWithDetails): void {
-  try {
-    const socket = getSocketService();
-    socket.emitWaiverClaimUpdated(leagueId, waiverClaimToResponse(claim));
-  } catch (socketError) {
-    console.warn('Failed to emit waiver claim updated event:', socketError);
-  }
+  const socket = tryGetSocketService();
+  socket?.emitWaiverClaimUpdated(leagueId, waiverClaimToResponse(claim));
 }

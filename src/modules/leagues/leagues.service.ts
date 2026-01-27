@@ -88,11 +88,6 @@ export class LeagueService {
     await this.leagueRepo.delete(leagueId);
   }
 
-  // Delegation methods to RosterService
-  async joinLeague(leagueId: number, userId: string): Promise<{ message: string; roster: any }> {
-    return this.rosterService.joinLeague(leagueId, userId);
-  }
-
   async joinLeagueByInviteCode(inviteCode: string, userId: string): Promise<any> {
     // Find league by invite code
     const league = await this.leagueRepo.findByInviteCode(inviteCode);
@@ -106,25 +101,6 @@ export class LeagueService {
     // Return the league with user's roster info
     const updatedLeague = await this.leagueRepo.findByIdWithUserRoster(league.id, userId);
     return updatedLeague!.toResponse();
-  }
-
-  async getLeagueMembers(leagueId: number, userId: string): Promise<any[]> {
-    return this.rosterService.getLeagueMembers(leagueId, userId);
-  }
-
-  async devBulkAddUsers(
-    leagueId: number,
-    usernames: string[]
-  ): Promise<Array<{ username: string; success: boolean; error?: string }>> {
-    return this.rosterService.devBulkAddUsers(leagueId, usernames);
-  }
-
-  async kickMember(
-    leagueId: number,
-    rosterId: number,
-    userId: string
-  ): Promise<{ message: string; teamName: string }> {
-    return this.rosterService.kickMember(leagueId, rosterId, userId);
   }
 
   async discoverPublicLeagues(userId: string, limit?: number, offset?: number): Promise<any[]> {

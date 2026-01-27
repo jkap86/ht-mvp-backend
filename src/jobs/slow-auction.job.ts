@@ -2,7 +2,7 @@ import { Pool } from 'pg';
 import { container, KEYS } from '../container';
 import { SlowAuctionService } from '../modules/drafts/auction/slow-auction.service';
 import { FastAuctionService } from '../modules/drafts/auction/fast-auction.service';
-import { getSocketService } from '../socket/socket.service';
+import { tryGetSocketService } from '../socket/socket.service';
 import { logger } from '../config/logger.config';
 
 let intervalId: NodeJS.Timeout | null = null;
@@ -51,26 +51,22 @@ async function processExpiredLots(): Promise<void> {
         }
 
         // Emit socket events
-        try {
-          const socket = getSocketService();
+        const socket = tryGetSocketService();
 
-          if (result.passed) {
-            // Lot passed (no bids)
-            socket.emitAuctionLotPassed(result.lot.draftId, {
-              lotId: result.lot.id,
-              playerId: result.lot.playerId,
-            });
-          } else {
-            // Lot won
-            socket.emitAuctionLotWon(result.lot.draftId, {
-              lotId: result.lot.id,
-              playerId: result.lot.playerId,
-              winnerRosterId: result.winner!.rosterId,
-              price: result.winner!.amount,
-            });
-          }
-        } catch (socketError) {
-          logger.warn(`Failed to emit lot settlement event for lot ${result.lot.id}: ${socketError}`);
+        if (result.passed) {
+          // Lot passed (no bids)
+          socket?.emitAuctionLotPassed(result.lot.draftId, {
+            lotId: result.lot.id,
+            playerId: result.lot.playerId,
+          });
+        } else {
+          // Lot won
+          socket?.emitAuctionLotWon(result.lot.draftId, {
+            lotId: result.lot.id,
+            playerId: result.lot.playerId,
+            winnerRosterId: result.winner!.rosterId,
+            price: result.winner!.amount,
+          });
         }
 
         // Advance nominator for fast auctions

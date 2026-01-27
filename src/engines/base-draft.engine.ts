@@ -2,7 +2,7 @@ import { IDraftEngine, DraftTickResult, NextPickDetails } from './draft-engine.i
 import { Draft, DraftOrderEntry, DraftPick, draftToResponse } from '../modules/drafts/drafts.model';
 import { DraftRepository, QueueEntry } from '../modules/drafts/drafts.repository';
 import { PlayerRepository } from '../modules/players/players.repository';
-import { getSocketService } from '../socket';
+import { tryGetSocketService } from '../socket';
 import { logger } from '../config/env.config';
 
 /**
@@ -271,38 +271,35 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     playerId: number,
     nextPickInfo: NextPickDetails | null
   ): Promise<void> {
-    try {
-      const socket = getSocketService();
+    const socket = tryGetSocketService();
+    if (!socket) return;
 
-      // Enrich pick with player info for socket
-      const player = await this.playerRepo.findById(playerId);
-      const enrichedPick = {
-        ...pick,
-        is_auto_pick: true,
-        player_name: player?.fullName,
-        player_position: player?.position,
-        player_team: player?.team,
-      };
+    // Enrich pick with player info for socket
+    const player = await this.playerRepo.findById(playerId);
+    const enrichedPick = {
+      ...pick,
+      is_auto_pick: true,
+      player_name: player?.fullName,
+      player_position: player?.position,
+      player_team: player?.team,
+    };
 
-      socket.emitDraftPick(draft.id, enrichedPick);
+    socket.emitDraftPick(draft.id, enrichedPick);
 
-      // Emit queue update event for all users in draft
-      socket.emitQueueUpdated(draft.id, {
-        playerId,
-        action: 'removed',
-      });
+    // Emit queue update event for all users in draft
+    socket.emitQueueUpdated(draft.id, {
+      playerId,
+      action: 'removed',
+    });
 
-      if (nextPickInfo) {
-        socket.emitNextPick(draft.id, nextPickInfo);
-      } else {
-        // Draft completed
-        const completedDraft = await this.draftRepo.findById(draft.id);
-        if (completedDraft) {
-          socket.emitDraftCompleted(draft.id, draftToResponse(completedDraft));
-        }
+    if (nextPickInfo) {
+      socket.emitNextPick(draft.id, nextPickInfo);
+    } else {
+      // Draft completed
+      const completedDraft = await this.draftRepo.findById(draft.id);
+      if (completedDraft) {
+        socket.emitDraftCompleted(draft.id, draftToResponse(completedDraft));
       }
-    } catch {
-      // Socket service may not be initialized in tests
     }
   }
 }

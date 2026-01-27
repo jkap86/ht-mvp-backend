@@ -17,22 +17,28 @@ import { WaiversService } from '../waivers/waivers.service';
 import { AuthorizationService } from '../auth/authorization.service';
 import { RostersController } from '../rosters/rosters.controller';
 import { MatchupsController } from '../matchups/matchups.controller';
-import { RosterService } from '../rosters/rosters.service';
+import { RosterService } from './roster.service';
+import { RosterService as RosterPlayerService } from '../rosters/rosters.service';
 import { LineupService } from '../lineups/lineups.service';
 import { MatchupService } from '../matchups/matchups.service';
 import { ScoringService } from '../scoring/scoring.service';
+import { ScheduleGeneratorService } from '../matchups/schedule-generator.service';
+import { StandingsService } from '../matchups/standings.service';
 
 // Resolve dependencies from container
 const leagueService = container.resolve<LeagueService>(KEYS.LEAGUE_SERVICE);
-const leagueController = new LeagueController(leagueService);
+const leagueRosterService = container.resolve<RosterService>(KEYS.ROSTER_SERVICE);
+const leagueController = new LeagueController(leagueService, leagueRosterService);
 
 // Resolve season management services
-const rosterService = container.resolve<RosterService>(KEYS.ROSTER_PLAYER_SERVICE);
+const rosterService = container.resolve<RosterPlayerService>(KEYS.ROSTER_PLAYER_SERVICE);
 const lineupService = container.resolve<LineupService>(KEYS.LINEUP_SERVICE);
 const matchupService = container.resolve<MatchupService>(KEYS.MATCHUP_SERVICE);
 const scoringService = container.resolve<ScoringService>(KEYS.SCORING_SERVICE);
+const scheduleGeneratorService = container.resolve<ScheduleGeneratorService>(KEYS.SCHEDULE_GENERATOR_SERVICE);
+const standingsService = container.resolve<StandingsService>(KEYS.STANDINGS_SERVICE);
 const rostersController = new RostersController(rosterService, lineupService);
-const matchupsController = new MatchupsController(matchupService, scoringService);
+const matchupsController = new MatchupsController(matchupService, scoringService, scheduleGeneratorService, standingsService);
 
 // Resolve waivers dependencies
 const waiversService = container.resolve<WaiversService>(KEYS.WAIVERS_SERVICE);

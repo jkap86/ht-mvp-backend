@@ -2,7 +2,7 @@ import { Pool, PoolClient } from 'pg';
 import { TradesRepository, TradeItemsRepository } from '../trades.repository';
 import { RosterPlayersRepository } from '../../rosters/rosters.repository';
 import { LeagueRepository, RosterRepository } from '../../leagues/leagues.repository';
-import { getSocketService } from '../../../socket';
+import { tryGetSocketService } from '../../../socket';
 import {
   TradeWithDetails,
   CounterTradeRequest,
@@ -91,13 +91,9 @@ export async function counterTrade(
 }
 
 function emitTradeCounteredEvent(leagueId: number, originalTradeId: number, newTrade: TradeWithDetails): void {
-  try {
-    const socket = getSocketService();
-    socket.emitTradeCountered(leagueId, {
-      originalTradeId,
-      newTrade: tradeWithDetailsToResponse(newTrade),
-    });
-  } catch (socketError) {
-    console.warn('Failed to emit trade countered event:', socketError);
-  }
+  const socket = tryGetSocketService();
+  socket?.emitTradeCountered(leagueId, {
+    originalTradeId,
+    newTrade: tradeWithDetailsToResponse(newTrade),
+  });
 }

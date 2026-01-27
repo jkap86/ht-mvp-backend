@@ -8,7 +8,7 @@ import {
   ValidationException,
   ConflictException,
 } from '../../utils/exceptions';
-import { getSocketService } from '../../socket';
+import { tryGetSocketService } from '../../socket';
 import { DraftEngineFactory, IDraftEngine } from '../../engines';
 
 export class DraftPickService {
@@ -98,24 +98,20 @@ export class DraftPickService {
     };
 
     // Emit socket events
-    try {
-      const socket = getSocketService();
-      socket.emitDraftPick(draftId, enrichedPick);
+    const socket = tryGetSocketService();
+    socket?.emitDraftPick(draftId, enrichedPick);
 
-      // Notify all users in draft that this player was removed from queues
-      socket.emitQueueUpdated(draftId, { playerId, action: 'removed' });
+    // Notify all users in draft that this player was removed from queues
+    socket?.emitQueueUpdated(draftId, { playerId, action: 'removed' });
 
-      if (nextPickInfo) {
-        socket.emitNextPick(draftId, nextPickInfo);
-      } else {
-        // Draft completed
-        const completedDraft = await this.draftRepo.findById(draftId);
-        if (completedDraft) {
-          socket.emitDraftCompleted(draftId, draftToResponse(completedDraft));
-        }
+    if (nextPickInfo) {
+      socket?.emitNextPick(draftId, nextPickInfo);
+    } else {
+      // Draft completed
+      const completedDraft = await this.draftRepo.findById(draftId);
+      if (completedDraft) {
+        socket?.emitDraftCompleted(draftId, draftToResponse(completedDraft));
       }
-    } catch {
-      // Socket service may not be initialized in tests
     }
 
     return pick;

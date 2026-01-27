@@ -306,4 +306,59 @@ export class AuctionLotRepository {
       leadingCommitment: parseInt(leadingResult.rows[0].leading_commitment, 10),
     };
   }
+
+  /**
+   * Get budget data for all rosters in a draft (optimized batch query)
+   */
+  async getAllRosterBudgetData(draftId: number, rosterIds: number[]): Promise<Map<number, RosterBudgetData>> {
+    if (rosterIds.length === 0) {
+      return new Map();
+    }
+
+    // Get spent and won counts for all rosters
+    const wonResult = await this.db.query(
+      `SELECT winning_roster_id as roster_id,
+              COALESCE(SUM(winning_bid), 0) as spent,
+              COUNT(*) as won_count
+       FROM auction_lots
+       WHERE draft_id = $1 AND winning_roster_id = ANY($2) AND status = 'won'
+       GROUP BY winning_roster_id`,
+      [draftId, rosterIds]
+    );
+
+    // Get leading commitments for all rosters
+    const leadingResult = await this.db.query(
+      `SELECT current_bidder_roster_id as roster_id,
+              COALESCE(SUM(current_bid), 0) as leading_commitment
+       FROM auction_lots
+       WHERE draft_id = $1 AND current_bidder_roster_id = ANY($2) AND status = 'active'
+       GROUP BY current_bidder_roster_id`,
+      [draftId, rosterIds]
+    );
+
+    // Build result map with all rosters initialized to zero
+    const result = new Map<number, RosterBudgetData>();
+    for (const rosterId of rosterIds) {
+      result.set(rosterId, { spent: 0, wonCount: 0, leadingCommitment: 0 });
+    }
+
+    // Fill in won data
+    for (const row of wonResult.rows) {
+      const data = result.get(row.roster_id);
+      if (data) {
+        data.spent = parseInt(row.spent, 10);
+        data.wonCount = parseInt(row.won_count, 10);
+      }
+    }
+
+    // Fill in leading data
+    for (const row of leadingResult.rows) {
+      const data = result.get(row.roster_id);
+      if (data) {
+        data.leadingCommitment = parseInt(row.leading_commitment, 10);
+      }
+    }
+
+    return result;
+  }
 }

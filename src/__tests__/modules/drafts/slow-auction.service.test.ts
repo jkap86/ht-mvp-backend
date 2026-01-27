@@ -32,6 +32,7 @@ const mockDraft: Draft = {
     minIncrement: 1,
   },
   draftState: {},
+  orderConfirmed: false,
   createdAt: new Date(),
   updatedAt: new Date(),
 };

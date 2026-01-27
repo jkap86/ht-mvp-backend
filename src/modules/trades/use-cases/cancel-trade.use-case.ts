@@ -1,7 +1,7 @@
 import { Pool } from 'pg';
 import { TradesRepository } from '../trades.repository';
 import { RosterRepository } from '../../leagues/leagues.repository';
-import { getSocketService } from '../../../socket';
+import { tryGetSocketService } from '../../../socket';
 import { TradeWithDetails } from '../trades.model';
 import {
   NotFoundException,
@@ -67,10 +67,6 @@ export async function cancelTrade(
 }
 
 function emitTradeCancelledEvent(leagueId: number, tradeId: number): void {
-  try {
-    const socket = getSocketService();
-    socket.emitTradeCancelled(leagueId, { tradeId });
-  } catch (socketError) {
-    console.warn('Failed to emit trade cancelled event:', socketError);
-  }
+  const socket = tryGetSocketService();
+  socket?.emitTradeCancelled(leagueId, { tradeId });
 }

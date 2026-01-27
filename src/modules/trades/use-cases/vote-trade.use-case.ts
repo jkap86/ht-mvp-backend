@@ -1,6 +1,6 @@
 import { TradesRepository, TradeVotesRepository } from '../trades.repository';
 import { LeagueRepository, RosterRepository } from '../../leagues/leagues.repository';
-import { getSocketService } from '../../../socket';
+import { tryGetSocketService } from '../../../socket';
 import { TradeWithDetails } from '../trades.model';
 import {
   NotFoundException,
@@ -73,19 +73,11 @@ export async function voteTrade(
 }
 
 function emitTradeVetoedEvent(leagueId: number, tradeId: number): void {
-  try {
-    const socket = getSocketService();
-    socket.emitTradeVetoed(leagueId, { tradeId });
-  } catch (socketError) {
-    console.warn('Failed to emit trade vetoed event:', socketError);
-  }
+  const socket = tryGetSocketService();
+  socket?.emitTradeVetoed(leagueId, { tradeId });
 }
 
 function emitTradeVoteCastEvent(leagueId: number, tradeId: number, votes: { approve: number; veto: number }): void {
-  try {
-    const socket = getSocketService();
-    socket.emitTradeVoteCast(leagueId, { tradeId, votes });
-  } catch (socketError) {
-    console.warn('Failed to emit vote event:', socketError);
-  }
+  const socket = tryGetSocketService();
+  socket?.emitTradeVoteCast(leagueId, { tradeId, votes });
 }

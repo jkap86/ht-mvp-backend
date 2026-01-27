@@ -415,11 +415,13 @@ export class SocketService {
   }
 }
 
-// Singleton instance
+// Singleton instance (kept for backward compatibility during migration)
 let socketService: SocketService | null = null;
 
 export function initializeSocket(httpServer: HttpServer): SocketService {
   socketService = new SocketService(httpServer);
+  // Register in container for dependency injection
+  container.override(KEYS.SOCKET_SERVICE, socketService);
   return socketService;
 }
 
@@ -427,5 +429,13 @@ export function getSocketService(): SocketService {
   if (!socketService) {
     throw new Error('Socket service not initialized');
   }
+  return socketService;
+}
+
+/**
+ * Helper for safe optional socket access.
+ * Returns null if socket is not initialized (useful during testing).
+ */
+export function tryGetSocketService(): SocketService | null {
   return socketService;
 }

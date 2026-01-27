@@ -8,7 +8,7 @@ import {
 import { DraftOrderService } from './draft-order.service';
 import { DraftPickService } from './draft-pick.service';
 import { DraftStateService } from './draft-state.service';
-import { getSocketService } from '../../socket/socket.service';
+import { tryGetSocketService } from '../../socket/socket.service';
 import { logger } from '../../config/env.config';
 
 export class DraftService {
@@ -130,12 +130,8 @@ export class DraftService {
     const response = draftToResponse(draft);
 
     // Emit socket event for real-time updates
-    try {
-      const socketService = getSocketService();
-      socketService.emitDraftCreated(leagueId, response);
-    } catch (socketError) {
-      logger.warn(`Failed to emit draft created event: ${socketError}`);
-    }
+    const socketService = tryGetSocketService();
+    socketService?.emitDraftCreated(leagueId, response);
 
     return response;
   }

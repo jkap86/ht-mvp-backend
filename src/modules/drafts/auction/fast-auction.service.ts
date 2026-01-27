@@ -3,8 +3,7 @@ import { AuctionLotRepository } from './auction-lot.repository';
 import { DraftRepository } from '../drafts.repository';
 import { RosterRepository, LeagueRepository } from '../../leagues/leagues.repository';
 import { DraftOrderService } from '../draft-order.service';
-import { SlowAuctionService } from './slow-auction.service';
-import { getSocketService } from '../../../socket/socket.service';
+import { tryGetSocketService } from '../../../socket/socket.service';
 import { PlayerRepository } from '../../players/players.repository';
 import { AuctionLot, AuctionProxyBid, auctionLotFromDatabase, auctionLotToResponse } from './auction.models';
 import { ValidationException, NotFoundException, ForbiddenException } from '../../../utils/exceptions';
@@ -48,7 +47,6 @@ export class FastAuctionService {
     private readonly rosterRepo: RosterRepository,
     private readonly leagueRepo: LeagueRepository,
     private readonly orderService: DraftOrderService,
-    private readonly slowAuctionService: SlowAuctionService,
     private readonly playerRepo: PlayerRepository,
     private readonly pool: Pool
   ) {}
@@ -164,8 +162,8 @@ export class FastAuctionService {
     );
 
     // Emit socket event - convert to snake_case for frontend consistency
-    const socket = getSocketService();
-    socket.emitAuctionLotCreated(draftId, { lot: auctionLotToResponse(lot) });
+    const socket = tryGetSocketService();
+    socket?.emitAuctionLotCreated(draftId, { lot: auctionLotToResponse(lot) });
 
     return {
       lot,
@@ -283,8 +281,8 @@ export class FastAuctionService {
       await client.query('COMMIT');
 
       // Emit lot updated event - convert to snake_case for frontend consistency
-      const socket = getSocketService();
-      socket.emitAuctionLotUpdated(draftId, { lot: auctionLotToResponse(finalLot) });
+      const socket = tryGetSocketService();
+      socket?.emitAuctionLotUpdated(draftId, { lot: auctionLotToResponse(finalLot) });
 
       // Get proxy bid for response
       const proxyBidResult = await this.lotRepo.getProxyBid(lotId, roster.id);
@@ -299,7 +297,7 @@ export class FastAuctionService {
             lotId: notification.lotId,
             playerId: lot.playerId,
           });
-          socket.emitAuctionOutbid(outbidRoster.userId, {
+          socket?.emitAuctionOutbid(outbidRoster.userId, {
             lotId: notification.lotId,
             playerId: lot.playerId,
             newPrice: finalLot.currentBid,
@@ -353,8 +351,8 @@ export class FastAuctionService {
     });
 
     // Emit nominator changed event
-    const socket = getSocketService();
-    socket.emitAuctionNominatorChanged(draftId, {
+    const socket = tryGetSocketService();
+    socket?.emitAuctionNominatorChanged(draftId, {
       nominatorRosterId: nextNominator.rosterId,
       nominationNumber: nextPick,
     });
@@ -370,7 +368,7 @@ export class FastAuctionService {
     }
 
     const activeLots = await this.lotRepo.findActiveLotsByDraft(draftId);
-    const budgets = await this.slowAuctionService.getAllBudgets(draftId);
+    const budgets = await this.getAllBudgets(draft);
 
     return {
       auctionMode: 'fast',
@@ -383,5 +381,47 @@ export class FastAuctionService {
         remaining: b.available,
       })),
     };
+  }
+
+  /**
+   * Get budget info for all rosters in a draft
+   * (Moved from SlowAuctionService to eliminate service-to-service dependency)
+   */
+  private async getAllBudgets(draft: Draft): Promise<{
+    rosterId: number;
+    totalBudget: number;
+    spent: number;
+    leadingCommitment: number;
+    available: number;
+    wonCount: number;
+  }[]> {
+    const league = await this.leagueRepo.findById(draft.leagueId);
+    if (!league) throw new NotFoundException('League not found');
+
+    const totalBudget = league.leagueSettings?.auctionBudget ?? 200;
+    const rosterSlots = league.leagueSettings?.rosterSlots ?? 15;
+    const settings = this.getSettings(draft);
+
+    const rosters = await this.rosterRepo.findByLeagueId(draft.leagueId);
+    const rosterIds = rosters.map(r => r.id);
+
+    // Get all budget data in a single batch query
+    const budgetDataMap = await this.lotRepo.getAllRosterBudgetData(draft.id, rosterIds);
+
+    return rosters.map((roster) => {
+      const budgetData = budgetDataMap.get(roster.id) ?? { spent: 0, wonCount: 0, leadingCommitment: 0 };
+      const remainingSlots = rosterSlots - budgetData.wonCount;
+      const reservedForMinBids = Math.max(0, remainingSlots - 1) * settings.minBid;
+      const available = totalBudget - budgetData.spent - reservedForMinBids - budgetData.leadingCommitment;
+
+      return {
+        rosterId: roster.id,
+        totalBudget,
+        spent: budgetData.spent,
+        leadingCommitment: budgetData.leadingCommitment,
+        available: Math.max(0, available),
+        wonCount: budgetData.wonCount,
+      };
+    });
   }
 }

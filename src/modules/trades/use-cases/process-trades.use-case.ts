@@ -2,7 +2,7 @@ import { Pool } from 'pg';
 import { TradesRepository, TradeItemsRepository, TradeVotesRepository } from '../trades.repository';
 import { RosterPlayersRepository, RosterTransactionsRepository } from '../../rosters/rosters.repository';
 import { LeagueRepository } from '../../leagues/leagues.repository';
-import { getSocketService } from '../../../socket';
+import { tryGetSocketService } from '../../../socket';
 import { Trade } from '../trades.model';
 import { getTradeLockId } from '../../../utils/locks';
 import { executeTrade, AcceptTradeContext } from './accept-trade.use-case';
@@ -104,40 +104,24 @@ export async function processReviewCompleteTrades(
 }
 
 function emitTradeInvalidatedEvent(leagueId: number, tradeId: number): void {
-  try {
-    const socket = getSocketService();
-    socket.emitTradeInvalidated(leagueId, {
-      tradeId,
-      reason: 'A player involved in this trade is no longer available',
-    });
-  } catch (socketError) {
-    console.warn('Failed to emit trade invalidated event:', socketError);
-  }
+  const socket = tryGetSocketService();
+  socket?.emitTradeInvalidated(leagueId, {
+    tradeId,
+    reason: 'A player involved in this trade is no longer available',
+  });
 }
 
 function emitTradeExpiredEvent(leagueId: number, tradeId: number): void {
-  try {
-    const socket = getSocketService();
-    socket.emitTradeExpired(leagueId, { tradeId });
-  } catch (socketError) {
-    console.warn('Failed to emit trade expired event:', socketError);
-  }
+  const socket = tryGetSocketService();
+  socket?.emitTradeExpired(leagueId, { tradeId });
 }
 
 function emitTradeVetoedEvent(leagueId: number, tradeId: number): void {
-  try {
-    const socket = getSocketService();
-    socket.emitTradeVetoed(leagueId, { tradeId });
-  } catch (socketError) {
-    console.warn('Failed to emit trade vetoed event:', socketError);
-  }
+  const socket = tryGetSocketService();
+  socket?.emitTradeVetoed(leagueId, { tradeId });
 }
 
 function emitTradeCompletedEvent(leagueId: number, tradeId: number): void {
-  try {
-    const socket = getSocketService();
-    socket.emitTradeCompleted(leagueId, { tradeId });
-  } catch (socketError) {
-    console.warn('Failed to emit trade completed event:', socketError);
-  }
+  const socket = tryGetSocketService();
+  socket?.emitTradeCompleted(leagueId, { tradeId });
 }

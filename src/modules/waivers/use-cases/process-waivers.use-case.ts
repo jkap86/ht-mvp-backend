@@ -8,7 +8,7 @@ import {
 import { RosterPlayersRepository, RosterTransactionsRepository } from '../../rosters/rosters.repository';
 import { LeagueRepository, RosterRepository } from '../../leagues/leagues.repository';
 import { TradesRepository } from '../../trades/trades.repository';
-import { getSocketService } from '../../../socket';
+import { tryGetSocketService } from '../../../socket';
 import {
   WaiverClaim,
   WaiverType,
@@ -281,61 +281,41 @@ async function invalidateTradesForPlayer(
     );
 
     // Emit socket event
-    try {
-      const socket = getSocketService();
-      socket.emitTradeInvalidated(trade.leagueId, {
-        tradeId: trade.id,
-        reason: 'A player involved in this trade is no longer available',
-      });
-    } catch (socketError) {
-      console.warn('Failed to emit trade invalidated event:', socketError);
-    }
+    const socket = tryGetSocketService();
+    socket?.emitTradeInvalidated(trade.leagueId, {
+      tradeId: trade.id,
+      reason: 'A player involved in this trade is no longer available',
+    });
   }
 }
 
 async function emitClaimSuccessful(ctx: ProcessWaiversContext, claim: WaiverClaim): Promise<void> {
-  try {
-    const roster = await ctx.rosterRepo.findById(claim.rosterId);
-    if (roster && roster.userId) {
-      const socket = getSocketService();
-      const claimWithDetails = await ctx.claimsRepo.findByIdWithDetails(claim.id);
-      if (claimWithDetails) {
-        socket.emitWaiverClaimSuccessful(roster.userId, waiverClaimToResponse(claimWithDetails));
-      }
+  const roster = await ctx.rosterRepo.findById(claim.rosterId);
+  if (roster && roster.userId) {
+    const socket = tryGetSocketService();
+    const claimWithDetails = await ctx.claimsRepo.findByIdWithDetails(claim.id);
+    if (claimWithDetails) {
+      socket?.emitWaiverClaimSuccessful(roster.userId, waiverClaimToResponse(claimWithDetails));
     }
-  } catch (socketError) {
-    console.warn('Failed to emit waiver claim successful:', socketError);
   }
 }
 
 async function emitClaimFailed(ctx: ProcessWaiversContext, claim: WaiverClaim, reason: string): Promise<void> {
-  try {
-    const roster = await ctx.rosterRepo.findById(claim.rosterId);
-    if (roster && roster.userId) {
-      const socket = getSocketService();
-      socket.emitWaiverClaimFailed(roster.userId, { claimId: claim.id, reason });
-    }
-  } catch (socketError) {
-    console.warn('Failed to emit waiver claim failed:', socketError);
+  const roster = await ctx.rosterRepo.findById(claim.rosterId);
+  if (roster && roster.userId) {
+    const socket = tryGetSocketService();
+    socket?.emitWaiverClaimFailed(roster.userId, { claimId: claim.id, reason });
   }
 }
 
 async function emitPriorityUpdated(ctx: ProcessWaiversContext, leagueId: number, season: number): Promise<void> {
-  try {
-    const priorities = await ctx.priorityRepo.getByLeague(leagueId, season);
-    const socket = getSocketService();
-    socket.emitWaiverPriorityUpdated(leagueId, priorities.map(waiverPriorityToResponse));
-  } catch (socketError) {
-    console.warn('Failed to emit priority updated:', socketError);
-  }
+  const priorities = await ctx.priorityRepo.getByLeague(leagueId, season);
+  const socket = tryGetSocketService();
+  socket?.emitWaiverPriorityUpdated(leagueId, priorities.map(waiverPriorityToResponse));
 }
 
 async function emitBudgetUpdated(ctx: ProcessWaiversContext, leagueId: number, season: number): Promise<void> {
-  try {
-    const budgets = await ctx.faabRepo.getByLeague(leagueId, season);
-    const socket = getSocketService();
-    socket.emitWaiverBudgetUpdated(leagueId, budgets.map(faabBudgetToResponse));
-  } catch (socketError) {
-    console.warn('Failed to emit budget updated:', socketError);
-  }
+  const budgets = await ctx.faabRepo.getByLeague(leagueId, season);
+  const socket = tryGetSocketService();
+  socket?.emitWaiverBudgetUpdated(leagueId, budgets.map(faabBudgetToResponse));
 }

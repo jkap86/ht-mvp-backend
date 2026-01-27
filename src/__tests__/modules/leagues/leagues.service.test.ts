@@ -185,17 +185,7 @@ describe('LeagueService', () => {
     });
   });
 
-  describe('joinLeague', () => {
-    it('should delegate to RosterService', async () => {
-      const mockResult = { message: 'Joined', roster: mockRoster };
-      mockRosterService.joinLeague.mockResolvedValue(mockResult);
-
-      const result = await leagueService.joinLeague(1, 'user-456');
-
-      expect(mockRosterService.joinLeague).toHaveBeenCalledWith(1, 'user-456');
-      expect(result).toEqual(mockResult);
-    });
-  });
+  // Note: joinLeague delegation was moved to LeagueController
 
   describe('updateLeague', () => {
     it('should update league when user is commissioner', async () => {

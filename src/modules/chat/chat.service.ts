@@ -2,7 +2,7 @@ import { ChatRepository } from './chat.repository';
 import { ChatMessageWithUser, messageToResponse } from './chat.model';
 import { LeagueRepository } from '../leagues/leagues.repository';
 import { ForbiddenException, ValidationException } from '../../utils/exceptions';
-import { getSocketService } from '../../socket';
+import { tryGetSocketService } from '../../socket';
 
 export class ChatService {
   constructor(
@@ -30,12 +30,8 @@ export class ChatService {
     const response = messageToResponse(msg);
 
     // Emit socket event
-    try {
-      const socket = getSocketService();
-      socket.emitChatMessage(leagueId, response);
-    } catch {
-      // Socket service may not be initialized in tests
-    }
+    const socket = tryGetSocketService();
+    socket?.emitChatMessage(leagueId, response);
 
     return response;
   }

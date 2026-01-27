@@ -2,7 +2,7 @@ import { Pool, PoolClient } from 'pg';
 import { TradesRepository, TradeItemsRepository } from '../trades.repository';
 import { RosterPlayersRepository, RosterTransactionsRepository } from '../../rosters/rosters.repository';
 import { LeagueRepository, RosterRepository } from '../../leagues/leagues.repository';
-import { getSocketService } from '../../../socket';
+import { tryGetSocketService } from '../../../socket';
 import { Trade, TradeWithDetails } from '../trades.model';
 import {
   NotFoundException,
@@ -171,17 +171,13 @@ export async function executeTrade(
 }
 
 function emitTradeAcceptedEvent(leagueId: number, tradeId: number, updatedTrade: Trade): void {
-  try {
-    const socket = getSocketService();
-    if (updatedTrade.status === 'completed') {
-      socket.emitTradeCompleted(leagueId, { tradeId });
-    } else {
-      socket.emitTradeAccepted(leagueId, {
-        tradeId,
-        reviewEndsAt: updatedTrade.reviewEndsAt,
-      });
-    }
-  } catch (socketError) {
-    console.warn('Failed to emit trade event:', socketError);
+  const socket = tryGetSocketService();
+  if (updatedTrade.status === 'completed') {
+    socket?.emitTradeCompleted(leagueId, { tradeId });
+  } else {
+    socket?.emitTradeAccepted(leagueId, {
+      tradeId,
+      reviewEndsAt: updatedTrade.reviewEndsAt,
+    });
   }
 }

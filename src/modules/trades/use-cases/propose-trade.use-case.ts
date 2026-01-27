@@ -2,7 +2,7 @@ import { PoolClient } from 'pg';
 import { TradesRepository, TradeItemsRepository } from '../trades.repository';
 import { RosterPlayersRepository } from '../../rosters/rosters.repository';
 import { LeagueRepository, RosterRepository } from '../../leagues/leagues.repository';
-import { getSocketService } from '../../../socket';
+import { tryGetSocketService } from '../../../socket';
 import {
   TradeWithDetails,
   ProposeTradeRequest,
@@ -275,10 +275,6 @@ async function buildTradeItems(
 }
 
 function emitTradeProposed(leagueId: number, trade: TradeWithDetails): void {
-  try {
-    const socket = getSocketService();
-    socket.emitTradeProposed(leagueId, tradeWithDetailsToResponse(trade));
-  } catch (socketError) {
-    console.warn('Failed to emit trade proposed event:', socketError);
-  }
+  const socket = tryGetSocketService();
+  socket?.emitTradeProposed(leagueId, tradeWithDetailsToResponse(trade));
 }

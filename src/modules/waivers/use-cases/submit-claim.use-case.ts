@@ -6,7 +6,7 @@ import {
 } from '../waivers.repository';
 import { RosterPlayersRepository } from '../../rosters/rosters.repository';
 import { LeagueRepository, RosterRepository } from '../../leagues/leagues.repository';
-import { getSocketService } from '../../../socket';
+import { tryGetSocketService } from '../../../socket';
 import {
   WaiverClaimWithDetails,
   SubmitClaimRequest,
@@ -139,10 +139,6 @@ export async function submitClaim(
 }
 
 function emitClaimSubmitted(leagueId: number, claim: WaiverClaimWithDetails): void {
-  try {
-    const socket = getSocketService();
-    socket.emitWaiverClaimSubmitted(leagueId, waiverClaimToResponse(claim));
-  } catch (socketError) {
-    console.warn('Failed to emit waiver claim submitted event:', socketError);
-  }
+  const socket = tryGetSocketService();
+  socket?.emitWaiverClaimSubmitted(leagueId, waiverClaimToResponse(claim));
 }

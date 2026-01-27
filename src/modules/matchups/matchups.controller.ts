@@ -2,6 +2,8 @@ import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../../middleware/auth.middleware';
 import { MatchupService } from './matchups.service';
 import { ScoringService } from '../scoring/scoring.service';
+import { ScheduleGeneratorService } from './schedule-generator.service';
+import { StandingsService } from './standings.service';
 import { matchupDetailsToResponse, matchupWithLineupsToResponse, standingToResponse } from './matchups.model';
 import { requireUserId, requireLeagueId } from '../../utils/controller-helpers';
 import { parseIntParam } from '../../utils/params';
@@ -10,7 +12,9 @@ import { ValidationException } from '../../utils/exceptions';
 export class MatchupsController {
   constructor(
     private readonly matchupService: MatchupService,
-    private readonly scoringService: ScoringService
+    private readonly scoringService: ScoringService,
+    private readonly scheduleGeneratorService?: ScheduleGeneratorService,
+    private readonly standingsService?: StandingsService
   ) {
     // Bind methods to preserve 'this' context
     this.getMatchups = this.getMatchups.bind(this);
@@ -81,7 +85,11 @@ export class MatchupsController {
       const leagueId = requireLeagueId(req);
       const userId = requireUserId(req);
 
-      const standings = await this.matchupService.getStandings(leagueId, userId);
+      // Call StandingsService directly (no longer through MatchupService)
+      if (!this.standingsService) {
+        throw new ValidationException('Standings service not available');
+      }
+      const standings = await this.standingsService.getStandings(leagueId, userId);
       res.json({ standings: standings.map(standingToResponse) });
     } catch (error) {
       next(error);
@@ -95,7 +103,11 @@ export class MatchupsController {
       const userId = requireUserId(req);
       const { weeks } = req.body;
 
-      await this.matchupService.generateSchedule(leagueId, weeks || 14, userId);
+      // Call ScheduleGeneratorService directly (no longer through MatchupService)
+      if (!this.scheduleGeneratorService) {
+        throw new ValidationException('Schedule generator service not available');
+      }
+      await this.scheduleGeneratorService.generateSchedule(leagueId, weeks || 14, userId);
       res.json({ success: true, message: `Schedule generated for ${weeks || 14} weeks` });
     } catch (error) {
       next(error);

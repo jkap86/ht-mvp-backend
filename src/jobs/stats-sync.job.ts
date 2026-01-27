@@ -2,7 +2,7 @@ import { container, KEYS } from '../container';
 import { StatsService } from '../modules/scoring/stats.service';
 import { MatchupsRepository } from '../modules/matchups/matchups.repository';
 import { LineupService } from '../modules/lineups/lineups.service';
-import { getSocketService } from '../socket/socket.service';
+import { tryGetSocketService } from '../socket/socket.service';
 import { logger } from '../config/env.config';
 
 let intervalId: NodeJS.Timeout | null = null;
@@ -58,9 +58,9 @@ async function notifyLeaguesOfScoreUpdate(
       return;
     }
 
-    const socketService = getSocketService();
+    const socketService = tryGetSocketService();
     for (const leagueId of leagueIds) {
-      socketService.emitScoresUpdated(leagueId, { week, matchups: [] });
+      socketService?.emitScoresUpdated(leagueId, { week, matchups: [] });
     }
     logger.info(`Notified ${leagueIds.length} leagues of score updates for week ${week}`);
   } catch (error) {

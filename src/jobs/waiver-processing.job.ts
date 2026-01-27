@@ -3,7 +3,7 @@ import { container, KEYS } from '../container';
 import { WaiversService } from '../modules/waivers/waivers.service';
 import { LeagueRepository } from '../modules/leagues/leagues.repository';
 import { parseWaiverSettings } from '../modules/waivers/waivers.model';
-import { getSocketService } from '../socket/socket.service';
+import { tryGetSocketService } from '../socket/socket.service';
 import { logger } from '../config/logger.config';
 
 let intervalId: NodeJS.Timeout | null = null;
@@ -111,15 +111,11 @@ async function processWaivers(): Promise<void> {
           );
 
           // Emit socket event for waiver processing completion
-          try {
-            const socket = getSocketService();
-            socket.emitWaiversProcessed(league.id, {
-              processed: result.processed,
-              successful: result.successful,
-            });
-          } catch (socketError) {
-            logger.warn(`Failed to emit waiver processing event for league ${league.id}: ${socketError}`);
-          }
+          const socket = tryGetSocketService();
+          socket?.emitWaiversProcessed(league.id, {
+            processed: result.processed,
+            successful: result.successful,
+          });
 
         } catch (leagueError) {
           logger.error(`Failed to process waivers for league ${league.id}`, {

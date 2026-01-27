@@ -2,7 +2,7 @@ import { Pool } from 'pg';
 import { LeagueRepository, RosterRepository } from './leagues.repository';
 import { UserRepository } from '../auth/auth.repository';
 import { RosterPlayersRepository } from '../rosters/rosters.repository';
-import { getSocketService } from '../../socket/socket.service';
+import { tryGetSocketService } from '../../socket/socket.service';
 import { logger } from '../../config/env.config';
 import {
   NotFoundException,
@@ -65,16 +65,12 @@ export class RosterService {
       await client.query('COMMIT');
 
       // Emit socket event for real-time UI update
-      try {
-        const socketService = getSocketService();
-        socketService.emitMemberJoined(leagueId, {
-          rosterId: roster.rosterId,
-          teamName: `Team ${roster.rosterId}`,
-          userId,
-        });
-      } catch (socketError) {
-        logger.warn(`Failed to emit member joined event: ${socketError}`);
-      }
+      const socketService = tryGetSocketService();
+      socketService?.emitMemberJoined(leagueId, {
+        rosterId: roster.rosterId,
+        teamName: `Team ${roster.rosterId}`,
+        userId,
+      });
 
       return {
         message: 'Successfully joined the league',
@@ -246,12 +242,8 @@ export class RosterService {
       await client.query('COMMIT');
 
       // Emit socket event
-      try {
-        const socketService = getSocketService();
-        socketService.emitMemberKicked(leagueId, { rosterId: targetRosterId, teamName });
-      } catch (socketError) {
-        logger.warn(`Failed to emit member kicked event: ${socketError}`);
-      }
+      const socketService = tryGetSocketService();
+      socketService?.emitMemberKicked(leagueId, { rosterId: targetRosterId, teamName });
 
       return { message: `${teamName} has been removed from the league`, teamName };
     } catch (error) {

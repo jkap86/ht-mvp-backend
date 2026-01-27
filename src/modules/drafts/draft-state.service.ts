@@ -7,7 +7,7 @@ import {
   ForbiddenException,
   ValidationException,
 } from '../../utils/exceptions';
-import { getSocketService } from '../../socket';
+import { tryGetSocketService } from '../../socket';
 
 export class DraftStateService {
   constructor(
@@ -71,19 +71,15 @@ export class DraftStateService {
     const response = draftToResponse(updatedDraft);
 
     // Emit socket event
-    try {
-      const socket = getSocketService();
-      socket.emitDraftStarted(draftId, response);
-      socket.emitNextPick(draftId, {
-        currentPick: 1,
-        currentRound: 1,
-        currentRosterId: firstPicker?.rosterId,
-        pickDeadline,
-        status: 'in_progress',
-      });
-    } catch {
-      // Socket service may not be initialized in tests
-    }
+    const socket = tryGetSocketService();
+    socket?.emitDraftStarted(draftId, response);
+    socket?.emitNextPick(draftId, {
+      currentPick: 1,
+      currentRound: 1,
+      currentRosterId: firstPicker?.rosterId,
+      pickDeadline,
+      status: 'in_progress',
+    });
 
     return response;
   }
@@ -120,12 +116,8 @@ export class DraftStateService {
 
     const response = draftToResponse(updatedDraft);
 
-    try {
-      const socket = getSocketService();
-      socket.emitDraftPaused(draftId, response);
-    } catch {
-      // Socket service may not be initialized in tests
-    }
+    const socket = tryGetSocketService();
+    socket?.emitDraftPaused(draftId, response);
 
     return response;
   }
@@ -161,19 +153,15 @@ export class DraftStateService {
 
     const response = draftToResponse(updatedDraft);
 
-    try {
-      const socket = getSocketService();
-      socket.emitDraftResumed(draftId, response);
-      socket.emitNextPick(draftId, {
-        currentPick: updatedDraft.currentPick,
-        currentRound: updatedDraft.currentRound,
-        currentRosterId: updatedDraft.currentRosterId,
-        pickDeadline,
-        status: 'in_progress',
-      });
-    } catch {
-      // Socket service may not be initialized in tests
-    }
+    const socket = tryGetSocketService();
+    socket?.emitDraftResumed(draftId, response);
+    socket?.emitNextPick(draftId, {
+      currentPick: updatedDraft.currentPick,
+      currentRound: updatedDraft.currentRound,
+      currentRosterId: updatedDraft.currentRosterId,
+      pickDeadline,
+      status: 'in_progress',
+    });
 
     return response;
   }
@@ -204,12 +192,8 @@ export class DraftStateService {
 
     const response = draftToResponse(updatedDraft);
 
-    try {
-      const socket = getSocketService();
-      socket.emitDraftCompleted(draftId, response);
-    } catch {
-      // Socket service may not be initialized in tests
-    }
+    const socket = tryGetSocketService();
+    socket?.emitDraftCompleted(draftId, response);
 
     return response;
   }
@@ -282,20 +266,16 @@ export class DraftStateService {
     const response = draftToResponse(updatedDraft);
 
     // Emit socket events
-    try {
-      const socket = getSocketService();
-      socket.emitPickUndone(draftId, { pick: undonePick, draft: response });
-      if (updatedDraft.status === 'in_progress') {
-        socket.emitNextPick(draftId, {
-          currentPick: prevPick,
-          currentRound: prevRound,
-          currentRosterId: prevPicker?.rosterId,
-          pickDeadline,
-          status: 'in_progress',
-        });
-      }
-    } catch {
-      // Socket service may not be initialized in tests
+    const socket = tryGetSocketService();
+    socket?.emitPickUndone(draftId, { pick: undonePick, draft: response });
+    if (updatedDraft.status === 'in_progress') {
+      socket?.emitNextPick(draftId, {
+        currentPick: prevPick,
+        currentRound: prevRound,
+        currentRosterId: prevPicker?.rosterId,
+        pickDeadline,
+        status: 'in_progress',
+      });
     }
 
     return { draft: response, undone: undonePick };

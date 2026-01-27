@@ -2,7 +2,7 @@ import { ActionHandler, ActionContext } from './index';
 import { SlowAuctionService } from '../auction/slow-auction.service';
 import { FastAuctionService } from '../auction/fast-auction.service';
 import { RosterRepository } from '../../leagues/leagues.repository';
-import { getSocketService } from '../../../socket';
+import { tryGetSocketService } from '../../../socket';
 import { ForbiddenException, ValidationException, AppException } from '../../../utils/exceptions';
 import { auctionLotToResponse } from '../auction/auction.models';
 
@@ -56,15 +56,11 @@ export class AuctionActionHandler implements ActionHandler {
     } catch (error) {
       // Emit error to user via socket for real-time feedback
       if (error instanceof AppException) {
-        try {
-          const socket = getSocketService();
-          socket.emitAuctionError(ctx.userId, {
-            action,
-            message: error.message,
-          });
-        } catch (socketError) {
-          // Ignore socket errors - HTTP response will still contain the error
-        }
+        const socket = tryGetSocketService();
+        socket?.emitAuctionError(ctx.userId, {
+          action,
+          message: error.message,
+        });
       }
       throw error; // Re-throw for HTTP response
     }
@@ -79,12 +75,8 @@ export class AuctionActionHandler implements ActionHandler {
 
     // Emit socket event - wrap in { lot } for consistency with fast auction
     // Convert to snake_case for frontend consistency
-    try {
-      const socket = getSocketService();
-      socket.emitAuctionLotCreated(draftId, { lot: auctionLotToResponse(result.lot) });
-    } catch (socketError) {
-      console.warn(`Failed to emit lot created event: ${socketError}`);
-    }
+    const socket = tryGetSocketService();
+    socket?.emitAuctionLotCreated(draftId, { lot: auctionLotToResponse(result.lot) });
 
     return { ok: true, action: 'nominate', data: { lot: auctionLotToResponse(result.lot) }, message: result.message };
   }
@@ -111,19 +103,15 @@ export class AuctionActionHandler implements ActionHandler {
 
     // Emit socket events - wrap in { lot } for consistency with fast auction
     // Convert to snake_case for frontend consistency
-    try {
-      const socket = getSocketService();
-      socket.emitAuctionLotUpdated(draftId, { lot: auctionLotToResponse(result.lot) });
+    const socket = tryGetSocketService();
+    socket?.emitAuctionLotUpdated(draftId, { lot: auctionLotToResponse(result.lot) });
 
-      // Notify outbid users
-      for (const notif of result.outbidNotifications) {
-        const outbidRoster = await this.rosterRepo.findById(notif.rosterId);
-        if (outbidRoster?.userId) {
-          socket.emitAuctionOutbid(outbidRoster.userId, notif);
-        }
+    // Notify outbid users
+    for (const notif of result.outbidNotifications) {
+      const outbidRoster = await this.rosterRepo.findById(notif.rosterId);
+      if (outbidRoster?.userId) {
+        socket?.emitAuctionOutbid(outbidRoster.userId, notif);
       }
-    } catch (socketError) {
-      console.warn(`Failed to emit auction events: ${socketError}`);
     }
 
     return {
