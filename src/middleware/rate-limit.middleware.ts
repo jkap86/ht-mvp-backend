@@ -18,13 +18,16 @@ function getRedisStore(): RedisStore | undefined {
   });
 }
 
+const isProd = process.env.NODE_ENV === 'production';
+
 /**
  * Rate limiter for authentication endpoints (login, register)
- * Limits to 5 attempts per 15 minutes to prevent brute force attacks
+ * Development: 100 attempts per 1 minute (relaxed for testing)
+ * Production: 5 attempts per 15 minutes to prevent brute force attacks
  */
 export const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // 5 attempts per window
+  windowMs: isProd ? 15 * 60 * 1000 : 60 * 1000, // 15 min (prod) vs 1 min (dev)
+  max: isProd ? 5 : 100, // 5 (prod) vs 100 (dev)
   message: {
     error: {
       code: "RATE_LIMITED",
