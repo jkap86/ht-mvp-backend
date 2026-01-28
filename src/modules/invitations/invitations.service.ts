@@ -26,7 +26,7 @@ export class InvitationsService {
   ) {}
 
   /**
-   * Send an invitation to a user (commissioner only)
+   * Send an invitation to a user (any league member can invite)
    */
   async sendInvitation(
     leagueId: number,
@@ -34,10 +34,10 @@ export class InvitationsService {
     invitedByUserId: string,
     message?: string
   ): Promise<InvitationWithDetails> {
-    // Verify sender is commissioner
-    const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, invitedByUserId);
-    if (!isCommissioner) {
-      throw new ForbiddenException('Only the commissioner can send invitations');
+    // Verify sender is a league member
+    const isMember = await this.leagueRepo.isUserMember(leagueId, invitedByUserId);
+    if (!isMember) {
+      throw new ForbiddenException('Only league members can send invitations');
     }
 
     // Get league to check capacity
@@ -58,8 +58,8 @@ export class InvitationsService {
     }
 
     // Check if user is already a member
-    const isMember = await this.leagueRepo.isUserMember(leagueId, invitedUser.userId);
-    if (isMember) {
+    const invitedUserIsMember = await this.leagueRepo.isUserMember(leagueId, invitedUser.userId);
+    if (invitedUserIsMember) {
       throw new ConflictException(`${username} is already a member of this league`);
     }
 
@@ -209,13 +209,13 @@ export class InvitationsService {
   }
 
   /**
-   * Get pending invitations for a league (commissioner only)
+   * Get pending invitations for a league (any league member can view)
    */
   async getLeaguePendingInvitations(leagueId: number, userId: string): Promise<any[]> {
-    // Verify user is commissioner
-    const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
-    if (!isCommissioner) {
-      throw new ForbiddenException('Only the commissioner can view league invitations');
+    // Verify user is a league member
+    const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
+    if (!isMember) {
+      throw new ForbiddenException('Only league members can view league invitations');
     }
 
     const invitations = await this.invitationsRepo.findByLeagueId(leagueId);
@@ -226,17 +226,17 @@ export class InvitationsService {
   }
 
   /**
-   * Search users for inviting (commissioner only)
+   * Search users for inviting (any league member can search)
    */
   async searchUsersForInvite(
     leagueId: number,
     query: string,
     userId: string
   ): Promise<UserSearchResult[]> {
-    // Verify user is commissioner
-    const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
-    if (!isCommissioner) {
-      throw new ForbiddenException('Only the commissioner can search for users to invite');
+    // Verify user is a league member
+    const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
+    if (!isMember) {
+      throw new ForbiddenException('Only league members can search for users to invite');
     }
 
     if (!query || query.trim().length < 2) {

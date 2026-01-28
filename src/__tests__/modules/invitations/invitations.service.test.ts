@@ -119,11 +119,14 @@ describe('InvitationsService', () => {
   });
 
   describe('sendInvitation', () => {
-    it('should create invitation when commissioner sends to valid user', async () => {
-      mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+    it('should create invitation when league member sends to valid user', async () => {
+      // First isUserMember call is for verifying sender is a member
+      // Second isUserMember call is for checking if invited user is already a member
+      mockLeagueRepo.isUserMember
+        .mockResolvedValueOnce(true)  // sender is member
+        .mockResolvedValueOnce(false); // invited user is not member
       mockLeagueRepo.findById.mockResolvedValue(mockLeague as any);
       mockUserRepo.findByUsername.mockResolvedValue(mockUser as any);
-      mockLeagueRepo.isUserMember.mockResolvedValue(false);
       mockInvitationsRepo.hasPendingInvite.mockResolvedValue(false);
       mockRosterRepo.getRosterCount.mockResolvedValue(5);
       mockInvitationsRepo.create.mockResolvedValue(mockInvitation);
@@ -146,19 +149,19 @@ describe('InvitationsService', () => {
       });
     });
 
-    it('should throw ForbiddenException when non-commissioner tries to send', async () => {
-      mockLeagueRepo.isCommissioner.mockResolvedValue(false);
+    it('should throw ForbiddenException when non-member tries to send', async () => {
+      mockLeagueRepo.isUserMember.mockResolvedValue(false);
 
       await expect(
         invitationsService.sendInvitation(1, 'inviteduser', 'user-999')
       ).rejects.toThrow(ForbiddenException);
       await expect(
         invitationsService.sendInvitation(1, 'inviteduser', 'user-999')
-      ).rejects.toThrow('Only the commissioner can send invitations');
+      ).rejects.toThrow('Only league members can send invitations');
     });
 
     it('should throw NotFoundException when league not found', async () => {
-      mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockLeagueRepo.isUserMember.mockResolvedValue(true);
       mockLeagueRepo.findById.mockResolvedValue(null);
 
       await expect(
@@ -170,7 +173,7 @@ describe('InvitationsService', () => {
     });
 
     it('should throw NotFoundException when invited user does not exist', async () => {
-      mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockLeagueRepo.isUserMember.mockResolvedValue(true);
       mockLeagueRepo.findById.mockResolvedValue(mockLeague as any);
       mockUserRepo.findByUsername.mockResolvedValue(null);
 
@@ -183,23 +186,26 @@ describe('InvitationsService', () => {
     });
 
     it('should throw ValidationException when inviting yourself', async () => {
-      mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockLeagueRepo.isUserMember.mockResolvedValue(true);
       mockLeagueRepo.findById.mockResolvedValue(mockLeague as any);
       mockUserRepo.findByUsername.mockResolvedValue({ userId: 'user-123' } as any);
 
       await expect(
-        invitationsService.sendInvitation(1, 'commissioner', 'user-123')
+        invitationsService.sendInvitation(1, 'myself', 'user-123')
       ).rejects.toThrow(ValidationException);
       await expect(
-        invitationsService.sendInvitation(1, 'commissioner', 'user-123')
+        invitationsService.sendInvitation(1, 'myself', 'user-123')
       ).rejects.toThrow('You cannot invite yourself');
     });
 
     it('should throw ConflictException when user is already a member', async () => {
-      mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockLeagueRepo.isUserMember
+        .mockResolvedValueOnce(true)  // sender is member (1st call)
+        .mockResolvedValueOnce(true)  // invited user is also a member (1st call)
+        .mockResolvedValueOnce(true)  // sender is member (2nd call)
+        .mockResolvedValueOnce(true); // invited user is also a member (2nd call)
       mockLeagueRepo.findById.mockResolvedValue(mockLeague as any);
       mockUserRepo.findByUsername.mockResolvedValue(mockUser as any);
-      mockLeagueRepo.isUserMember.mockResolvedValue(true);
 
       await expect(
         invitationsService.sendInvitation(1, 'inviteduser', 'user-123')
@@ -210,10 +216,13 @@ describe('InvitationsService', () => {
     });
 
     it('should throw ConflictException when pending invite already exists', async () => {
-      mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockLeagueRepo.isUserMember
+        .mockResolvedValueOnce(true)   // sender is member (1st call)
+        .mockResolvedValueOnce(false)  // invited user is not member (1st call)
+        .mockResolvedValueOnce(true)   // sender is member (2nd call)
+        .mockResolvedValueOnce(false); // invited user is not member (2nd call)
       mockLeagueRepo.findById.mockResolvedValue(mockLeague as any);
       mockUserRepo.findByUsername.mockResolvedValue(mockUser as any);
-      mockLeagueRepo.isUserMember.mockResolvedValue(false);
       mockInvitationsRepo.hasPendingInvite.mockResolvedValue(true);
 
       await expect(
@@ -225,10 +234,13 @@ describe('InvitationsService', () => {
     });
 
     it('should throw ConflictException when league is full', async () => {
-      mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockLeagueRepo.isUserMember
+        .mockResolvedValueOnce(true)   // sender is member (1st call)
+        .mockResolvedValueOnce(false)  // invited user is not member (1st call)
+        .mockResolvedValueOnce(true)   // sender is member (2nd call)
+        .mockResolvedValueOnce(false); // invited user is not member (2nd call)
       mockLeagueRepo.findById.mockResolvedValue(mockLeague as any);
       mockUserRepo.findByUsername.mockResolvedValue(mockUser as any);
-      mockLeagueRepo.isUserMember.mockResolvedValue(false);
       mockInvitationsRepo.hasPendingInvite.mockResolvedValue(false);
       mockRosterRepo.getRosterCount.mockResolvedValue(12); // League is full
 
@@ -417,7 +429,7 @@ describe('InvitationsService', () => {
     ];
 
     it('should return users matching query', async () => {
-      mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockLeagueRepo.isUserMember.mockResolvedValue(true);
       mockInvitationsRepo.searchUsersForInvite.mockResolvedValue(mockSearchResults);
 
       const result = await invitationsService.searchUsersForInvite(1, 'jo', 'user-123');
@@ -428,7 +440,7 @@ describe('InvitationsService', () => {
     });
 
     it('should mark users as members or already invited', async () => {
-      mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockLeagueRepo.isUserMember.mockResolvedValue(true);
       mockInvitationsRepo.searchUsersForInvite.mockResolvedValue(mockSearchResults);
 
       const result = await invitationsService.searchUsersForInvite(1, 'ja', 'user-123');
@@ -439,19 +451,19 @@ describe('InvitationsService', () => {
       expect(jack?.isMember).toBe(true);
     });
 
-    it('should throw ForbiddenException when non-commissioner searches', async () => {
-      mockLeagueRepo.isCommissioner.mockResolvedValue(false);
+    it('should throw ForbiddenException when non-member searches', async () => {
+      mockLeagueRepo.isUserMember.mockResolvedValue(false);
 
       await expect(
         invitationsService.searchUsersForInvite(1, 'john', 'user-999')
       ).rejects.toThrow(ForbiddenException);
       await expect(
         invitationsService.searchUsersForInvite(1, 'john', 'user-999')
-      ).rejects.toThrow('Only the commissioner can search for users to invite');
+      ).rejects.toThrow('Only league members can search for users to invite');
     });
 
     it('should throw ValidationException when query too short', async () => {
-      mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockLeagueRepo.isUserMember.mockResolvedValue(true);
 
       await expect(
         invitationsService.searchUsersForInvite(1, 'j', 'user-123')
@@ -464,7 +476,7 @@ describe('InvitationsService', () => {
 
   describe('getLeaguePendingInvitations', () => {
     it('should return pending invitations for league', async () => {
-      mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockLeagueRepo.isUserMember.mockResolvedValue(true);
       mockInvitationsRepo.findByLeagueId.mockResolvedValue([mockInvitationWithDetails]);
 
       const result = await invitationsService.getLeaguePendingInvitations(1, 'user-123');
@@ -473,15 +485,15 @@ describe('InvitationsService', () => {
       expect(mockInvitationsRepo.findByLeagueId).toHaveBeenCalledWith(1);
     });
 
-    it('should throw ForbiddenException when non-commissioner views', async () => {
-      mockLeagueRepo.isCommissioner.mockResolvedValue(false);
+    it('should throw ForbiddenException when non-member views', async () => {
+      mockLeagueRepo.isUserMember.mockResolvedValue(false);
 
       await expect(
         invitationsService.getLeaguePendingInvitations(1, 'user-999')
       ).rejects.toThrow(ForbiddenException);
       await expect(
         invitationsService.getLeaguePendingInvitations(1, 'user-999')
-      ).rejects.toThrow('Only the commissioner can view league invitations');
+      ).rejects.toThrow('Only league members can view league invitations');
     });
   });
 });

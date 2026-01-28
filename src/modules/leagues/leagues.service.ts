@@ -26,9 +26,9 @@ export class LeagueService {
       throw new NotFoundException('League not found');
     }
 
-    // Check if user is a member
-    const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
-    if (!isMember) {
+    // Check membership using the roster data we already fetched (no separate query)
+    // This prevents race conditions when a user has just joined the league
+    if (!league.userRosterId) {
       throw new ForbiddenException('You are not a member of this league');
     }
 

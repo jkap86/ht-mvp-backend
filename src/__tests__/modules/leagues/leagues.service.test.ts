@@ -173,8 +173,12 @@ describe('LeagueService', () => {
     });
 
     it('should throw ForbiddenException when user is not a member', async () => {
-      mockLeagueRepo.findByIdWithUserRoster.mockResolvedValue(mockLeague);
-      mockLeagueRepo.isUserMember.mockResolvedValue(false);
+      // Create a league that the user is not a member of (no userRosterId)
+      const leagueWithoutMembership = new League(
+        1, 'Test League', 'active', {}, { rec: 1.0 }, '2024', 10,
+        new Date(), new Date(), undefined, 1, 'redraft', {}, 1, 'pre_season', 'ABC12345', false
+      );
+      mockLeagueRepo.findByIdWithUserRoster.mockResolvedValue(leagueWithoutMembership);
 
       await expect(
         leagueService.getLeagueById(1, 'other-user')
