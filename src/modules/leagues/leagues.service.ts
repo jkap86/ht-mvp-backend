@@ -66,14 +66,12 @@ export class LeagueService {
     // Create first roster for the creator (commissioner) via RosterService
     await this.rosterService.createInitialRoster(league.id, userId);
 
-    // Auto-create draft for redraft leagues
-    if (league.mode === 'redraft') {
-      await this.draftService.createDraft(league.id, userId, {
-        draftType: league.leagueSettings?.draftType || 'snake',
-        // rounds will default to roster_config total via calculateTotalRosterSlots()
-        pickTimeSeconds: 90,
-      });
-    }
+    // Auto-create draft for all league types
+    await this.draftService.createDraft(league.id, userId, {
+      draftType: league.leagueSettings?.draftType || 'snake',
+      // rounds will default to roster_config total via calculateTotalRosterSlots()
+      pickTimeSeconds: 90,
+    });
 
     // Get updated league with commissioner info
     const updatedLeague = await this.leagueRepo.findByIdWithUserRoster(league.id, userId);
