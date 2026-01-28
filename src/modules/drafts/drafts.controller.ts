@@ -357,4 +357,25 @@ export class DraftController {
       next(error);
     }
   };
+
+  toggleAutodraft = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const userId = requireUserId(req);
+      const leagueId = requireLeagueId(req);
+      const draftId = requireDraftId(req);
+      const { enabled } = req.body;
+
+      if (typeof enabled !== 'boolean') {
+        throw new ValidationException('enabled must be a boolean');
+      }
+
+      const result = await this.draftService.toggleAutodraft(leagueId, draftId, userId, enabled);
+      res.status(200).json({
+        roster_id: result.rosterId,
+        enabled: result.enabled,
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
 }

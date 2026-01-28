@@ -130,7 +130,23 @@ export class DraftRepository {
       draftPosition: row.draft_position,
       username: row.username,
       userId: row.user_id,
+      isAutodraftEnabled: row.is_autodraft_enabled ?? false,
     }));
+  }
+
+  async setAutodraftEnabled(draftId: number, rosterId: number, enabled: boolean): Promise<void> {
+    await this.db.query(
+      `UPDATE draft_order SET is_autodraft_enabled = $1 WHERE draft_id = $2 AND roster_id = $3`,
+      [enabled, draftId, rosterId]
+    );
+  }
+
+  async getAutodraftEnabled(draftId: number, rosterId: number): Promise<boolean> {
+    const result = await this.db.query(
+      `SELECT is_autodraft_enabled FROM draft_order WHERE draft_id = $1 AND roster_id = $2`,
+      [draftId, rosterId]
+    );
+    return result.rows.length > 0 ? result.rows[0].is_autodraft_enabled ?? false : false;
   }
 
   async createDraftOrder(draftId: number, rosterId: number, position: number): Promise<void> {
@@ -423,10 +439,17 @@ export class DraftRepository {
 
   async findExpiredDrafts(): Promise<Draft[]> {
     const result = await this.db.query(
-      `SELECT * FROM drafts
-       WHERE status = 'in_progress'
-       AND pick_deadline IS NOT NULL
-       AND pick_deadline < NOW()`
+      `SELECT d.* FROM drafts d
+       WHERE d.status = 'in_progress'
+       AND (
+         (d.pick_deadline IS NOT NULL AND d.pick_deadline < NOW())
+         OR EXISTS (
+           SELECT 1 FROM draft_order do
+           WHERE do.draft_id = d.id
+           AND do.roster_id = d.current_roster_id
+           AND do.is_autodraft_enabled = true
+         )
+       )`
     );
     return result.rows.map(draftFromDatabase);
   }
@@ -436,6 +459,18 @@ export class DraftRepository {
       'UPDATE draft_picks SET is_auto_pick = true WHERE id = $1',
       [pickId]
     );
+  }
+
+  /**
+   * Check if a pick already exists for the given draft and pick number.
+   * Used to detect race conditions where a pick was made but draft state wasn't updated.
+   */
+  async pickExists(draftId: number, pickNumber: number): Promise<boolean> {
+    const result = await this.db.query(
+      'SELECT 1 FROM draft_picks WHERE draft_id = $1 AND pick_number = $2',
+      [draftId, pickNumber]
+    );
+    return result.rows.length > 0;
   }
 
   async getBestAvailablePlayer(draftId: number): Promise<number | null> {

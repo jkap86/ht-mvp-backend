@@ -30,6 +30,7 @@ export const SOCKET_EVENTS = {
     COMPLETED: 'draft:completed',
     NEXT_PICK: 'draft:next_pick',
     QUEUE_UPDATED: 'draft:queue_updated',
+    AUTODRAFT_TOGGLED: 'draft:autodraft_toggled',
   },
 
   // Chat events

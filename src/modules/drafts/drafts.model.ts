@@ -52,6 +52,7 @@ export interface DraftOrderEntry {
   rosterId: number;
   draftPosition: number;
   username?: string;
+  isAutodraftEnabled: boolean;
 }
 
 export interface DraftPick {

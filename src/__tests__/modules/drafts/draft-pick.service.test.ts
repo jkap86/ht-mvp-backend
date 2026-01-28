@@ -34,9 +34,9 @@ const mockDraft: Draft = {
 };
 
 const mockDraftOrder: DraftOrderEntry[] = [
-  { id: 1, draftId: 1, rosterId: 1, draftPosition: 1, username: 'user1' },
-  { id: 2, draftId: 1, rosterId: 2, draftPosition: 2, username: 'user2' },
-  { id: 3, draftId: 1, rosterId: 3, draftPosition: 3, username: 'user3' },
+  { id: 1, draftId: 1, rosterId: 1, draftPosition: 1, username: 'user1', isAutodraftEnabled: false },
+  { id: 2, draftId: 1, rosterId: 2, draftPosition: 2, username: 'user2', isAutodraftEnabled: false },
+  { id: 3, draftId: 1, rosterId: 3, draftPosition: 3, username: 'user3', isAutodraftEnabled: false },
 ];
 
 // Use 'any' for mockRoster to avoid strict typing issues with the Roster interface

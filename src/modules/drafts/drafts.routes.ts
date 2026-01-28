@@ -117,4 +117,7 @@ router.put('/:draftId/queue', queueLimiter, validateRequest(reorderQueueSchema),
 // DELETE /api/leagues/:leagueId/drafts/:draftId/queue/:playerId
 router.delete('/:draftId/queue/:playerId', queueLimiter, queueController.removeFromQueue);
 
+// PATCH /api/leagues/:leagueId/drafts/:draftId/autodraft
+router.patch('/:draftId/autodraft', draftController.toggleAutodraft);
+
 export default router;

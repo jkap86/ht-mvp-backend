@@ -242,6 +242,11 @@ export class SocketService {
     this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.DRAFT.QUEUE_UPDATED, data);
   }
 
+  // Emit autodraft toggled event when a user enables/disables autodraft
+  emitAutodraftToggled(draftId: number, data: { rosterId: number; enabled: boolean; forced: boolean }): void {
+    this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.DRAFT.AUTODRAFT_TOGGLED, data);
+  }
+
   // Emit chat message to all users in league room
   emitChatMessage(leagueId: number, message: any): void {
     this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.CHAT.MESSAGE, message);

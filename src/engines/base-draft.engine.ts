@@ -121,7 +121,13 @@ export abstract class BaseDraftEngine implements IDraftEngine {
       };
     }
 
-    if (!this.shouldAutoPick(draft)) {
+    // Check if current picker has autodraft enabled (should pick immediately)
+    const draftOrder = await this.draftRepo.getDraftOrder(draftId);
+    const currentPicker = draftOrder.find(o => o.rosterId === draft.currentRosterId);
+    const isAutodraftEnabled = currentPicker?.isAutodraftEnabled ?? false;
+
+    // Autopick if: deadline expired OR current picker has autodraft enabled
+    if (!this.shouldAutoPick(draft) && !isAutodraftEnabled) {
       return {
         actionTaken: false,
         draftCompleted: false,
@@ -130,13 +136,48 @@ export abstract class BaseDraftEngine implements IDraftEngine {
       };
     }
 
-    // Deadline expired - perform autopick
+    // Determine reason for autopick
+    const deadlineExpired = this.shouldAutoPick(draft);
+    const reason = isAutodraftEnabled && !deadlineExpired ? 'autodraft' : 'timeout';
+
+    // Check if pick already exists (race condition: pick was made but draft state not updated)
+    const pickAlreadyExists = await this.draftRepo.pickExists(draftId, draft.currentPick);
+    if (pickAlreadyExists) {
+      // Pick was made but draft state is stale - advance to next pick
+      logger.info(`Draft ${draftId}: pick ${draft.currentPick} already exists, recovering stale state`);
+      const nextPickInfo = await this.advanceToNextPick(draft, draftOrder);
+
+      // Emit next pick or completion event
+      const socket = tryGetSocketService();
+      if (socket) {
+        if (nextPickInfo) {
+          socket.emitNextPick(draftId, nextPickInfo);
+        } else {
+          const completedDraft = await this.draftRepo.findById(draftId);
+          if (completedDraft) {
+            socket.emitDraftCompleted(draftId, draftToResponse(completedDraft));
+          }
+        }
+      }
+
+      const updatedDraft = await this.draftRepo.findById(draftId);
+      return {
+        actionTaken: true,
+        draftCompleted: updatedDraft?.status === 'completed',
+        draft: updatedDraft!,
+        reason,
+      };
+    }
+
+    // Perform autopick (due to deadline expired or autodraft enabled)
+    logger.info(`Draft ${draftId}: performing autopick for roster ${draft.currentRosterId} (reason: ${reason})`);
     const pick = await this.performAutoPick(draft);
     const updatedDraft = await this.draftRepo.findById(draftId);
-    const draftOrder = await this.draftRepo.getDraftOrder(draftId);
 
+    // Re-fetch draft order to get the updated state after the pick
+    const updatedDraftOrder = await this.draftRepo.getDraftOrder(draftId);
     const nextPicker = updatedDraft?.status === 'in_progress' && updatedDraft.currentRosterId
-      ? draftOrder.find(o => o.rosterId === updatedDraft.currentRosterId)
+      ? updatedDraftOrder.find(o => o.rosterId === updatedDraft.currentRosterId)
       : null;
 
     return {
@@ -145,7 +186,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
       draftCompleted: updatedDraft?.status === 'completed',
       draft: updatedDraft!,
       nextPicker,
-      reason: 'timeout',
+      reason,
     };
   }
 
@@ -203,6 +244,25 @@ export abstract class BaseDraftEngine implements IDraftEngine {
 
     // Mark as auto-pick
     await this.draftRepo.markPickAsAutoPick(pick.id);
+
+    // Check if user had autodraft disabled - if so, force-enable it
+    const currentPicker = draftOrder.find(o => o.rosterId === draft.currentRosterId);
+    if (currentPicker && !currentPicker.isAutodraftEnabled) {
+      // Force-enable autodraft since they timed out
+      await this.draftRepo.setAutodraftEnabled(draft.id, draft.currentRosterId, true);
+
+      // Emit socket event to notify the user (and others) that autodraft was force-enabled
+      const socket = tryGetSocketService();
+      socket?.emitAutodraftToggled(draft.id, {
+        rosterId: draft.currentRosterId,
+        enabled: true,
+        forced: true,
+      });
+
+      logger.info(
+        `Autodraft force-enabled for roster ${draft.currentRosterId} in draft ${draft.id} due to timeout`
+      );
+    }
 
     // Remove picked player from ALL queues in this draft
     await this.draftRepo.removePlayerFromAllQueues(draft.id, playerId);

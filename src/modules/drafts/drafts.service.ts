@@ -257,4 +257,48 @@ export class DraftService {
   ): Promise<any> {
     return this.pickService.makePick(leagueId, draftId, userId, playerId, idempotencyKey);
   }
+
+  /**
+   * Toggle autodraft for the current user in a draft.
+   * When enabled, the system will automatically pick from the user's queue when their timer expires.
+   */
+  async toggleAutodraft(
+    leagueId: number,
+    draftId: number,
+    userId: string,
+    enabled: boolean
+  ): Promise<{ rosterId: number; enabled: boolean }> {
+    // Verify membership
+    const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
+    if (!isMember) {
+      throw new ForbiddenException('You are not a member of this league');
+    }
+
+    // Verify draft exists and belongs to league
+    const draft = await this.draftRepo.findById(draftId);
+    if (!draft || draft.leagueId !== leagueId) {
+      throw new NotFoundException('Draft not found');
+    }
+
+    // Get user's roster
+    const roster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId);
+    if (!roster) {
+      throw new ForbiddenException('You are not in this league');
+    }
+
+    // Update autodraft setting
+    await this.draftRepo.setAutodraftEnabled(draftId, roster.id, enabled);
+
+    // Emit socket event
+    const socketService = tryGetSocketService();
+    socketService?.emitAutodraftToggled(draftId, {
+      rosterId: roster.id,
+      enabled,
+      forced: false,
+    });
+
+    logger.info(`User ${userId} toggled autodraft to ${enabled} for draft ${draftId}`);
+
+    return { rosterId: roster.id, enabled };
+  }
 }
