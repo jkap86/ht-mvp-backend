@@ -54,7 +54,7 @@ export class WaiverClaimsRepository {
     const result = await this.db.query(
       `SELECT wc.*,
         r.settings->>'team_name' as team_name,
-        u.display_name as username,
+        u.username as username,
         p.full_name as player_name,
         p.position as player_position,
         p.team as player_team,
@@ -91,7 +91,7 @@ export class WaiverClaimsRepository {
     const result = await this.db.query(
       `SELECT wc.*,
         r.settings->>'team_name' as team_name,
-        u.display_name as username,
+        u.username as username,
         p.full_name as player_name,
         p.position as player_position,
         p.team as player_team,

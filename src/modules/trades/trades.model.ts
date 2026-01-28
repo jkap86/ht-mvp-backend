@@ -2,6 +2,8 @@
  * Trade system domain models
  */
 
+export type TradeItemType = 'player' | 'draft_pick';
+
 export type TradeStatus =
   | 'pending'
   | 'countered'
@@ -34,12 +36,20 @@ export interface Trade {
 export interface TradeItem {
   id: number;
   tradeId: number;
-  playerId: number;
-  fromRosterId: number;
-  toRosterId: number;
-  playerName: string;
+  itemType: TradeItemType;
+  // Player fields (when itemType = 'player')
+  playerId: number | null;
+  playerName: string | null;
   playerPosition: string | null;
   playerTeam: string | null;
+  // Pick fields (when itemType = 'draft_pick')
+  draftPickAssetId: number | null;
+  pickSeason: number | null;
+  pickRound: number | null;
+  pickOriginalTeam: string | null;
+  // Common fields
+  fromRosterId: number;
+  toRosterId: number;
   createdAt: Date;
 }
 
@@ -85,12 +95,16 @@ export interface ProposeTradeRequest {
   recipientRosterId: number;
   offeringPlayerIds: number[];
   requestingPlayerIds: number[];
+  offeringPickAssetIds?: number[];
+  requestingPickAssetIds?: number[];
   message?: string;
 }
 
 export interface CounterTradeRequest {
   offeringPlayerIds: number[];
   requestingPlayerIds: number[];
+  offeringPickAssetIds?: number[];
+  requestingPickAssetIds?: number[];
   message?: string;
 }
 
@@ -147,12 +161,17 @@ export function tradeItemFromDatabase(row: any): TradeItem {
   return {
     id: row.id,
     tradeId: row.trade_id,
+    itemType: row.item_type || 'player',
     playerId: row.player_id,
-    fromRosterId: row.from_roster_id,
-    toRosterId: row.to_roster_id,
     playerName: row.player_name,
     playerPosition: row.player_position,
     playerTeam: row.player_team,
+    draftPickAssetId: row.draft_pick_asset_id,
+    pickSeason: row.pick_season,
+    pickRound: row.pick_round,
+    pickOriginalTeam: row.pick_original_team,
+    fromRosterId: row.from_roster_id,
+    toRosterId: row.to_roster_id,
     createdAt: row.created_at,
   };
 }
@@ -164,12 +183,17 @@ export function tradeItemToResponse(item: TradeItem): Record<string, any> {
   return {
     id: item.id,
     trade_id: item.tradeId,
+    item_type: item.itemType,
     player_id: item.playerId,
-    from_roster_id: item.fromRosterId,
-    to_roster_id: item.toRosterId,
     player_name: item.playerName,
     player_position: item.playerPosition,
     player_team: item.playerTeam,
+    draft_pick_asset_id: item.draftPickAssetId,
+    pick_season: item.pickSeason,
+    pick_round: item.pickRound,
+    pick_original_team: item.pickOriginalTeam,
+    from_roster_id: item.fromRosterId,
+    to_roster_id: item.toRosterId,
     created_at: item.createdAt,
   };
 }

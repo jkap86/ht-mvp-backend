@@ -7,6 +7,7 @@ import {
   TradeItemWithPlayer,
   TradeVoteWithUser,
   TradeStatus,
+  TradeItemType,
   tradeFromDatabase,
   tradeItemFromDatabase,
   tradeVoteFromDatabase,
@@ -58,14 +59,14 @@ export class TradesRepository {
     const tradeResult = await this.db.query(
       `SELECT t.*,
         pr.settings->>'team_name' as proposer_team_name,
-        pu.display_name as proposer_username,
+        pu.username as proposer_username,
         rr.settings->>'team_name' as recipient_team_name,
-        ru.display_name as recipient_username
+        ru.username as recipient_username
       FROM trades t
       JOIN rosters pr ON pr.id = t.proposer_roster_id
-      JOIN users pu ON pu.id = pr.user_id
+      LEFT JOIN users pu ON pu.id = pr.user_id
       JOIN rosters rr ON rr.id = t.recipient_roster_id
-      JOIN users ru ON ru.id = rr.user_id
+      LEFT JOIN users ru ON ru.id = rr.user_id
       WHERE t.id = $1`,
       [tradeId]
     );
@@ -162,6 +163,20 @@ export class TradesRepository {
   }
 
   /**
+   * Find pending trades that involve a specific pick asset
+   */
+  async findPendingByPickAsset(leagueId: number, pickAssetId: number): Promise<Trade[]> {
+    const result = await this.db.query(
+      `SELECT DISTINCT t.* FROM trades t
+      JOIN trade_items ti ON ti.trade_id = t.id
+      WHERE t.league_id = $1 AND ti.draft_pick_asset_id = $2
+      AND t.status IN ('pending', 'accepted', 'in_review')`,
+      [leagueId, pickAssetId]
+    );
+    return result.rows.map(tradeFromDatabase);
+  }
+
+  /**
    * Update trade status
    * @param expectedStatus - If provided, only update if current status matches (prevents race conditions)
    * @returns Trade if updated, null if expectedStatus didn't match
@@ -235,22 +250,28 @@ export class TradesRepository {
   }
 
   /**
-   * Get items with player details
+   * Get items with player/pick details
    */
   private async getItemsWithDetails(tradeId: number): Promise<TradeItemWithPlayer[]> {
     const result = await this.db.query(
-      `SELECT ti.*, p.full_name, p.position, p.team, p.status
+      `SELECT ti.*,
+        p.full_name, p.position, p.team, p.status,
+        dpa.season as asset_season, dpa.round as asset_round,
+        COALESCE(orig_r.settings->>'teamName', orig_u.username) as asset_original_team
       FROM trade_items ti
-      JOIN players p ON p.id = ti.player_id
+      LEFT JOIN players p ON p.id = ti.player_id
+      LEFT JOIN draft_pick_assets dpa ON dpa.id = ti.draft_pick_asset_id
+      LEFT JOIN rosters orig_r ON dpa.original_roster_id = orig_r.id
+      LEFT JOIN users orig_u ON orig_r.user_id = orig_u.id
       WHERE ti.trade_id = $1`,
       [tradeId]
     );
     return result.rows.map((row) => ({
       ...tradeItemFromDatabase(row),
-      fullName: row.full_name,
-      position: row.position,
-      team: row.team,
-      status: row.status,
+      fullName: row.full_name || null,
+      position: row.position || null,
+      team: row.team || null,
+      status: row.status || null,
     }));
   }
 
@@ -259,10 +280,10 @@ export class TradesRepository {
    */
   private async getVotesWithUsers(tradeId: number): Promise<TradeVoteWithUser[]> {
     const result = await this.db.query(
-      `SELECT tv.*, u.display_name as username, r.settings->>'team_name' as team_name
+      `SELECT tv.*, u.username as username, r.settings->>'team_name' as team_name
       FROM trade_votes tv
       JOIN rosters r ON r.id = tv.roster_id
-      JOIN users u ON u.id = r.user_id
+      LEFT JOIN users u ON u.id = r.user_id
       WHERE tv.trade_id = $1`,
       [tradeId]
     );
@@ -278,9 +299,68 @@ export class TradeItemsRepository {
   constructor(private readonly db: Pool) {}
 
   /**
-   * Create trade items in bulk
+   * Create trade items in bulk (supports both player and pick items)
    */
   async createBulk(
+    tradeId: number,
+    items: Array<{
+      itemType: TradeItemType;
+      // Player fields
+      playerId?: number;
+      playerName?: string;
+      playerPosition?: string;
+      playerTeam?: string;
+      // Pick fields
+      draftPickAssetId?: number;
+      pickSeason?: number;
+      pickRound?: number;
+      pickOriginalTeam?: string;
+      // Common fields
+      fromRosterId: number;
+      toRosterId: number;
+    }>,
+    client?: PoolClient
+  ): Promise<TradeItem[]> {
+    if (items.length === 0) return [];
+
+    const conn = client || this.db;
+    const createdItems: TradeItem[] = [];
+
+    // Insert items one by one to handle mixed types cleanly
+    for (const item of items) {
+      const result = await conn.query(
+        `INSERT INTO trade_items (
+          trade_id, item_type,
+          player_id, player_name, player_position, player_team,
+          draft_pick_asset_id, pick_season, pick_round, pick_original_team,
+          from_roster_id, to_roster_id
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        RETURNING *`,
+        [
+          tradeId,
+          item.itemType,
+          item.playerId || null,
+          item.playerName || null,
+          item.playerPosition || null,
+          item.playerTeam || null,
+          item.draftPickAssetId || null,
+          item.pickSeason || null,
+          item.pickRound || null,
+          item.pickOriginalTeam || null,
+          item.fromRosterId,
+          item.toRosterId,
+        ]
+      );
+      createdItems.push(tradeItemFromDatabase(result.rows[0]));
+    }
+
+    return createdItems;
+  }
+
+  /**
+   * Create player trade items in bulk (legacy compatibility)
+   */
+  async createPlayerItems(
     tradeId: number,
     items: Array<{
       playerId: number;
@@ -292,35 +372,39 @@ export class TradeItemsRepository {
     }>,
     client?: PoolClient
   ): Promise<TradeItem[]> {
-    if (items.length === 0) return [];
-
-    const conn = client || this.db;
-    const values: any[] = [];
-    const placeholders: string[] = [];
-
-    items.forEach((item, index) => {
-      const offset = index * 6;
-      placeholders.push(
-        `($1, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7})`
-      );
-      values.push(
-        item.playerId,
-        item.fromRosterId,
-        item.toRosterId,
-        item.playerName,
-        item.playerPosition || null,
-        item.playerTeam || null
-      );
-    });
-
-    const result = await conn.query(
-      `INSERT INTO trade_items (trade_id, player_id, from_roster_id, to_roster_id, player_name, player_position, player_team)
-      VALUES ${placeholders.map((_, i) => `($1, $${i * 6 + 2}, $${i * 6 + 3}, $${i * 6 + 4}, $${i * 6 + 5}, $${i * 6 + 6}, $${i * 6 + 7})`).join(', ')}
-      RETURNING *`,
-      [tradeId, ...values]
+    return this.createBulk(
+      tradeId,
+      items.map((item) => ({
+        itemType: 'player' as TradeItemType,
+        ...item,
+      })),
+      client
     );
+  }
 
-    return result.rows.map(tradeItemFromDatabase);
+  /**
+   * Create pick trade items in bulk
+   */
+  async createPickItems(
+    tradeId: number,
+    items: Array<{
+      draftPickAssetId: number;
+      pickSeason: number;
+      pickRound: number;
+      pickOriginalTeam: string;
+      fromRosterId: number;
+      toRosterId: number;
+    }>,
+    client?: PoolClient
+  ): Promise<TradeItem[]> {
+    return this.createBulk(
+      tradeId,
+      items.map((item) => ({
+        itemType: 'draft_pick' as TradeItemType,
+        ...item,
+      })),
+      client
+    );
   }
 
   /**
@@ -335,8 +419,22 @@ export class TradeItemsRepository {
    * Get player IDs in a trade
    */
   async findPlayerIdsInTrade(tradeId: number): Promise<number[]> {
-    const result = await this.db.query('SELECT player_id FROM trade_items WHERE trade_id = $1', [tradeId]);
+    const result = await this.db.query(
+      `SELECT player_id FROM trade_items WHERE trade_id = $1 AND item_type = 'player' AND player_id IS NOT NULL`,
+      [tradeId]
+    );
     return result.rows.map((row) => row.player_id);
+  }
+
+  /**
+   * Get pick asset IDs in a trade
+   */
+  async findPickAssetIdsInTrade(tradeId: number): Promise<number[]> {
+    const result = await this.db.query(
+      `SELECT draft_pick_asset_id FROM trade_items WHERE trade_id = $1 AND item_type = 'draft_pick' AND draft_pick_asset_id IS NOT NULL`,
+      [tradeId]
+    );
+    return result.rows.map((row) => row.draft_pick_asset_id);
   }
 }
 
@@ -372,8 +470,12 @@ export class TradeVotesRepository {
   /**
    * Count votes by type
    */
-  async countVotes(tradeId: number): Promise<{ approve: number; veto: number }> {
-    const result = await this.db.query(
+  async countVotes(
+    tradeId: number,
+    client?: PoolClient
+  ): Promise<{ approve: number; veto: number }> {
+    const conn = client || this.db;
+    const result = await conn.query(
       `SELECT vote, COUNT(*) as count FROM trade_votes
       WHERE trade_id = $1 GROUP BY vote`,
       [tradeId]
@@ -388,8 +490,13 @@ export class TradeVotesRepository {
   /**
    * Check if roster has already voted
    */
-  async hasVoted(tradeId: number, rosterId: number): Promise<boolean> {
-    const result = await this.db.query(
+  async hasVoted(
+    tradeId: number,
+    rosterId: number,
+    client?: PoolClient
+  ): Promise<boolean> {
+    const conn = client || this.db;
+    const result = await conn.query(
       'SELECT 1 FROM trade_votes WHERE trade_id = $1 AND roster_id = $2',
       [tradeId, rosterId]
     );

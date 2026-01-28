@@ -23,6 +23,7 @@ export const SOCKET_EVENTS = {
     USER_LEFT: 'draft:user_left',
     PICK_MADE: 'draft:pick_made',
     PICK_UNDONE: 'draft:pick_undone',
+    PICK_TRADED: 'draft:pick_traded',
     CREATED: 'draft:created',
     STARTED: 'draft:started',
     PAUSED: 'draft:paused',
@@ -31,6 +32,7 @@ export const SOCKET_EVENTS = {
     NEXT_PICK: 'draft:next_pick',
     QUEUE_UPDATED: 'draft:queue_updated',
     AUTODRAFT_TOGGLED: 'draft:autodraft_toggled',
+    SETTINGS_UPDATED: 'draft:settings_updated',
   },
 
   // Chat events

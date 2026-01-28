@@ -45,7 +45,7 @@ export class WaiverPriorityRepository {
     const result = await this.db.query(
       `SELECT wp.*,
         r.settings->>'team_name' as team_name,
-        u.display_name as username
+        u.username as username
       FROM waiver_priority wp
       JOIN rosters r ON r.id = wp.roster_id
       JOIN users u ON u.id = r.user_id

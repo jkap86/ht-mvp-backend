@@ -46,7 +46,7 @@ export class FaabBudgetRepository {
     const result = await this.db.query(
       `SELECT fb.*,
         r.settings->>'team_name' as team_name,
-        u.display_name as username
+        u.username as username
       FROM faab_budgets fb
       JOIN rosters r ON r.id = fb.roster_id
       JOIN users u ON u.id = r.user_id

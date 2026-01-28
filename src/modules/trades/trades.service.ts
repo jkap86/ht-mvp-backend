@@ -152,6 +152,7 @@ export class TradesService {
   ): Promise<{ trade: TradeWithDetails; voteCount: { approve: number; veto: number } }> {
     return voteTradeUseCase(
       {
+        db: this.db,
         tradesRepo: this.tradesRepo,
         tradeVotesRepo: this.tradeVotesRepo,
         rosterRepo: this.rosterRepo,

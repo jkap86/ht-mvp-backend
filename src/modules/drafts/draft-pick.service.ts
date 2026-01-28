@@ -1,5 +1,6 @@
 import { DraftRepository } from './drafts.repository';
 import { Draft, DraftOrderEntry, draftToResponse } from './drafts.model';
+import { DraftPickAssetRepository } from './draft-pick-asset.repository';
 import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import { RosterPlayersRepository } from '../rosters/rosters.repository';
 import { PlayerRepository } from '../players/players.repository';
@@ -19,7 +20,8 @@ export class DraftPickService {
     private readonly rosterRepo: RosterRepository,
     private readonly engineFactory: DraftEngineFactory,
     private readonly playerRepo: PlayerRepository,
-    private readonly rosterPlayersRepo: RosterPlayersRepository
+    private readonly rosterPlayersRepo: RosterPlayersRepository,
+    private readonly pickAssetRepo?: DraftPickAssetRepository
   ) {}
 
   async getDraftPicks(leagueId: number, draftId: number, userId: string): Promise<any[]> {
@@ -62,12 +64,28 @@ export class DraftPickService {
       throw new ForbiddenException('You are not in this league');
     }
 
-    // Check if it's user's turn
+    // Check if it's user's turn (accounting for traded picks)
     const draftOrder = await this.draftRepo.getDraftOrder(draftId);
     const engine = this.engineFactory.createEngine(draft.draftType);
-    const currentPicker = engine.getPickerForPickNumber(draft, draftOrder, draft.currentPick);
 
-    if (currentPicker?.rosterId !== userRoster.id) {
+    // Load pick assets to check for traded picks
+    const pickAssets = this.pickAssetRepo
+      ? await this.pickAssetRepo.findByDraftId(draftId)
+      : [];
+
+    // Use getActualPickerForPickNumber to account for traded picks
+    const actualPicker = engine.getActualPickerForPickNumber?.(
+      draft,
+      draftOrder,
+      pickAssets,
+      draft.currentPick
+    );
+
+    // Fall back to original picker logic if engine doesn't support traded picks
+    const currentPickerRosterId = actualPicker?.rosterId
+      ?? engine.getPickerForPickNumber(draft, draftOrder, draft.currentPick)?.rosterId;
+
+    if (currentPickerRosterId !== userRoster.id) {
       throw new ValidationException('It is not your turn to pick');
     }
 
@@ -87,7 +105,7 @@ export class DraftPickService {
     );
 
     // Advance to next pick
-    const nextPickInfo = await this.advanceToNextPick(draft, draftOrder, engine);
+    const nextPickInfo = await this.advanceToNextPick(draft, draftOrder, engine, pickAssets);
 
     // Enrich pick with player info for socket event
     const player = await this.playerRepo.findById(playerId);
@@ -122,7 +140,8 @@ export class DraftPickService {
   private async advanceToNextPick(
     draft: Draft,
     draftOrder: DraftOrderEntry[],
-    engine: IDraftEngine
+    engine: IDraftEngine,
+    pickAssets: import('./draft-pick-asset.model').DraftPickAsset[] = []
   ): Promise<any | null> {
     const totalRosters = draftOrder.length;
     const totalPicks = totalRosters * draft.rounds;
@@ -142,21 +161,34 @@ export class DraftPickService {
     }
 
     const nextRound = engine.getRound(nextPick, totalRosters);
-    const nextPicker = engine.getPickerForPickNumber(draft, draftOrder, nextPick);
+
+    // Use getActualPickerForPickNumber to account for traded picks
+    const actualPicker = engine.getActualPickerForPickNumber?.(
+      draft,
+      draftOrder,
+      pickAssets,
+      nextPick
+    );
+
+    // Fall back to original picker logic if engine doesn't support traded picks
+    const originalPicker = engine.getPickerForPickNumber(draft, draftOrder, nextPick);
+    const nextPickerRosterId = actualPicker?.rosterId ?? originalPicker?.rosterId ?? null;
 
     const pickDeadline = engine.calculatePickDeadline(draft);
 
     await this.draftRepo.update(draft.id, {
       currentPick: nextPick,
       currentRound: nextRound,
-      currentRosterId: nextPicker?.rosterId || null,
+      currentRosterId: nextPickerRosterId,
       pickDeadline,
     });
 
     return {
       currentPick: nextPick,
       currentRound: nextRound,
-      currentRosterId: nextPicker?.rosterId || null,
+      currentRosterId: nextPickerRosterId,
+      originalRosterId: actualPicker?.originalRosterId ?? originalPicker?.rosterId ?? null,
+      isTraded: actualPicker?.isTraded ?? false,
       pickDeadline,
     };
   }

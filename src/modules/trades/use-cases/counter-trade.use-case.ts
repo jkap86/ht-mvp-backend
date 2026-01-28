@@ -72,6 +72,8 @@ export async function counterTrade(
         recipientRosterId: originalTrade.proposerRosterId,
         offeringPlayerIds: request.offeringPlayerIds,
         requestingPlayerIds: request.requestingPlayerIds,
+        offeringPickAssetIds: request.offeringPickAssetIds,
+        requestingPickAssetIds: request.requestingPickAssetIds,
         message: request.message,
       },
       false  // Don't manage transaction - we're already in one

@@ -34,6 +34,19 @@ export const createDraftSchema = z.object({
   auction_settings: auctionSettingsSchema.optional(),
 });
 
+/** Schema for updating draft settings (commissioner only) */
+export const updateDraftSettingsSchema = z.object({
+  draft_type: draftTypeSchema.optional(),
+  rounds: z.number().int().min(1, 'Rounds must be at least 1').max(30, 'Rounds cannot exceed 30').optional(),
+  pick_time_seconds: z
+    .number()
+    .int()
+    .min(30, 'Pick time must be at least 30 seconds')
+    .max(600, 'Pick time cannot exceed 600 seconds')
+    .optional(),
+  auction_settings: auctionSettingsSchema.partial().optional(),
+});
+
 export const makePickSchema = z.object({
   player_id: z.number().int().positive('Player ID must be a positive integer'),
 });
@@ -93,6 +106,7 @@ export type DraftTypeSchema = z.infer<typeof draftTypeSchema>;
 export type AuctionModeSchema = z.infer<typeof auctionModeSchema>;
 export type AuctionSettingsInput = z.infer<typeof auctionSettingsSchema>;
 export type CreateDraftInput = z.infer<typeof createDraftSchema>;
+export type UpdateDraftSettingsInput = z.infer<typeof updateDraftSettingsSchema>;
 export type MakePickInput = z.infer<typeof makePickSchema>;
 export type AddToQueueInput = z.infer<typeof addToQueueSchema>;
 export type ReorderQueueInput = z.infer<typeof reorderQueueSchema>;

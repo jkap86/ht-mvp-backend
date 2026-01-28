@@ -2,11 +2,13 @@ import { PoolClient } from 'pg';
 import { TradesRepository, TradeItemsRepository } from '../trades.repository';
 import { RosterPlayersRepository } from '../../rosters/rosters.repository';
 import { LeagueRepository, RosterRepository } from '../../leagues/leagues.repository';
+import { DraftPickAssetRepository } from '../../drafts/draft-pick-asset.repository';
 import { tryGetSocketService } from '../../../socket';
 import {
   TradeWithDetails,
   ProposeTradeRequest,
   tradeWithDetailsToResponse,
+  TradeItemType,
 } from '../trades.model';
 import {
   NotFoundException,
@@ -17,6 +19,11 @@ import {
 import { getTradeLockId } from '../../../utils/locks';
 import { League } from '../../leagues/leagues.model';
 import { Roster } from '../../leagues/leagues.model';
+import {
+  validatePickTrade,
+  buildPickTradeItems,
+  ValidatePickTradeContext,
+} from './validate-pick-trade.use-case';
 
 const DEFAULT_TRADE_EXPIRY_HOURS = 48;
 
@@ -26,6 +33,7 @@ export interface ProposeTradeContext {
   rosterRepo: RosterRepository;
   rosterPlayersRepo: RosterPlayersRepository;
   leagueRepo: LeagueRepository;
+  pickAssetRepo?: DraftPickAssetRepository;
 }
 
 /**
@@ -47,12 +55,12 @@ export async function proposeTrade(
   }
 
   // Validate recipient roster exists
-  const recipientRoster = await ctx.rosterRepo.findById(request.recipientRosterId);
-  if (!recipientRoster || recipientRoster.leagueId !== leagueId) {
+  const recipientRoster = await ctx.rosterRepo.findByLeagueAndRosterId(leagueId, request.recipientRosterId);
+  if (!recipientRoster) {
     throw new NotFoundException('Recipient roster not found in this league');
   }
 
-  if (proposerRoster.id === request.recipientRosterId) {
+  if (proposerRoster.id === recipientRoster.id) {
     throw new ValidationException('Cannot trade with yourself');
   }
 
@@ -66,9 +74,11 @@ export async function proposeTrade(
     throw new ValidationException('Trade deadline has passed');
   }
 
-  // Validate players
-  if (request.offeringPlayerIds.length === 0 && request.requestingPlayerIds.length === 0) {
-    throw new ValidationException('Trade must include at least one player');
+  // Validate trade has at least one item (player or pick)
+  const hasPlayers = request.offeringPlayerIds.length > 0 || request.requestingPlayerIds.length > 0;
+  const hasPicks = (request.offeringPickAssetIds?.length ?? 0) > 0 || (request.requestingPickAssetIds?.length ?? 0) > 0;
+  if (!hasPlayers && !hasPicks) {
+    throw new ValidationException('Trade must include at least one player or draft pick');
   }
 
   if (manageTransaction) {
@@ -81,10 +91,36 @@ export async function proposeTrade(
     await validateOfferingPlayers(ctx, client, proposerRoster, request.offeringPlayerIds, leagueId);
 
     // Validate requested players belong to recipient
-    await validateRequestingPlayers(ctx, client, request.recipientRosterId, request.requestingPlayerIds, leagueId);
+    await validateRequestingPlayers(ctx, client, recipientRoster.id, request.requestingPlayerIds, leagueId);
+
+    // Validate draft picks if included
+    const offeringPickAssetIds = request.offeringPickAssetIds || [];
+    const requestingPickAssetIds = request.requestingPickAssetIds || [];
+    let pickTradeItems: Array<{
+      itemType: 'draft_pick';
+      draftPickAssetId: number;
+      pickSeason: number;
+      pickRound: number;
+      pickOriginalTeam: string;
+      fromRosterId: number;
+      toRosterId: number;
+    }> = [];
+
+    if ((offeringPickAssetIds.length > 0 || requestingPickAssetIds.length > 0) && ctx.pickAssetRepo) {
+      const pickCtx: ValidatePickTradeContext = { pickAssetRepo: ctx.pickAssetRepo };
+      const validatedPicks = await validatePickTrade(
+        pickCtx,
+        offeringPickAssetIds,
+        requestingPickAssetIds,
+        proposerRoster.id,
+        recipientRoster.id,
+        leagueId
+      );
+      pickTradeItems = buildPickTradeItems(validatedPicks);
+    }
 
     // Calculate roster size changes and validate
-    await validateRosterSizes(ctx, client, proposerRoster.id, request.recipientRosterId, request, league);
+    await validateRosterSizes(ctx, client, proposerRoster.id, recipientRoster.id, request, league);
 
     // Create trade
     const expiryHours = league.settings?.trade_expiry_hours || DEFAULT_TRADE_EXPIRY_HOURS;
@@ -93,7 +129,7 @@ export async function proposeTrade(
     const trade = await ctx.tradesRepo.create(
       leagueId,
       proposerRoster.id,
-      request.recipientRosterId,
+      recipientRoster.id,
       expiresAt,
       parseInt(league.season, 10),
       league.currentWeek || 1,
@@ -102,16 +138,34 @@ export async function proposeTrade(
       client
     );
 
-    // Create trade items
-    const items = await buildTradeItems(
+    // Create trade items for players
+    const playerItems = await buildPlayerTradeItems(
       client,
       proposerRoster.id,
-      request.recipientRosterId,
+      recipientRoster.id,
       request.offeringPlayerIds,
       request.requestingPlayerIds
     );
 
-    await ctx.tradeItemsRepo.createBulk(trade.id, items, client);
+    // Combine player and pick items
+    const allItems: Array<{
+      itemType: TradeItemType;
+      playerId?: number;
+      playerName?: string;
+      playerPosition?: string;
+      playerTeam?: string;
+      draftPickAssetId?: number;
+      pickSeason?: number;
+      pickRound?: number;
+      pickOriginalTeam?: string;
+      fromRosterId: number;
+      toRosterId: number;
+    }> = [
+      ...playerItems.map((item) => ({ ...item, itemType: 'player' as TradeItemType })),
+      ...pickTradeItems,
+    ];
+
+    await ctx.tradeItemsRepo.createBulk(trade.id, allItems, client);
 
     if (manageTransaction) {
       await client.query('COMMIT');
@@ -212,7 +266,7 @@ async function validateRosterSizes(
   }
 }
 
-async function buildTradeItems(
+async function buildPlayerTradeItems(
   client: PoolClient,
   proposerRosterId: number,
   recipientRosterId: number,
@@ -241,16 +295,17 @@ async function buildTradeItems(
       'SELECT full_name, position, team FROM players WHERE id = $1',
       [playerId]
     );
-    if (playerInfo.rows.length > 0) {
-      items.push({
-        playerId,
-        fromRosterId: proposerRosterId,
-        toRosterId: recipientRosterId,
-        playerName: playerInfo.rows[0].full_name,
-        playerPosition: playerInfo.rows[0].position,
-        playerTeam: playerInfo.rows[0].team,
-      });
+    if (playerInfo.rows.length === 0) {
+      throw new ValidationException(`Player ${playerId} not found in database`);
     }
+    items.push({
+      playerId,
+      fromRosterId: proposerRosterId,
+      toRosterId: recipientRosterId,
+      playerName: playerInfo.rows[0].full_name,
+      playerPosition: playerInfo.rows[0].position,
+      playerTeam: playerInfo.rows[0].team,
+    });
   }
 
   // Players from recipient to proposer
@@ -259,16 +314,17 @@ async function buildTradeItems(
       'SELECT full_name, position, team FROM players WHERE id = $1',
       [playerId]
     );
-    if (playerInfo.rows.length > 0) {
-      items.push({
-        playerId,
-        fromRosterId: recipientRosterId,
-        toRosterId: proposerRosterId,
-        playerName: playerInfo.rows[0].full_name,
-        playerPosition: playerInfo.rows[0].position,
-        playerTeam: playerInfo.rows[0].team,
-      });
+    if (playerInfo.rows.length === 0) {
+      throw new ValidationException(`Player ${playerId} not found in database`);
     }
+    items.push({
+      playerId,
+      fromRosterId: recipientRosterId,
+      toRosterId: proposerRosterId,
+      playerName: playerInfo.rows[0].full_name,
+      playerPosition: playerInfo.rows[0].position,
+      playerTeam: playerInfo.rows[0].team,
+    });
   }
 
   return items;

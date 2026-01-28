@@ -106,6 +106,22 @@ export class DraftRepository {
       setClauses.push(`draft_state = $${paramIndex++}`);
       values.push(JSON.stringify(updates.draftState));
     }
+    if (updates.settings !== undefined) {
+      setClauses.push(`settings = $${paramIndex++}`);
+      values.push(JSON.stringify(updates.settings));
+    }
+    if (updates.rounds !== undefined) {
+      setClauses.push(`rounds = $${paramIndex++}`);
+      values.push(updates.rounds);
+    }
+    if (updates.pickTimeSeconds !== undefined) {
+      setClauses.push(`pick_time_seconds = $${paramIndex++}`);
+      values.push(updates.pickTimeSeconds);
+    }
+    if (updates.draftType !== undefined) {
+      setClauses.push(`draft_type = $${paramIndex++}`);
+      values.push(updates.draftType);
+    }
 
     if (setClauses.length === 0) {
       const existing = await this.findById(id);
@@ -478,10 +494,10 @@ export class DraftRepository {
        AND (
          (d.pick_deadline IS NOT NULL AND d.pick_deadline < NOW())
          OR EXISTS (
-           SELECT 1 FROM draft_order do
-           WHERE do.draft_id = d.id
-           AND do.roster_id = d.current_roster_id
-           AND do.is_autodraft_enabled = true
+           SELECT 1 FROM draft_order dord
+           WHERE dord.draft_id = d.id
+           AND dord.roster_id = d.current_roster_id
+           AND dord.is_autodraft_enabled = true
          )
          OR EXISTS (
            SELECT 1 FROM rosters r

@@ -247,6 +247,23 @@ export class SocketService {
     this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.DRAFT.AUTODRAFT_TOGGLED, data);
   }
 
+  // Emit draft settings updated event when commissioner changes settings
+  emitDraftSettingsUpdated(draftId: number, draft: any): void {
+    this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.DRAFT.SETTINGS_UPDATED, draft);
+  }
+
+  // Emit pick traded event when a draft pick asset changes ownership
+  emitPickTraded(leagueId: number, data: {
+    pickAssetId: number;
+    season: number;
+    round: number;
+    previousOwnerRosterId: number;
+    newOwnerRosterId: number;
+    tradeId: number;
+  }): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.DRAFT.PICK_TRADED, data);
+  }
+
   // Emit chat message to all users in league room
   emitChatMessage(leagueId: number, message: any): void {
     this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.CHAT.MESSAGE, message);

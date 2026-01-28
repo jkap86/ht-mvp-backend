@@ -33,7 +33,33 @@ export async function invalidateTradesWithPlayer(
     }
 
     if (updated) {
-      emitTradeInvalidatedEvent(trade.leagueId, trade.id);
+      emitTradeInvalidatedEvent(trade.leagueId, trade.id, 'A player involved in this trade is no longer available');
+    }
+  }
+}
+
+/**
+ * Invalidate pending trades containing a pick asset that is no longer tradeable
+ * (e.g., pick was used, round passed)
+ * Uses conditional updates to handle concurrent modifications safely
+ */
+export async function invalidateTradesWithPick(
+  ctx: { tradesRepo: TradesRepository },
+  leagueId: number,
+  pickAssetId: number
+): Promise<void> {
+  const pendingTrades = await ctx.tradesRepo.findPendingByPickAsset(leagueId, pickAssetId);
+
+  for (const trade of pendingTrades) {
+    // Try to expire - only succeeds if still in an active state
+    // Try 'pending' first, then 'in_review' if that fails
+    let updated = await ctx.tradesRepo.updateStatus(trade.id, 'expired', undefined, 'pending');
+    if (!updated) {
+      updated = await ctx.tradesRepo.updateStatus(trade.id, 'expired', undefined, 'in_review');
+    }
+
+    if (updated) {
+      emitTradeInvalidatedEvent(trade.leagueId, trade.id, 'A draft pick involved in this trade is no longer available');
     }
   }
 }
@@ -81,12 +107,30 @@ export async function processReviewCompleteTrades(
       await client.query('BEGIN');
       await client.query('SELECT pg_advisory_xact_lock($1)', [getTradeLockId(trade.leagueId)]);
 
+      // Use conditional update to ensure trade is still in 'in_review' status
+      // This prevents processing a trade that was already completed or vetoed concurrently
       if (voteCount.veto >= vetoThreshold) {
-        await ctx.tradesRepo.updateStatus(trade.id, 'vetoed', client);
+        const updated = await ctx.tradesRepo.updateStatus(trade.id, 'vetoed', client, 'in_review');
+        if (!updated) {
+          // Trade status changed concurrently, skip
+          await client.query('ROLLBACK');
+          continue;
+        }
         emitTradeVetoedEvent(trade.leagueId, trade.id);
       } else {
+        // Check status before executing (trade might have been vetoed concurrently)
+        const lockedTrade = await ctx.tradesRepo.findById(trade.id);
+        if (!lockedTrade || lockedTrade.status !== 'in_review') {
+          await client.query('ROLLBACK');
+          continue;
+        }
         await executeTrade(ctx, trade, client);
-        await ctx.tradesRepo.updateStatus(trade.id, 'completed', client);
+        const updated = await ctx.tradesRepo.updateStatus(trade.id, 'completed', client, 'in_review');
+        if (!updated) {
+          // Trade status changed concurrently, skip
+          await client.query('ROLLBACK');
+          continue;
+        }
         emitTradeCompletedEvent(trade.leagueId, trade.id);
       }
 
@@ -103,11 +147,11 @@ export async function processReviewCompleteTrades(
   return processed;
 }
 
-function emitTradeInvalidatedEvent(leagueId: number, tradeId: number): void {
+function emitTradeInvalidatedEvent(leagueId: number, tradeId: number, reason: string): void {
   const socket = tryGetSocketService();
   socket?.emitTradeInvalidated(leagueId, {
     tradeId,
-    reason: 'A player involved in this trade is no longer available',
+    reason,
   });
 }
 

@@ -1,6 +1,7 @@
 import { randomBytes } from 'crypto';
 import { Pool } from 'pg';
 import { DraftRepository } from './drafts.repository';
+import { DraftPickAssetRepository } from './draft-pick-asset.repository';
 import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import {
   ForbiddenException,
@@ -37,7 +38,8 @@ export class DraftOrderService {
     private readonly db: Pool,
     private readonly draftRepo: DraftRepository,
     private readonly leagueRepo: LeagueRepository,
-    private readonly rosterRepo: RosterRepository
+    private readonly rosterRepo: RosterRepository,
+    private readonly pickAssetRepo?: DraftPickAssetRepository
   ) {}
 
   async getDraftOrder(leagueId: number, draftId: number, userId: string): Promise<any[]> {
@@ -102,6 +104,11 @@ export class DraftOrderService {
     // Atomically update draft order in a single transaction
     const rosterIds = shuffled.map(r => r.id);
     await this.draftRepo.updateDraftOrderAtomic(draftId, rosterIds);
+
+    // Update pick asset positions to match new draft order
+    if (this.pickAssetRepo) {
+      await this.pickAssetRepo.updatePickPositions(draftId);
+    }
 
     // Mark order as confirmed after successful randomization
     await this.draftRepo.setOrderConfirmed(draftId, true);

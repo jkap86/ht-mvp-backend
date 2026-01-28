@@ -6,6 +6,7 @@ import { validateRequest } from '../../middleware/validation.middleware';
 import { createLeagueSchema, updateLeagueSchema } from './leagues.schemas';
 import { container, KEYS } from '../../container';
 import draftRoutes from '../drafts/drafts.routes';
+import { leaguePickAssetsRoutes } from '../drafts/draft-pick-assets.routes';
 import chatRoutes from '../chat/chat.routes';
 import rosterRoutes from '../rosters/rosters.routes';
 import matchupRoutes from '../matchups/matchups.routes';
@@ -89,6 +90,9 @@ router.post('/:id/dev/add-users', leagueController.devAddUsers);
 
 // Mount draft routes - /api/leagues/:leagueId/drafts/*
 router.use('/:leagueId/drafts', draftRoutes);
+
+// Mount pick assets routes - /api/leagues/:leagueId/pick-assets/*
+router.use('/:leagueId/pick-assets', leaguePickAssetsRoutes);
 
 // Mount chat routes - /api/leagues/:leagueId/chat
 router.use('/:leagueId/chat', chatRoutes);

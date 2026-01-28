@@ -7,7 +7,14 @@ export { voteTrade, VoteTradeContext } from './vote-trade.use-case';
 export { getTradesForLeague, getTradeById, GetTradesContext } from './get-trades.use-case';
 export {
   invalidateTradesWithPlayer,
+  invalidateTradesWithPick,
   processExpiredTrades,
   processReviewCompleteTrades,
   ProcessTradesContext,
 } from './process-trades.use-case';
+export {
+  validatePickTrade,
+  buildPickTradeItems,
+  ValidatePickTradeContext,
+  PickValidationResult,
+} from './validate-pick-trade.use-case';

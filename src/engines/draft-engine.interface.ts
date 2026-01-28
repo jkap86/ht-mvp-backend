@@ -1,4 +1,18 @@
 import { Draft, DraftOrderEntry, DraftPick } from '../modules/drafts/drafts.model';
+import { DraftPickAsset } from '../modules/drafts/draft-pick-asset.model';
+
+/**
+ * Info about who actually picks at a given pick number,
+ * accounting for traded picks.
+ */
+export interface ActualPickerInfo {
+  /** The roster that will make this pick (current owner) */
+  rosterId: number;
+  /** The roster originally assigned this pick slot */
+  originalRosterId: number;
+  /** Whether this pick has been traded */
+  isTraded: boolean;
+}
 
 /**
  * Result of a draft tick operation
@@ -91,4 +105,16 @@ export interface IDraftEngine {
    * Returns result indicating what action was taken (if any).
    */
   tick(draftId: number): Promise<DraftTickResult>;
+
+  /**
+   * Get the roster that should actually pick at a given pick number,
+   * accounting for traded picks.
+   * Returns the current owner (may differ from original if pick was traded).
+   */
+  getActualPickerForPickNumber?(
+    draft: Draft,
+    draftOrder: DraftOrderEntry[],
+    pickAssets: DraftPickAsset[],
+    pickNumber: number
+  ): ActualPickerInfo | undefined;
 }

@@ -13,6 +13,7 @@ import { draftPickLimiter, queueLimiter, draftModifyLimiter } from '../../middle
 import { container, KEYS } from '../../container';
 import {
   createDraftSchema,
+  updateDraftSettingsSchema,
   makePickSchema,
   addToQueueSchema,
   reorderQueueSchema,
@@ -67,6 +68,9 @@ router.post('/', draftModifyLimiter, validateRequest(createDraftSchema), draftCo
 
 // GET /api/leagues/:leagueId/drafts/:draftId
 router.get('/:draftId', draftController.getDraft);
+
+// PATCH /api/leagues/:leagueId/drafts/:draftId/settings (commissioner only)
+router.patch('/:draftId/settings', draftModifyLimiter, validateRequest(updateDraftSettingsSchema), draftController.updateDraftSettings);
 
 // DELETE /api/leagues/:leagueId/drafts/:draftId
 router.delete('/:draftId', draftController.deleteDraft);

@@ -1,13 +1,15 @@
 import { DraftRepository } from './drafts.repository';
-import { draftToResponse } from './drafts.model';
+import { draftToResponse, DraftType } from './drafts.model';
 import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import {
   NotFoundException,
   ForbiddenException,
+  ValidationException,
 } from '../../utils/exceptions';
 import { DraftOrderService } from './draft-order.service';
 import { DraftPickService } from './draft-pick.service';
 import { DraftStateService } from './draft-state.service';
+import { DraftPickAssetRepository } from './draft-pick-asset.repository';
 import { tryGetSocketService } from '../../socket/socket.service';
 import { logger } from '../../config/env.config';
 
@@ -18,7 +20,8 @@ export class DraftService {
     private readonly rosterRepo: RosterRepository,
     private readonly orderService: DraftOrderService,
     private readonly pickService: DraftPickService,
-    private readonly stateService: DraftStateService
+    private readonly stateService: DraftStateService,
+    private readonly pickAssetRepo?: DraftPickAssetRepository
   ) {}
 
   private calculateTotalRosterSlots(leagueSettings: any): number {
@@ -128,6 +131,38 @@ export class DraftService {
 
     // Create initial draft order
     await this.orderService.createInitialOrder(draft.id, leagueId);
+
+    // Generate draft pick assets for trading
+    if (this.pickAssetRepo && league) {
+      const rosters = await this.rosterRepo.findByLeagueId(leagueId);
+      const rosterIds = rosters.map(r => r.id);
+      const season = parseInt(league.season, 10);
+      const rounds = options.rounds || defaultRounds;
+
+      // Generate pick assets for this draft
+      await this.pickAssetRepo.generatePickAssetsForDraft(
+        draft.id,
+        leagueId,
+        season,
+        rounds,
+        rosterIds
+      );
+
+      // For dynasty leagues, also generate future pick assets
+      if (league.mode === 'dynasty') {
+        for (let futureYear = season + 1; futureYear <= season + 3; futureYear++) {
+          await this.pickAssetRepo.generateFuturePickAssets(
+            leagueId,
+            futureYear,
+            rounds,
+            rosterIds
+          );
+        }
+        logger.info(`Generated future pick assets for dynasty league ${leagueId} (seasons ${season + 1}-${season + 3})`);
+      }
+
+      logger.info(`Generated ${rosterIds.length * rounds} pick assets for draft ${draft.id}`);
+    }
 
     const response = draftToResponse(draft);
 
@@ -302,5 +337,133 @@ export class DraftService {
     logger.info(`User ${userId} toggled autodraft to ${enabled} for draft ${draftId}`);
 
     return { rosterId: roster.id, enabled };
+  }
+
+  /**
+   * Update draft settings (commissioner only).
+   * Can update all settings before draft starts, or only timer-related settings while paused.
+   */
+  async updateDraftSettings(
+    leagueId: number,
+    draftId: number,
+    userId: string,
+    updates: {
+      draftType?: string;
+      rounds?: number;
+      pickTimeSeconds?: number;
+      auctionSettings?: {
+        auction_mode?: 'slow' | 'fast';
+        bid_window_seconds?: number;
+        max_active_nominations_per_team?: number;
+        nomination_seconds?: number;
+        reset_on_bid_seconds?: number;
+        min_bid?: number;
+        min_increment?: number;
+      };
+    }
+  ): Promise<any> {
+    // 1. Verify commissioner
+    const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
+    if (!isCommissioner) {
+      throw new ForbiddenException('Only the commissioner can update draft settings');
+    }
+
+    // 2. Get draft and validate it belongs to league
+    const draft = await this.draftRepo.findById(draftId);
+    if (!draft || draft.leagueId !== leagueId) {
+      throw new NotFoundException('Draft not found');
+    }
+
+    // 3. Check what can be edited based on status
+    if (draft.status === 'completed') {
+      throw new ValidationException('Cannot edit completed draft settings');
+    }
+    if (draft.status === 'in_progress') {
+      throw new ValidationException('Cannot edit draft settings while in progress. Pause the draft first.');
+    }
+
+    // 4. If paused, only allow timer-related changes
+    const hasStructuralChanges = updates.draftType !== undefined ||
+      updates.rounds !== undefined ||
+      updates.auctionSettings?.auction_mode !== undefined ||
+      updates.auctionSettings?.max_active_nominations_per_team !== undefined ||
+      updates.auctionSettings?.min_bid !== undefined;
+
+    if (draft.status === 'paused' && hasStructuralChanges) {
+      throw new ValidationException(
+        'Cannot change draft type, rounds, or auction mode while paused. Only timer settings can be changed.'
+      );
+    }
+
+    // 5. Transform and merge auction settings
+    const existingSettings = draft.settings || {};
+    const mergedSettings = { ...existingSettings };
+
+    if (updates.auctionSettings) {
+      if (updates.auctionSettings.auction_mode !== undefined) {
+        mergedSettings.auctionMode = updates.auctionSettings.auction_mode;
+      }
+      if (updates.auctionSettings.bid_window_seconds !== undefined) {
+        mergedSettings.bidWindowSeconds = updates.auctionSettings.bid_window_seconds;
+      }
+      if (updates.auctionSettings.max_active_nominations_per_team !== undefined) {
+        mergedSettings.maxActiveNominationsPerTeam = updates.auctionSettings.max_active_nominations_per_team;
+      }
+      if (updates.auctionSettings.nomination_seconds !== undefined) {
+        mergedSettings.nominationSeconds = updates.auctionSettings.nomination_seconds;
+      }
+      if (updates.auctionSettings.reset_on_bid_seconds !== undefined) {
+        mergedSettings.resetOnBidSeconds = updates.auctionSettings.reset_on_bid_seconds;
+      }
+      if (updates.auctionSettings.min_bid !== undefined) {
+        mergedSettings.minBid = updates.auctionSettings.min_bid;
+      }
+      if (updates.auctionSettings.min_increment !== undefined) {
+        mergedSettings.minIncrement = updates.auctionSettings.min_increment;
+      }
+    }
+
+    // 6. Perform the update
+    // Cast draftType to DraftType since schema validation already ensures it's valid
+    const updatedDraft = await this.draftRepo.update(draftId, {
+      draftType: updates.draftType as DraftType | undefined,
+      rounds: updates.rounds,
+      pickTimeSeconds: updates.pickTimeSeconds,
+      settings: Object.keys(mergedSettings).length > 0 ? mergedSettings : undefined,
+    });
+
+    // 7. If rounds changed and draft not started, regenerate pick assets
+    if (updates.rounds && updates.rounds !== draft.rounds && draft.status === 'not_started' && this.pickAssetRepo) {
+      const league = await this.leagueRepo.findById(leagueId);
+      if (league) {
+        const rosters = await this.rosterRepo.findByLeagueId(leagueId);
+        const rosterIds = rosters.map(r => r.id);
+        const season = parseInt(league.season, 10);
+
+        // Delete existing pick assets for this draft
+        await this.pickAssetRepo.deleteByDraftId(draftId);
+
+        // Regenerate with new round count
+        await this.pickAssetRepo.generatePickAssetsForDraft(
+          draftId,
+          leagueId,
+          season,
+          updates.rounds,
+          rosterIds
+        );
+
+        logger.info(`Regenerated pick assets for draft ${draftId} with ${updates.rounds} rounds`);
+      }
+    }
+
+    const response = draftToResponse(updatedDraft);
+
+    // 8. Emit socket event for real-time updates
+    const socketService = tryGetSocketService();
+    socketService?.emitDraftSettingsUpdated(draftId, response);
+
+    logger.info(`Commissioner ${userId} updated settings for draft ${draftId}`);
+
+    return response;
   }
 }

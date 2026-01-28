@@ -1,6 +1,7 @@
-import { IDraftEngine, DraftTickResult, NextPickDetails } from './draft-engine.interface';
+import { IDraftEngine, DraftTickResult, NextPickDetails, ActualPickerInfo } from './draft-engine.interface';
 import { Draft, DraftOrderEntry, DraftPick, draftToResponse } from '../modules/drafts/drafts.model';
 import { DraftRepository, QueueEntry } from '../modules/drafts/drafts.repository';
+import { DraftPickAsset } from '../modules/drafts/draft-pick-asset.model';
 import { PlayerRepository } from '../modules/players/players.repository';
 import { RosterPlayersRepository } from '../modules/rosters/rosters.repository';
 import { LeagueRepository, RosterRepository } from '../modules/leagues/leagues.repository';
@@ -32,6 +33,66 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     draftOrder: DraftOrderEntry[],
     pickNumber: number
   ): DraftOrderEntry | undefined;
+
+  /**
+   * Get the roster that should actually pick at a given pick number,
+   * accounting for traded picks.
+   *
+   * This method checks if the pick has been traded and returns the current owner.
+   * If no pick assets are provided or the pick hasn't been traded, it returns
+   * the original picker.
+   *
+   * @param draft - The draft
+   * @param draftOrder - The draft order entries
+   * @param pickAssets - The draft pick assets (for checking traded picks)
+   * @param pickNumber - The pick number to check
+   * @returns Info about who actually picks, or undefined if invalid
+   */
+  getActualPickerForPickNumber(
+    draft: Draft,
+    draftOrder: DraftOrderEntry[],
+    pickAssets: DraftPickAsset[],
+    pickNumber: number
+  ): ActualPickerInfo | undefined {
+    const totalRosters = draftOrder.length;
+    const round = this.getRound(pickNumber, totalRosters);
+
+    // Get the original picker based on draft type (snake/linear)
+    const originalPicker = this.getPickerForPickNumber(draft, draftOrder, pickNumber);
+    if (!originalPicker) {
+      return undefined;
+    }
+
+    // If no pick assets provided, return original picker
+    if (!pickAssets || pickAssets.length === 0) {
+      return {
+        rosterId: originalPicker.rosterId,
+        originalRosterId: originalPicker.rosterId,
+        isTraded: false,
+      };
+    }
+
+    // Find the pick asset for this round + original roster
+    const asset = pickAssets.find(
+      (a) => a.round === round && a.originalRosterId === originalPicker.rosterId
+    );
+
+    if (!asset) {
+      // No asset record (shouldn't happen if properly initialized)
+      return {
+        rosterId: originalPicker.rosterId,
+        originalRosterId: originalPicker.rosterId,
+        isTraded: false,
+      };
+    }
+
+    // Return the current owner (may differ from original if traded)
+    return {
+      rosterId: asset.currentOwnerRosterId,
+      originalRosterId: originalPicker.rosterId,
+      isTraded: asset.currentOwnerRosterId !== originalPicker.rosterId,
+    };
+  }
 
   /**
    * Calculate pick position within round (1-indexed)

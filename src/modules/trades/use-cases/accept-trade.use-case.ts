@@ -2,6 +2,7 @@ import { Pool, PoolClient } from 'pg';
 import { TradesRepository, TradeItemsRepository } from '../trades.repository';
 import { RosterPlayersRepository, RosterTransactionsRepository } from '../../rosters/rosters.repository';
 import { LeagueRepository, RosterRepository } from '../../leagues/leagues.repository';
+import { DraftPickAssetRepository } from '../../drafts/draft-pick-asset.repository';
 import { tryGetSocketService } from '../../../socket';
 import { Trade, TradeWithDetails } from '../trades.model';
 import {
@@ -22,6 +23,7 @@ export interface AcceptTradeContext {
   rosterPlayersRepo: RosterPlayersRepository;
   transactionsRepo: RosterTransactionsRepository;
   leagueRepo: LeagueRepository;
+  pickAssetRepo?: DraftPickAssetRepository;
 }
 
 /**
@@ -60,16 +62,49 @@ export async function acceptTrade(
       throw new ValidationException(`Cannot accept trade with status: ${currentTrade?.status || 'unknown'}`);
     }
 
-    // Re-validate all players still on correct rosters
+    // Re-check trade deadline (could have passed since proposal)
+    const tradeDeadline = league.settings?.trade_deadline;
+    if (tradeDeadline && new Date(tradeDeadline) < new Date()) {
+      throw new ValidationException('Trade deadline has passed - cannot accept trade');
+    }
+
+    // Re-validate all items still valid
     const items = await ctx.tradeItemsRepo.findByTrade(tradeId);
     for (const item of items) {
-      const onRoster = await ctx.rosterPlayersRepo.findByRosterAndPlayer(
-        item.fromRosterId,
-        item.playerId,
-        client
-      );
-      if (!onRoster) {
-        throw new ConflictException(`Player ${item.playerName} is no longer on the expected roster`);
+      if (item.itemType === 'player' && item.playerId) {
+        const onRoster = await ctx.rosterPlayersRepo.findByRosterAndPlayer(
+          item.fromRosterId,
+          item.playerId,
+          client
+        );
+        if (!onRoster) {
+          throw new ConflictException(`Player ${item.playerName} is no longer on the expected roster`);
+        }
+      } else if (item.itemType === 'draft_pick' && item.draftPickAssetId && ctx.pickAssetRepo) {
+        // Validate pick is still owned by expected roster and tradeable
+        const pickAsset = await ctx.pickAssetRepo.findById(item.draftPickAssetId);
+        if (!pickAsset || pickAsset.currentOwnerRosterId !== item.fromRosterId) {
+          throw new ConflictException(
+            `Draft pick ${item.pickSeason} Round ${item.pickRound} (${item.pickOriginalTeam}'s pick) is no longer owned by the expected roster`
+          );
+        }
+
+        // Check if pick is still tradeable (not used, round not passed)
+        const isUsed = await ctx.pickAssetRepo.isPickUsed(item.draftPickAssetId);
+        if (isUsed) {
+          throw new ConflictException(
+            `Draft pick ${item.pickSeason} Round ${item.pickRound} (${item.pickOriginalTeam}'s pick) has been used`
+          );
+        }
+
+        if (pickAsset.draftId !== null) {
+          const roundPassed = await ctx.pickAssetRepo.isRoundPassed(item.draftPickAssetId);
+          if (roundPassed) {
+            throw new ConflictException(
+              `Draft pick ${item.pickSeason} Round ${item.pickRound} (${item.pickOriginalTeam}'s pick) - round has passed`
+            );
+          }
+        }
       }
     }
 
@@ -116,7 +151,7 @@ export async function acceptTrade(
 }
 
 /**
- * Execute trade (move players)
+ * Execute trade (move players and transfer pick ownership)
  */
 export async function executeTrade(
   ctx: AcceptTradeContext,
@@ -125,11 +160,15 @@ export async function executeTrade(
 ): Promise<void> {
   const items = await ctx.tradeItemsRepo.findByTrade(trade.id);
 
+  // Separate player and pick items
+  const playerItems = items.filter((item) => item.itemType === 'player' && item.playerId);
+  const pickItems = items.filter((item) => item.itemType === 'draft_pick' && item.draftPickAssetId);
+
   // Re-validate all players
-  for (const item of items) {
+  for (const item of playerItems) {
     const onRoster = await ctx.rosterPlayersRepo.findByRosterAndPlayer(
       item.fromRosterId,
-      item.playerId,
+      item.playerId!,
       client
     );
     if (!onRoster) {
@@ -137,19 +176,31 @@ export async function executeTrade(
     }
   }
 
-  // Execute movements
-  for (const item of items) {
+  // Re-validate all picks
+  if (ctx.pickAssetRepo) {
+    for (const item of pickItems) {
+      const pickAsset = await ctx.pickAssetRepo.findById(item.draftPickAssetId!);
+      if (!pickAsset || pickAsset.currentOwnerRosterId !== item.fromRosterId) {
+        throw new ConflictException(
+          `Draft pick ${item.pickSeason} Round ${item.pickRound} (${item.pickOriginalTeam}'s pick) is no longer available`
+        );
+      }
+    }
+  }
+
+  // Execute player movements
+  for (const item of playerItems) {
     // Remove from source
-    await ctx.rosterPlayersRepo.removePlayer(item.fromRosterId, item.playerId, client);
+    await ctx.rosterPlayersRepo.removePlayer(item.fromRosterId, item.playerId!, client);
 
     // Add to destination
-    await ctx.rosterPlayersRepo.addPlayer(item.toRosterId, item.playerId, 'trade', client);
+    await ctx.rosterPlayersRepo.addPlayer(item.toRosterId, item.playerId!, 'trade', client);
 
     // Record transactions
     const dropTx = await ctx.transactionsRepo.create(
       trade.leagueId,
       item.fromRosterId,
-      item.playerId,
+      item.playerId!,
       'trade',
       trade.season,
       trade.week,
@@ -160,13 +211,35 @@ export async function executeTrade(
     await ctx.transactionsRepo.create(
       trade.leagueId,
       item.toRosterId,
-      item.playerId,
+      item.playerId!,
       'trade',
       trade.season,
       trade.week,
       dropTx.id,
       client
     );
+  }
+
+  // Execute pick ownership transfers
+  if (ctx.pickAssetRepo) {
+    const socket = tryGetSocketService();
+    for (const item of pickItems) {
+      await ctx.pickAssetRepo.transferOwnership(
+        item.draftPickAssetId!,
+        item.toRosterId,
+        client
+      );
+
+      // Emit pick traded event for real-time UI updates
+      socket?.emitPickTraded(trade.leagueId, {
+        pickAssetId: item.draftPickAssetId!,
+        season: item.pickSeason!,
+        round: item.pickRound!,
+        previousOwnerRosterId: item.fromRosterId,
+        newOwnerRosterId: item.toRosterId,
+        tradeId: trade.id,
+      });
+    }
   }
 }
 
