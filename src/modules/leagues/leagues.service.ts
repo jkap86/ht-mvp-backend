@@ -1,6 +1,7 @@
 import { LeagueRepository, RosterRepository, CreateLeagueParams } from './leagues.repository';
 import { RosterService } from './roster.service';
 import { League } from './leagues.model';
+import { DraftService } from '../drafts/drafts.service';
 import {
   NotFoundException,
   ForbiddenException,
@@ -11,7 +12,8 @@ export class LeagueService {
   constructor(
     private readonly leagueRepo: LeagueRepository,
     private readonly rosterRepo: RosterRepository,
-    private readonly rosterService: RosterService
+    private readonly rosterService: RosterService,
+    private readonly draftService: DraftService
   ) {}
 
   async getUserLeagues(userId: string, limit?: number, offset?: number): Promise<any[]> {
@@ -57,10 +59,21 @@ export class LeagueService {
       settings: params.settings || {},
       scoringSettings: params.scoringSettings || {},
       isPublic: params.isPublic || false,
+      mode: params.mode,
+      leagueSettings: params.leagueSettings,
     });
 
     // Create first roster for the creator (commissioner) via RosterService
     await this.rosterService.createInitialRoster(league.id, userId);
+
+    // Auto-create draft for redraft leagues
+    if (league.mode === 'redraft') {
+      await this.draftService.createDraft(league.id, userId, {
+        draftType: league.leagueSettings?.draftType || 'snake',
+        // rounds will default to roster_config total via calculateTotalRosterSlots()
+        pickTimeSeconds: 90,
+      });
+    }
 
     // Get updated league with commissioner info
     const updatedLeague = await this.leagueRepo.findByIdWithUserRoster(league.id, userId);

@@ -1,6 +1,7 @@
 import { LeagueService } from '../../../modules/leagues/leagues.service';
 import { LeagueRepository, RosterRepository } from '../../../modules/leagues/leagues.repository';
 import { RosterService } from '../../../modules/leagues/roster.service';
+import { DraftService } from '../../../modules/drafts/drafts.service';
 import { League } from '../../../modules/leagues/leagues.model';
 import {
   NotFoundException,
@@ -93,17 +94,37 @@ const createMockRosterService = (): jest.Mocked<RosterService> => ({
   devBulkAddUsers: jest.fn(),
 } as unknown as jest.Mocked<RosterService>);
 
+const createMockDraftService = (): jest.Mocked<DraftService> => ({
+  createDraft: jest.fn(),
+  getLeagueDrafts: jest.fn(),
+  getDraftById: jest.fn(),
+  getDraftOrder: jest.fn(),
+  randomizeDraftOrder: jest.fn(),
+  startDraft: jest.fn(),
+  pauseDraft: jest.fn(),
+  resumeDraft: jest.fn(),
+  completeDraft: jest.fn(),
+  deleteDraft: jest.fn(),
+  undoPick: jest.fn(),
+  getDraftPicks: jest.fn(),
+  makePick: jest.fn(),
+  toggleAutodraft: jest.fn(),
+  getDraftConfig: jest.fn(),
+} as unknown as jest.Mocked<DraftService>);
+
 describe('LeagueService', () => {
   let leagueService: LeagueService;
   let mockLeagueRepo: jest.Mocked<LeagueRepository>;
   let mockRosterRepo: jest.Mocked<RosterRepository>;
   let mockRosterService: jest.Mocked<RosterService>;
+  let mockDraftService: jest.Mocked<DraftService>;
 
   beforeEach(() => {
     mockLeagueRepo = createMockLeagueRepo();
     mockRosterRepo = createMockRosterRepo();
     mockRosterService = createMockRosterService();
-    leagueService = new LeagueService(mockLeagueRepo, mockRosterRepo, mockRosterService);
+    mockDraftService = createMockDraftService();
+    leagueService = new LeagueService(mockLeagueRepo, mockRosterRepo, mockRosterService, mockDraftService);
   });
 
   describe('createLeague', () => {

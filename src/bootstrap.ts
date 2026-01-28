@@ -95,14 +95,7 @@ function bootstrap(): void {
     )
   );
 
-  container.register(KEYS.LEAGUE_SERVICE, () =>
-    new LeagueService(
-      container.resolve(KEYS.LEAGUE_REPO),
-      container.resolve(KEYS.ROSTER_REPO),
-      container.resolve(KEYS.ROSTER_SERVICE)
-    )
-  );
-
+  // Draft services (registered before LeagueService since it depends on DraftService)
   container.register(KEYS.DRAFT_ORDER_SERVICE, () =>
     new DraftOrderService(
       container.resolve(KEYS.POOL),
@@ -151,6 +144,15 @@ function bootstrap(): void {
       container.resolve(KEYS.DRAFT_ORDER_SERVICE),
       container.resolve(KEYS.DRAFT_PICK_SERVICE),
       container.resolve(KEYS.DRAFT_STATE_SERVICE)
+    )
+  );
+
+  container.register(KEYS.LEAGUE_SERVICE, () =>
+    new LeagueService(
+      container.resolve(KEYS.LEAGUE_REPO),
+      container.resolve(KEYS.ROSTER_REPO),
+      container.resolve(KEYS.ROSTER_SERVICE),
+      container.resolve(KEYS.DRAFT_SERVICE)
     )
   );
 
