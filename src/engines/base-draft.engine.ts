@@ -3,7 +3,7 @@ import { Draft, DraftOrderEntry, DraftPick, draftToResponse } from '../modules/d
 import { DraftRepository, QueueEntry } from '../modules/drafts/drafts.repository';
 import { PlayerRepository } from '../modules/players/players.repository';
 import { RosterPlayersRepository } from '../modules/rosters/rosters.repository';
-import { LeagueRepository } from '../modules/leagues/leagues.repository';
+import { LeagueRepository, RosterRepository } from '../modules/leagues/leagues.repository';
 import { tryGetSocketService } from '../socket';
 import { logger } from '../config/env.config';
 
@@ -19,7 +19,8 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     protected readonly draftRepo: DraftRepository,
     protected readonly playerRepo: PlayerRepository,
     protected readonly rosterPlayersRepo: RosterPlayersRepository,
-    protected readonly leagueRepo: LeagueRepository
+    protected readonly leagueRepo: LeagueRepository,
+    protected readonly rosterRepo: RosterRepository
   ) {}
 
   /**
@@ -170,8 +171,15 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     const currentPicker = draftOrder.find(o => o.rosterId === draft.currentRosterId);
     const isAutodraftEnabled = currentPicker?.isAutodraftEnabled ?? false;
 
-    // Autopick if: deadline expired OR current picker has autodraft enabled
-    if (!this.shouldAutoPick(draft) && !isAutodraftEnabled) {
+    // Check if current roster is empty (no user assigned) - should autopick immediately
+    let isEmptyRoster = false;
+    if (draft.currentRosterId) {
+      const roster = await this.rosterRepo.findById(draft.currentRosterId);
+      isEmptyRoster = roster !== null && roster.userId === null;
+    }
+
+    // Autopick if: deadline expired OR autodraft enabled OR empty roster
+    if (!this.shouldAutoPick(draft) && !isAutodraftEnabled && !isEmptyRoster) {
       return {
         actionTaken: false,
         draftCompleted: false,
@@ -180,9 +188,14 @@ export abstract class BaseDraftEngine implements IDraftEngine {
       };
     }
 
-    // Determine reason for autopick
+    // Determine reason for autopick (priority: empty_roster > autodraft > timeout)
     const deadlineExpired = this.shouldAutoPick(draft);
-    const reason = isAutodraftEnabled && !deadlineExpired ? 'autodraft' : 'timeout';
+    let reason: 'timeout' | 'autodraft' | 'empty_roster' = 'timeout';
+    if (isEmptyRoster) {
+      reason = 'empty_roster';
+    } else if (isAutodraftEnabled && !deadlineExpired) {
+      reason = 'autodraft';
+    }
 
     // Check if pick already exists (race condition: pick was made but draft state not updated)
     const pickAlreadyExists = await this.draftRepo.pickExists(draftId, draft.currentPick);

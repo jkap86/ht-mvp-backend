@@ -4,7 +4,7 @@ import { LinearDraftEngine } from './linear-draft.engine';
 import { DraftRepository } from '../modules/drafts/drafts.repository';
 import { PlayerRepository } from '../modules/players/players.repository';
 import { RosterPlayersRepository } from '../modules/rosters/rosters.repository';
-import { LeagueRepository } from '../modules/leagues/leagues.repository';
+import { LeagueRepository, RosterRepository } from '../modules/leagues/leagues.repository';
 
 /**
  * Factory for creating draft engines based on draft type.
@@ -19,7 +19,8 @@ export class DraftEngineFactory {
     private readonly draftRepo: DraftRepository,
     private readonly playerRepo: PlayerRepository,
     private readonly rosterPlayersRepo: RosterPlayersRepository,
-    private readonly leagueRepo: LeagueRepository
+    private readonly leagueRepo: LeagueRepository,
+    private readonly rosterRepo: RosterRepository
   ) {}
 
   /**
@@ -32,14 +33,16 @@ export class DraftEngineFactory {
           this.draftRepo,
           this.playerRepo,
           this.rosterPlayersRepo,
-          this.leagueRepo
+          this.leagueRepo,
+          this.rosterRepo
         );
       case 'linear':
         return new LinearDraftEngine(
           this.draftRepo,
           this.playerRepo,
           this.rosterPlayersRepo,
-          this.leagueRepo
+          this.leagueRepo,
+          this.rosterRepo
         );
       default:
         throw new Error(`Unknown draft type: ${draftType}`);

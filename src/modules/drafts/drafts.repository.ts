@@ -449,6 +449,11 @@ export class DraftRepository {
            AND do.roster_id = d.current_roster_id
            AND do.is_autodraft_enabled = true
          )
+         OR EXISTS (
+           SELECT 1 FROM rosters r
+           WHERE r.id = d.current_roster_id
+           AND r.user_id IS NULL
+         )
        )`
     );
     return result.rows.map(draftFromDatabase);

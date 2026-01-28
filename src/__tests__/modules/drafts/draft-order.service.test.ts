@@ -1,3 +1,4 @@
+import { Pool, PoolClient } from 'pg';
 import { DraftOrderService } from '../../../modules/drafts/draft-order.service';
 import { DraftRepository } from '../../../modules/drafts/drafts.repository';
 import { LeagueRepository, RosterRepository } from '../../../modules/leagues/leagues.repository';
@@ -6,6 +7,15 @@ import {
   ForbiddenException,
   ValidationException,
 } from '../../../utils/exceptions';
+
+// Mock Pool
+const createMockPool = (): jest.Mocked<Pool> => ({
+  connect: jest.fn().mockResolvedValue({
+    query: jest.fn().mockResolvedValue({ rows: [] }),
+    release: jest.fn(),
+  } as unknown as PoolClient),
+  query: jest.fn(),
+} as unknown as jest.Mocked<Pool>);
 
 // Mock data
 const mockDraft: Draft = {
@@ -53,23 +63,28 @@ const createMockDraftRepo = (): jest.Mocked<DraftRepository> => ({
 const createMockLeagueRepo = (): jest.Mocked<LeagueRepository> => ({
   isUserMember: jest.fn(),
   isCommissioner: jest.fn(),
+  findById: jest.fn(),
 } as unknown as jest.Mocked<LeagueRepository>);
 
 const createMockRosterRepo = (): jest.Mocked<RosterRepository> => ({
   findByLeagueId: jest.fn(),
+  getRosterCount: jest.fn(),
+  createEmptyRoster: jest.fn(),
 } as unknown as jest.Mocked<RosterRepository>);
 
 describe('DraftOrderService', () => {
   let draftOrderService: DraftOrderService;
+  let mockPool: jest.Mocked<Pool>;
   let mockDraftRepo: jest.Mocked<DraftRepository>;
   let mockLeagueRepo: jest.Mocked<LeagueRepository>;
   let mockRosterRepo: jest.Mocked<RosterRepository>;
 
   beforeEach(() => {
+    mockPool = createMockPool();
     mockDraftRepo = createMockDraftRepo();
     mockLeagueRepo = createMockLeagueRepo();
     mockRosterRepo = createMockRosterRepo();
-    draftOrderService = new DraftOrderService(mockDraftRepo, mockLeagueRepo, mockRosterRepo);
+    draftOrderService = new DraftOrderService(mockPool, mockDraftRepo, mockLeagueRepo, mockRosterRepo);
   });
 
   describe('getDraftOrder', () => {

@@ -50,17 +50,24 @@ export class RosterService {
         throw new ConflictException('You are already a member of this league');
       }
 
-      // Check if league is full (inside transaction)
-      const rosterCount = await this.rosterRepo.getRosterCount(leagueId, client);
-      if (rosterCount >= league.totalRosters) {
-        throw new ConflictException('League is full');
+      let roster;
+
+      // Try to claim an empty roster first (for leagues with pre-created rosters from randomization)
+      const emptyRoster = await this.rosterRepo.findEmptyRoster(leagueId, client);
+      if (emptyRoster) {
+        // Claim the empty roster - preserves their randomized draft position
+        roster = await this.rosterRepo.assignUserToRoster(emptyRoster.id, userId, client);
+      } else {
+        // No empty roster available - check if league is full
+        const rosterCount = await this.rosterRepo.getRosterCount(leagueId, client);
+        if (rosterCount >= league.totalRosters) {
+          throw new ConflictException('League is full');
+        }
+
+        // Create new roster (league doesn't have pre-created empty rosters)
+        const nextRosterId = await this.rosterRepo.getNextRosterId(leagueId, client);
+        roster = await this.rosterRepo.create(leagueId, userId, nextRosterId, client);
       }
-
-      // Get next roster ID (inside transaction)
-      const nextRosterId = await this.rosterRepo.getNextRosterId(leagueId, client);
-
-      // Create roster (inside transaction)
-      const roster = await this.rosterRepo.create(leagueId, userId, nextRosterId, client);
 
       await client.query('COMMIT');
 

@@ -105,6 +105,7 @@ function bootstrap(): void {
 
   container.register(KEYS.DRAFT_ORDER_SERVICE, () =>
     new DraftOrderService(
+      container.resolve(KEYS.POOL),
       container.resolve(KEYS.DRAFT_REPO),
       container.resolve(KEYS.LEAGUE_REPO),
       container.resolve(KEYS.ROSTER_REPO)
@@ -117,7 +118,8 @@ function bootstrap(): void {
       container.resolve(KEYS.DRAFT_REPO),
       container.resolve(KEYS.PLAYER_REPO),
       container.resolve(KEYS.ROSTER_PLAYERS_REPO),
-      container.resolve(KEYS.LEAGUE_REPO)
+      container.resolve(KEYS.LEAGUE_REPO),
+      container.resolve(KEYS.ROSTER_REPO)
     )
   );
 

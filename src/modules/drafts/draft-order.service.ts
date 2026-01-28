@@ -1,8 +1,10 @@
 import { randomBytes } from 'crypto';
+import { Pool } from 'pg';
 import { DraftRepository } from './drafts.repository';
 import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import {
   ForbiddenException,
+  NotFoundException,
   ValidationException,
 } from '../../utils/exceptions';
 
@@ -32,6 +34,7 @@ function secureShuffleArray<T>(array: T[]): T[] {
 
 export class DraftOrderService {
   constructor(
+    private readonly db: Pool,
     private readonly draftRepo: DraftRepository,
     private readonly leagueRepo: LeagueRepository,
     private readonly rosterRepo: RosterRepository
@@ -57,9 +60,44 @@ export class DraftOrderService {
       throw new ValidationException('Can only randomize order before draft starts');
     }
 
-    // Get rosters and shuffle using crypto-secure randomization
-    const rosters = await this.rosterRepo.findByLeagueId(leagueId);
-    const shuffled = secureShuffleArray(rosters);
+    // Get league to know total roster count
+    const league = await this.leagueRepo.findById(leagueId);
+    if (!league) {
+      throw new NotFoundException('League not found');
+    }
+
+    // Get existing rosters
+    const existingRosters = await this.rosterRepo.findByLeagueId(leagueId);
+    const existingCount = existingRosters.length;
+    const targetCount = league.totalRosters;
+
+    // Create empty rosters for unfilled slots (in a transaction)
+    if (existingCount < targetCount) {
+      const client = await this.db.connect();
+      try {
+        await client.query('BEGIN');
+        // Advisory lock to prevent concurrent roster creation
+        await client.query('SELECT pg_advisory_xact_lock($1)', [leagueId]);
+
+        // Re-check roster count inside transaction
+        const currentCount = await this.rosterRepo.getRosterCount(leagueId, client);
+
+        for (let i = currentCount + 1; i <= targetCount; i++) {
+          await this.rosterRepo.createEmptyRoster(leagueId, i, client);
+        }
+
+        await client.query('COMMIT');
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+
+    // Now get ALL rosters (including newly created empty ones)
+    const allRosters = await this.rosterRepo.findByLeagueId(leagueId);
+    const shuffled = secureShuffleArray(allRosters);
 
     // Atomically update draft order in a single transaction
     const rosterIds = shuffled.map(r => r.id);

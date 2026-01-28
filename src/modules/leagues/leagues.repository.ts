@@ -492,4 +492,97 @@ export class RosterRepository {
     if (result.rows.length === 0) return null;
     return result.rows[0].team_name;
   }
+
+  /**
+   * Create an empty roster (no user assigned) for unfilled league slots.
+   * Used when randomizing draft order to include all roster positions.
+   */
+  async createEmptyRoster(
+    leagueId: number,
+    rosterId: number,
+    client?: PoolClient
+  ): Promise<Roster> {
+    const db = client || this.db;
+    const result = await db.query(
+      `INSERT INTO rosters (league_id, user_id, roster_id)
+       VALUES ($1, NULL, $2)
+       RETURNING *`,
+      [leagueId, rosterId]
+    );
+
+    const row = result.rows[0];
+    return {
+      id: row.id,
+      leagueId: row.league_id,
+      userId: row.user_id,
+      rosterId: row.roster_id,
+      settings: row.settings || {},
+      starters: row.starters || [],
+      bench: row.bench || [],
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  /**
+   * Find an empty roster (no user assigned) in the league.
+   * Used when a user joins a league that already has randomized draft order.
+   */
+  async findEmptyRoster(leagueId: number, client?: PoolClient): Promise<Roster | null> {
+    const db = client || this.db;
+    const result = await db.query(
+      `SELECT * FROM rosters WHERE league_id = $1 AND user_id IS NULL ORDER BY roster_id LIMIT 1`,
+      [leagueId]
+    );
+
+    if (result.rows.length === 0) return null;
+
+    const row = result.rows[0];
+    return {
+      id: row.id,
+      leagueId: row.league_id,
+      userId: row.user_id,
+      rosterId: row.roster_id,
+      settings: row.settings || {},
+      starters: row.starters || [],
+      bench: row.bench || [],
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  /**
+   * Assign a user to an existing empty roster.
+   * Used when a user joins a league that already has randomized draft order.
+   */
+  async assignUserToRoster(
+    rosterId: number,
+    userId: string,
+    client?: PoolClient
+  ): Promise<Roster> {
+    const db = client || this.db;
+    const result = await db.query(
+      `UPDATE rosters SET user_id = $2, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1 AND user_id IS NULL
+       RETURNING *`,
+      [rosterId, userId]
+    );
+
+    if (result.rows.length === 0) {
+      throw new Error('Roster not found or already has a user assigned');
+    }
+
+    const row = result.rows[0];
+    return {
+      id: row.id,
+      leagueId: row.league_id,
+      userId: row.user_id,
+      rosterId: row.roster_id,
+      settings: row.settings || {},
+      starters: row.starters || [],
+      bench: row.bench || [],
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
 }

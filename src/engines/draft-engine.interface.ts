@@ -15,7 +15,7 @@ export interface DraftTickResult {
   /** Next picker info (if draft continues) */
   nextPicker?: DraftOrderEntry | null;
   /** Reason for action (for logging) */
-  reason?: 'timeout' | 'autodraft' | 'none';
+  reason?: 'timeout' | 'autodraft' | 'empty_roster' | 'none';
 }
 
 /**
