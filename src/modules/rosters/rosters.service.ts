@@ -67,13 +67,14 @@ export class RosterService {
       throw new ForbiddenException('You are not a member of this league');
     }
 
-    // Validate roster exists and belongs to league
-    const roster = await this.rosterRepo.findById(rosterId);
-    if (!roster || roster.leagueId !== leagueId) {
+    // Validate roster exists - use findByLeagueAndRosterId since URL contains per-league roster_id
+    const roster = await this.rosterRepo.findByLeagueAndRosterId(leagueId, rosterId);
+    if (!roster) {
       throw new NotFoundException('Roster not found');
     }
 
-    return this.rosterPlayersRepo.getByRosterId(rosterId);
+    // Use the global id for roster_players query
+    return this.rosterPlayersRepo.getByRosterId(roster.id);
   }
 
   /**
@@ -85,15 +86,18 @@ export class RosterService {
     playerId: number,
     userId: string
   ): Promise<RosterPlayer> {
-    // Validate user owns this roster (can be done outside transaction)
-    const roster = await this.rosterRepo.findById(rosterId);
-    if (!roster || roster.leagueId !== leagueId) {
+    // Validate user owns this roster - use findByLeagueAndRosterId since URL contains per-league roster_id
+    const roster = await this.rosterRepo.findByLeagueAndRosterId(leagueId, rosterId);
+    if (!roster) {
       throw new NotFoundException('Roster not found');
     }
 
     if (roster.userId !== userId) {
       throw new ForbiddenException('You can only manage your own roster');
     }
+
+    // Use the global id for all subsequent operations
+    const globalRosterId = roster.id;
 
     // Use transaction with advisory lock for atomic operation
     const client = await this.db.connect();
@@ -114,7 +118,7 @@ export class RosterService {
         throw new NotFoundException('League not found');
       }
 
-      const rosterSize = await this.rosterPlayersRepo.getPlayerCount(rosterId, client);
+      const rosterSize = await this.rosterPlayersRepo.getPlayerCount(globalRosterId, client);
       const maxRosterSize = league.settings?.roster_size || 15;
 
       if (rosterSize >= maxRosterSize) {
@@ -122,7 +126,7 @@ export class RosterService {
       }
 
       const rosterPlayer = await this.rosterPlayersRepo.addPlayer(
-        rosterId,
+        globalRosterId,
         playerId,
         'free_agent',
         client
@@ -131,7 +135,7 @@ export class RosterService {
       // Record transaction
       await this.transactionsRepo.create(
         leagueId,
-        rosterId,
+        globalRosterId,
         playerId,
         'add',
         parseInt(league.season, 10),
@@ -159,9 +163,9 @@ export class RosterService {
     playerId: number,
     userId: string
   ): Promise<void> {
-    // Validate user owns this roster
-    const roster = await this.rosterRepo.findById(rosterId);
-    if (!roster || roster.leagueId !== leagueId) {
+    // Validate user owns this roster - use findByLeagueAndRosterId since URL contains per-league roster_id
+    const roster = await this.rosterRepo.findByLeagueAndRosterId(leagueId, rosterId);
+    if (!roster) {
       throw new NotFoundException('Roster not found');
     }
 
@@ -169,8 +173,11 @@ export class RosterService {
       throw new ForbiddenException('You can only manage your own roster');
     }
 
+    // Use the global id for all subsequent operations
+    const globalRosterId = roster.id;
+
     // Check player is on roster
-    const existing = await this.rosterPlayersRepo.findByRosterAndPlayer(rosterId, playerId);
+    const existing = await this.rosterPlayersRepo.findByRosterAndPlayer(globalRosterId, playerId);
     if (!existing) {
       throw new NotFoundException('Player is not on this roster');
     }
@@ -186,12 +193,12 @@ export class RosterService {
       await client.query('BEGIN');
       await client.query('SELECT pg_advisory_xact_lock($1)', [leagueId]);
 
-      await this.rosterPlayersRepo.removePlayer(rosterId, playerId, client);
+      await this.rosterPlayersRepo.removePlayer(globalRosterId, playerId, client);
 
       // Record transaction
       await this.transactionsRepo.create(
         leagueId,
-        rosterId,
+        globalRosterId,
         playerId,
         'drop',
         parseInt(league.season, 10),
@@ -201,7 +208,7 @@ export class RosterService {
       );
 
       // Add to waiver wire if league has waivers enabled
-      await this.addToWaiverWireIfEnabled(league, playerId, rosterId, client);
+      await this.addToWaiverWireIfEnabled(league, playerId, globalRosterId, client);
 
       await client.query('COMMIT');
     } catch (error) {
@@ -222,15 +229,18 @@ export class RosterService {
     dropPlayerId: number,
     userId: string
   ): Promise<RosterPlayer> {
-    // Validate user owns this roster (can be done outside transaction)
-    const roster = await this.rosterRepo.findById(rosterId);
-    if (!roster || roster.leagueId !== leagueId) {
+    // Validate user owns this roster - use findByLeagueAndRosterId since URL contains per-league roster_id
+    const roster = await this.rosterRepo.findByLeagueAndRosterId(leagueId, rosterId);
+    if (!roster) {
       throw new NotFoundException('Roster not found');
     }
 
     if (roster.userId !== userId) {
       throw new ForbiddenException('You can only manage your own roster');
     }
+
+    // Use the global id for all subsequent operations
+    const globalRosterId = roster.id;
 
     // Use transaction with advisory lock
     const client = await this.db.connect();
@@ -247,7 +257,7 @@ export class RosterService {
 
       // Check player to drop is on roster (inside transaction)
       const existing = await this.rosterPlayersRepo.findByRosterAndPlayer(
-        rosterId,
+        globalRosterId,
         dropPlayerId,
         client
       );
@@ -261,11 +271,11 @@ export class RosterService {
       }
 
       // Drop first
-      await this.rosterPlayersRepo.removePlayer(rosterId, dropPlayerId, client);
+      await this.rosterPlayersRepo.removePlayer(globalRosterId, dropPlayerId, client);
 
       // Then add
       const rosterPlayer = await this.rosterPlayersRepo.addPlayer(
-        rosterId,
+        globalRosterId,
         addPlayerId,
         'free_agent',
         client
@@ -274,7 +284,7 @@ export class RosterService {
       // Record both transactions
       const dropTx = await this.transactionsRepo.create(
         leagueId,
-        rosterId,
+        globalRosterId,
         dropPlayerId,
         'drop',
         parseInt(league.season, 10),
@@ -285,7 +295,7 @@ export class RosterService {
 
       await this.transactionsRepo.create(
         leagueId,
-        rosterId,
+        globalRosterId,
         addPlayerId,
         'add',
         parseInt(league.season, 10),
@@ -295,7 +305,7 @@ export class RosterService {
       );
 
       // Add dropped player to waiver wire if league has waivers enabled
-      await this.addToWaiverWireIfEnabled(league, dropPlayerId, rosterId, client);
+      await this.addToWaiverWireIfEnabled(league, dropPlayerId, globalRosterId, client);
 
       await client.query('COMMIT');
       return rosterPlayer;

@@ -33,11 +33,14 @@ export class LineupService {
       throw new ForbiddenException('You are not a member of this league');
     }
 
-    // Validate roster exists
-    const roster = await this.rosterRepo.findById(rosterId);
-    if (!roster || roster.leagueId !== leagueId) {
+    // Validate roster exists - use findByLeagueAndRosterId since URL contains per-league roster_id
+    const roster = await this.rosterRepo.findByLeagueAndRosterId(leagueId, rosterId);
+    if (!roster) {
       throw new NotFoundException('Roster not found');
     }
+
+    // Use the global id for all subsequent operations
+    const globalRosterId = roster.id;
 
     const league = await this.leagueRepo.findById(leagueId);
     if (!league) {
@@ -47,7 +50,7 @@ export class LineupService {
     const season = parseInt(league.season, 10);
 
     // Try to get existing lineup
-    let lineup = await this.lineupsRepo.findByRosterAndWeek(rosterId, season, week);
+    let lineup = await this.lineupsRepo.findByRosterAndWeek(globalRosterId, season, week);
 
     // If doesn't exist, create default
     if (!lineup) {
@@ -63,10 +66,10 @@ export class LineupService {
       };
 
       // Put all roster players on bench initially
-      const rosterPlayers = await this.rosterPlayersRepo.getByRosterId(rosterId);
+      const rosterPlayers = await this.rosterPlayersRepo.getByRosterId(globalRosterId);
       defaultLineup.BN = rosterPlayers.map(p => p.playerId);
 
-      lineup = await this.lineupsRepo.upsert(rosterId, season, week, defaultLineup);
+      lineup = await this.lineupsRepo.upsert(globalRosterId, season, week, defaultLineup);
     }
 
     return lineup;
@@ -82,15 +85,18 @@ export class LineupService {
     lineup: LineupSlots,
     userId: string
   ): Promise<RosterLineup> {
-    // Validate user owns this roster
-    const roster = await this.rosterRepo.findById(rosterId);
-    if (!roster || roster.leagueId !== leagueId) {
+    // Validate user owns this roster - use findByLeagueAndRosterId since URL contains per-league roster_id
+    const roster = await this.rosterRepo.findByLeagueAndRosterId(leagueId, rosterId);
+    if (!roster) {
       throw new NotFoundException('Roster not found');
     }
 
     if (roster.userId !== userId) {
       throw new ForbiddenException('You can only manage your own lineup');
     }
+
+    // Use the global id for all subsequent operations
+    const globalRosterId = roster.id;
 
     const league = await this.leagueRepo.findById(leagueId);
     if (!league) {
@@ -100,20 +106,20 @@ export class LineupService {
     const season = parseInt(league.season, 10);
 
     // Check if lineup is locked
-    const isLocked = await this.lineupsRepo.isLocked(rosterId, season, week);
+    const isLocked = await this.lineupsRepo.isLocked(globalRosterId, season, week);
     if (isLocked) {
       throw new ValidationException('Lineup is locked and cannot be modified');
     }
 
     // Validate lineup
-    const rosterPlayers = await this.rosterPlayersRepo.getByRosterId(rosterId);
+    const rosterPlayers = await this.rosterPlayersRepo.getByRosterId(globalRosterId);
     const validation = this.validateLineup(lineup, rosterPlayers, league.settings?.roster_config);
 
     if (!validation.valid) {
       throw new ValidationException(validation.errors.join(', '));
     }
 
-    return this.lineupsRepo.upsert(rosterId, season, week, lineup);
+    return this.lineupsRepo.upsert(globalRosterId, season, week, lineup);
   }
 
   /**
@@ -127,14 +133,17 @@ export class LineupService {
     toSlot: string,
     userId: string
   ): Promise<RosterLineup> {
-    // Get current lineup
+    // Get current lineup (this also validates roster exists via findByLeagueAndRosterId)
     const currentLineup = await this.getLineup(leagueId, rosterId, week, userId);
 
-    // Validate user owns this roster
-    const roster = await this.rosterRepo.findById(rosterId);
+    // Validate user owns this roster - use findByLeagueAndRosterId since URL contains per-league roster_id
+    const roster = await this.rosterRepo.findByLeagueAndRosterId(leagueId, rosterId);
     if (!roster || roster.userId !== userId) {
       throw new ForbiddenException('You can only manage your own lineup');
     }
+
+    // Use the global id for all subsequent operations
+    const globalRosterId = roster.id;
 
     const league = await this.leagueRepo.findById(leagueId);
     if (!league) {
@@ -144,13 +153,13 @@ export class LineupService {
     const season = parseInt(league.season, 10);
 
     // Check if lineup is locked
-    const isLocked = await this.lineupsRepo.isLocked(rosterId, season, week);
+    const isLocked = await this.lineupsRepo.isLocked(globalRosterId, season, week);
     if (isLocked) {
       throw new ValidationException('Lineup is locked and cannot be modified');
     }
 
     // Get player position
-    const rosterPlayers = await this.rosterPlayersRepo.getByRosterId(rosterId);
+    const rosterPlayers = await this.rosterPlayersRepo.getByRosterId(globalRosterId);
     const player = rosterPlayers.find(p => p.playerId === playerId);
     if (!player) {
       throw new NotFoundException('Player not found on roster');
@@ -170,7 +179,7 @@ export class LineupService {
       throw new ValidationException(validation.errors.join(', '));
     }
 
-    return this.lineupsRepo.upsert(rosterId, season, week, newLineup);
+    return this.lineupsRepo.upsert(globalRosterId, season, week, newLineup);
   }
 
   /**
