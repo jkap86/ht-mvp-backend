@@ -36,12 +36,14 @@ export class DraftService {
   }
 
   async getLeagueDrafts(leagueId: number, userId: string): Promise<any[]> {
-    const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
-    if (!isMember) {
+    // Use atomic query that checks membership while fetching drafts to avoid race condition
+    const drafts = await this.draftRepo.findByLeagueIdWithMembershipCheck(leagueId, userId);
+
+    // findByLeagueIdWithMembershipCheck returns null if user is not a member
+    if (drafts === null) {
       throw new ForbiddenException('You are not a member of this league');
     }
 
-    const drafts = await this.draftRepo.findByLeagueId(leagueId);
     return drafts.map(draftToResponse);
   }
 

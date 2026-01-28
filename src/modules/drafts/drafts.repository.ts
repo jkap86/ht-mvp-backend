@@ -19,6 +19,40 @@ export class DraftRepository {
     return result.rows.map(draftFromDatabase);
   }
 
+  /**
+   * Get all drafts for a league AND verify user membership in a single query.
+   * Returns null if the user is not a member (avoids race condition with separate isUserMember check).
+   */
+  async findByLeagueIdWithMembershipCheck(leagueId: number, userId: string): Promise<Draft[] | null> {
+    const result = await this.db.query(
+      `WITH membership_check AS (
+         SELECT EXISTS(SELECT 1 FROM rosters WHERE league_id = $1 AND user_id = $2) as is_member
+       )
+       SELECT d.*, mc.is_member
+       FROM drafts d
+       CROSS JOIN membership_check mc
+       WHERE d.league_id = $1
+       ORDER BY d.created_at DESC`,
+      [leagueId, userId]
+    );
+
+    // If no drafts exist, still check membership
+    if (result.rows.length === 0) {
+      const memberCheck = await this.db.query(
+        'SELECT EXISTS(SELECT 1 FROM rosters WHERE league_id = $1 AND user_id = $2) as is_member',
+        [leagueId, userId]
+      );
+      return memberCheck.rows[0]?.is_member ? [] : null;
+    }
+
+    // Check membership from the first row
+    if (!result.rows[0].is_member) {
+      return null;
+    }
+
+    return result.rows.map(draftFromDatabase);
+  }
+
   async create(
     leagueId: number,
     draftType: string,

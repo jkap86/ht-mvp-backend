@@ -95,13 +95,13 @@ export class RosterService {
   }
 
   async getLeagueMembers(leagueId: number, userId: string): Promise<any[]> {
-    // Check if user is a member
-    const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
-    if (!isMember) {
+    // Get all rosters AND check membership in one query to avoid race condition
+    const rosters = await this.rosterRepo.findByLeagueIdWithMembershipCheck(leagueId, userId);
+
+    // findByLeagueIdWithMembershipCheck returns null if user is not a member
+    if (rosters === null) {
       throw new ForbiddenException('You are not a member of this league');
     }
-
-    const rosters = await this.rosterRepo.findByLeagueId(leagueId);
 
     return rosters.map(r => ({
       id: r.id,

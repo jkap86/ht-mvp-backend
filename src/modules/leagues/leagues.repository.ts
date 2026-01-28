@@ -345,6 +345,52 @@ export class RosterRepository {
     }));
   }
 
+  /**
+   * Get all rosters for a league AND verify user membership in a single query.
+   * Returns null if the user is not a member (avoids race condition with separate isUserMember check).
+   */
+  async findByLeagueIdWithMembershipCheck(leagueId: number, userId: string): Promise<Roster[] | null> {
+    const result = await this.db.query(
+      `WITH membership_check AS (
+         SELECT EXISTS(SELECT 1 FROM rosters WHERE league_id = $1 AND user_id = $2) as is_member
+       )
+       SELECT r.*, u.username, mc.is_member
+       FROM rosters r
+       LEFT JOIN users u ON r.user_id = u.id
+       CROSS JOIN membership_check mc
+       WHERE r.league_id = $1
+       ORDER BY r.roster_id`,
+      [leagueId, userId]
+    );
+
+    // If no rows returned, the league has no rosters or doesn't exist - still check membership
+    if (result.rows.length === 0) {
+      const memberCheck = await this.db.query(
+        'SELECT EXISTS(SELECT 1 FROM rosters WHERE league_id = $1 AND user_id = $2) as is_member',
+        [leagueId, userId]
+      );
+      return memberCheck.rows[0]?.is_member ? [] : null;
+    }
+
+    // Check membership from the first row
+    if (!result.rows[0].is_member) {
+      return null;
+    }
+
+    return result.rows.map(row => ({
+      id: row.id,
+      leagueId: row.league_id,
+      userId: row.user_id,
+      rosterId: row.roster_id,
+      settings: row.settings || {},
+      starters: row.starters || [],
+      bench: row.bench || [],
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      username: row.username,
+    }));
+  }
+
   async findByLeagueAndUser(
     leagueId: number,
     userId: string,
