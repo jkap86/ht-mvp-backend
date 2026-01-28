@@ -3,6 +3,8 @@ import { SnakeDraftEngine } from './snake-draft.engine';
 import { LinearDraftEngine } from './linear-draft.engine';
 import { DraftRepository } from '../modules/drafts/drafts.repository';
 import { PlayerRepository } from '../modules/players/players.repository';
+import { RosterPlayersRepository } from '../modules/rosters/rosters.repository';
+import { LeagueRepository } from '../modules/leagues/leagues.repository';
 
 /**
  * Factory for creating draft engines based on draft type.
@@ -15,7 +17,9 @@ import { PlayerRepository } from '../modules/players/players.repository';
 export class DraftEngineFactory {
   constructor(
     private readonly draftRepo: DraftRepository,
-    private readonly playerRepo: PlayerRepository
+    private readonly playerRepo: PlayerRepository,
+    private readonly rosterPlayersRepo: RosterPlayersRepository,
+    private readonly leagueRepo: LeagueRepository
   ) {}
 
   /**
@@ -24,9 +28,19 @@ export class DraftEngineFactory {
   createEngine(draftType: string): IDraftEngine {
     switch (draftType.toLowerCase()) {
       case 'snake':
-        return new SnakeDraftEngine(this.draftRepo, this.playerRepo);
+        return new SnakeDraftEngine(
+          this.draftRepo,
+          this.playerRepo,
+          this.rosterPlayersRepo,
+          this.leagueRepo
+        );
       case 'linear':
-        return new LinearDraftEngine(this.draftRepo, this.playerRepo);
+        return new LinearDraftEngine(
+          this.draftRepo,
+          this.playerRepo,
+          this.rosterPlayersRepo,
+          this.leagueRepo
+        );
       default:
         throw new Error(`Unknown draft type: ${draftType}`);
     }

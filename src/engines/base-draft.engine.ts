@@ -2,6 +2,8 @@ import { IDraftEngine, DraftTickResult, NextPickDetails } from './draft-engine.i
 import { Draft, DraftOrderEntry, DraftPick, draftToResponse } from '../modules/drafts/drafts.model';
 import { DraftRepository, QueueEntry } from '../modules/drafts/drafts.repository';
 import { PlayerRepository } from '../modules/players/players.repository';
+import { RosterPlayersRepository } from '../modules/rosters/rosters.repository';
+import { LeagueRepository } from '../modules/leagues/leagues.repository';
 import { tryGetSocketService } from '../socket';
 import { logger } from '../config/env.config';
 
@@ -15,7 +17,9 @@ export abstract class BaseDraftEngine implements IDraftEngine {
 
   constructor(
     protected readonly draftRepo: DraftRepository,
-    protected readonly playerRepo: PlayerRepository
+    protected readonly playerRepo: PlayerRepository,
+    protected readonly rosterPlayersRepo: RosterPlayersRepository,
+    protected readonly leagueRepo: LeagueRepository
   ) {}
 
   /**
@@ -71,9 +75,9 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     }
 
     return {
-      pickNumber: nextPickNumber,
-      round: nextRound,
-      rosterId: nextPicker.rosterId,
+      currentPick: nextPickNumber,
+      currentRound: nextRound,
+      currentRosterId: nextPicker.rosterId,
       pickDeadline: this.calculatePickDeadline(draft),
       status: 'in_progress',
     };
@@ -95,6 +99,46 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     const deadline = new Date();
     deadline.setSeconds(deadline.getSeconds() + draft.pickTimeSeconds);
     return deadline;
+  }
+
+  /**
+   * Populate rosters with drafted players when draft completes.
+   * This ensures all draft picks are added to roster_players table.
+   */
+  protected async populateRostersFromDraft(draftId: number, leagueId: number): Promise<void> {
+    const picks = await this.draftRepo.getDraftPicks(draftId);
+    const league = await this.leagueRepo.findById(leagueId);
+    if (!league) {
+      logger.warn(`Cannot populate rosters: league ${leagueId} not found`);
+      return;
+    }
+
+    const season = parseInt(league.season, 10);
+
+    for (const pick of picks) {
+      // Skip picks without a player (shouldn't happen for completed picks)
+      if (pick.playerId === null) continue;
+
+      try {
+        await this.rosterPlayersRepo.addDraftedPlayer(
+          pick.rosterId,
+          pick.playerId,
+          leagueId,
+          season,
+          0 // week 0 = draft
+        );
+      } catch (error: any) {
+        // Player might already be on roster (e.g., if partial completion happened)
+        if (error.code !== '23505') {
+          // 23505 = unique_violation
+          logger.warn(
+            `Failed to add player ${pick.playerId} to roster ${pick.rosterId}: ${error.message}`
+          );
+        }
+      }
+    }
+
+    logger.info(`Populated rosters from draft ${draftId} with ${picks.length} picks`);
   }
 
   /**
@@ -231,18 +275,20 @@ export abstract class BaseDraftEngine implements IDraftEngine {
       throw new Error(`No available players for auto-pick in draft ${draft.id}`);
     }
 
-    // Create the pick
+    // Create the pick atomically (with advisory lock, recheck, and queue cleanup)
     const pickInRound = this.getPickInRound(draft.currentPick, totalRosters);
-    const pick = await this.draftRepo.createDraftPick(
+    const idempotencyKey = `autopick-${draft.id}-${draft.currentPick}`;
+    const pick = await this.draftRepo.createDraftPickWithCleanup(
       draft.id,
       draft.currentPick,
       draft.currentRound,
       pickInRound,
       draft.currentRosterId,
-      playerId
+      playerId,
+      idempotencyKey
     );
 
-    // Mark as auto-pick
+    // Mark as auto-pick (separate from atomic creation)
     await this.draftRepo.markPickAsAutoPick(pick.id);
 
     // Check if user had autodraft disabled - if so, force-enable it
@@ -264,8 +310,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
       );
     }
 
-    // Remove picked player from ALL queues in this draft
-    await this.draftRepo.removePlayerFromAllQueues(draft.id, playerId);
+    // Queue cleanup is now handled atomically by createDraftPickWithCleanup
 
     // Advance to next pick
     const nextPickInfo = await this.advanceToNextPick(draft, draftOrder);
@@ -292,7 +337,9 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     const nextPick = draft.currentPick + 1;
 
     if (nextPick > totalPicks) {
-      // Draft complete
+      // Draft complete - populate rosters BEFORE marking complete
+      await this.populateRostersFromDraft(draft.id, draft.leagueId);
+
       await this.draftRepo.update(draft.id, {
         status: 'completed',
         completedAt: new Date(),
@@ -314,9 +361,9 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     });
 
     return {
-      pickNumber: nextPick,
-      round: nextRound,
-      rosterId: nextPicker?.rosterId || 0,
+      currentPick: nextPick,
+      currentRound: nextRound,
+      currentRosterId: nextPicker?.rosterId || null,
       pickDeadline,
       status: 'in_progress',
     };

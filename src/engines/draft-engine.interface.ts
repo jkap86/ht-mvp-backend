@@ -19,12 +19,13 @@ export interface DraftTickResult {
 }
 
 /**
- * Details about the next pick in a draft
+ * Details about the next pick in a draft.
+ * Field names match frontend expectations for socket events.
  */
 export interface NextPickDetails {
-  pickNumber: number;
-  round: number;
-  rosterId: number;
+  currentPick: number;
+  currentRound: number;
+  currentRosterId: number | null;
   pickDeadline: Date;
   status?: string;  // Optional: 'in_progress'
 }

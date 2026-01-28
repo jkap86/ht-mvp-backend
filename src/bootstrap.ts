@@ -115,7 +115,9 @@ function bootstrap(): void {
   container.register(KEYS.DRAFT_ENGINE_FACTORY, () =>
     new DraftEngineFactory(
       container.resolve(KEYS.DRAFT_REPO),
-      container.resolve(KEYS.PLAYER_REPO)
+      container.resolve(KEYS.PLAYER_REPO),
+      container.resolve(KEYS.ROSTER_PLAYERS_REPO),
+      container.resolve(KEYS.LEAGUE_REPO)
     )
   );
 
