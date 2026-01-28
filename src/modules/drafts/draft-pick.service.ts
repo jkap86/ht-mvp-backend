@@ -1,6 +1,7 @@
 import { DraftRepository } from './drafts.repository';
 import { Draft, DraftOrderEntry, draftToResponse } from './drafts.model';
 import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
+import { RosterPlayersRepository } from '../rosters/rosters.repository';
 import { PlayerRepository } from '../players/players.repository';
 import {
   NotFoundException,
@@ -17,7 +18,8 @@ export class DraftPickService {
     private readonly leagueRepo: LeagueRepository,
     private readonly rosterRepo: RosterRepository,
     private readonly engineFactory: DraftEngineFactory,
-    private readonly playerRepo: PlayerRepository
+    private readonly playerRepo: PlayerRepository,
+    private readonly rosterPlayersRepo: RosterPlayersRepository
   ) {}
 
   async getDraftPicks(leagueId: number, draftId: number, userId: string): Promise<any[]> {
@@ -127,7 +129,9 @@ export class DraftPickService {
     const nextPick = draft.currentPick + 1;
 
     if (nextPick > totalPicks) {
-      // Draft complete
+      // Draft complete - populate rosters with drafted players first
+      await this.populateRostersFromDraft(draft.id, draft.leagueId);
+
       await this.draftRepo.update(draft.id, {
         status: 'completed',
         completedAt: new Date(),
@@ -155,5 +159,26 @@ export class DraftPickService {
       currentRosterId: nextPicker?.rosterId || null,
       pickDeadline,
     };
+  }
+
+  private async populateRostersFromDraft(draftId: number, leagueId: number): Promise<void> {
+    const picks = await this.draftRepo.getDraftPicks(draftId);
+    const league = await this.leagueRepo.findById(leagueId);
+    if (!league) return;
+
+    const season = parseInt(league.season, 10);
+
+    for (const pick of picks) {
+      // Skip picks without a player (shouldn't happen for completed picks)
+      if (pick.playerId === null) continue;
+
+      await this.rosterPlayersRepo.addDraftedPlayer(
+        pick.rosterId,
+        pick.playerId,
+        leagueId,
+        season,
+        0 // week 0 for draft
+      );
+    }
   }
 }
