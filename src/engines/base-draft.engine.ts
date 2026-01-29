@@ -389,6 +389,10 @@ export abstract class BaseDraftEngine implements IDraftEngine {
         currentRosterId: null,
         pickDeadline: null,
       });
+
+      // Update league status to regular_season now that draft is complete
+      await this.leagueRepo.update(draft.leagueId, { status: 'regular_season' });
+
       return null;
     }
 

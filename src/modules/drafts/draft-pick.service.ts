@@ -121,6 +121,9 @@ export class DraftPickService {
         draftId,
         leagueId
       );
+
+      // Update league status to regular_season now that draft is complete
+      await this.leagueRepo.update(leagueId, { status: 'regular_season' });
     }
 
     // Enrich pick with player info for socket event

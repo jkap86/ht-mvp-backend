@@ -204,6 +204,9 @@ export class DraftStateService {
       currentRosterId: null,
     });
 
+    // Update league status to regular_season now that draft is complete
+    await this.leagueRepo.update(draft.leagueId, { status: 'regular_season' });
+
     const response = draftToResponse(updatedDraft);
 
     const socket = tryGetSocketService();
