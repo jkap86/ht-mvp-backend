@@ -49,12 +49,17 @@ const mockTrade: Trade = {
 const mockTradeItem: TradeItem = {
   id: 1,
   tradeId: 1,
+  itemType: 'player',
   playerId: 100,
   fromRosterId: 1,
   toRosterId: 2,
   playerName: 'Test Player',
   playerPosition: 'QB',
   playerTeam: 'TST',
+  draftPickAssetId: null,
+  pickSeason: null,
+  pickRound: null,
+  pickOriginalTeam: null,
   createdAt: new Date(),
 };
 
