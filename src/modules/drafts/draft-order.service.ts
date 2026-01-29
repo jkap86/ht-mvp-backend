@@ -8,6 +8,7 @@ import {
   NotFoundException,
   ValidationException,
 } from '../../utils/exceptions';
+import { tryGetSocketService } from '../../socket';
 
 /**
  * Cryptographically secure Fisher-Yates shuffle.
@@ -113,7 +114,17 @@ export class DraftOrderService {
     // Mark order as confirmed after successful randomization
     await this.draftRepo.setOrderConfirmed(draftId, true);
 
-    return this.draftRepo.getDraftOrder(draftId);
+    // Fetch the final draft order
+    const finalOrder = await this.draftRepo.getDraftOrder(draftId);
+
+    // Emit socket event to notify all users viewing the draft room
+    const socket = tryGetSocketService();
+    socket?.emitDraftSettingsUpdated(draftId, {
+      order_confirmed: true,
+      draft_order: finalOrder,
+    });
+
+    return finalOrder;
   }
 
   async createInitialOrder(draftId: number, leagueId: number): Promise<void> {
