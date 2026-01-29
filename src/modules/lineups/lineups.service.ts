@@ -2,12 +2,13 @@ import { Pool } from 'pg';
 import { LineupsRepository } from './lineups.repository';
 import { RosterPlayersRepository } from '../rosters/rosters.repository';
 import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
-import { RosterLineup, LineupSlots, LineupValidationResult, DEFAULT_ROSTER_CONFIG } from './lineups.model';
 import {
-  NotFoundException,
-  ForbiddenException,
-  ValidationException,
-} from '../../utils/exceptions';
+  RosterLineup,
+  LineupSlots,
+  LineupValidationResult,
+  DEFAULT_ROSTER_CONFIG,
+} from './lineups.model';
+import { NotFoundException, ForbiddenException, ValidationException } from '../../utils/exceptions';
 
 export class LineupService {
   constructor(
@@ -67,7 +68,7 @@ export class LineupService {
 
       // Put all roster players on bench initially
       const rosterPlayers = await this.rosterPlayersRepo.getByRosterId(globalRosterId);
-      defaultLineup.BN = rosterPlayers.map(p => p.playerId);
+      defaultLineup.BN = rosterPlayers.map((p) => p.playerId);
 
       lineup = await this.lineupsRepo.upsert(globalRosterId, season, week, defaultLineup);
     }
@@ -160,7 +161,7 @@ export class LineupService {
 
     // Get player position
     const rosterPlayers = await this.rosterPlayersRepo.getByRosterId(globalRosterId);
-    const player = rosterPlayers.find(p => p.playerId === playerId);
+    const player = rosterPlayers.find((p) => p.playerId === playerId);
     if (!player) {
       throw new NotFoundException('Player not found on roster');
     }
@@ -174,7 +175,11 @@ export class LineupService {
     const newLineup = this.movePlayerInLineup(currentLineup.lineup, playerId, toSlot);
 
     // Validate the new lineup
-    const validation = this.validateLineup(newLineup, rosterPlayers, league.settings?.roster_config);
+    const validation = this.validateLineup(
+      newLineup,
+      rosterPlayers,
+      league.settings?.roster_config
+    );
     if (!validation.valid) {
       throw new ValidationException(validation.errors.join(', '));
     }
@@ -191,9 +196,20 @@ export class LineupService {
     rosterConfig?: any
   ): LineupValidationResult {
     const errors: string[] = [];
-    const config = rosterConfig || DEFAULT_ROSTER_CONFIG;
-    const rosterPlayerIds = new Set(rosterPlayers.map(p => p.playerId));
-    const playerPositions = new Map(rosterPlayers.map(p => [p.playerId, p.position]));
+    // Merge with defaults, treating 0 as "use default" since 0 slots makes no sense
+    const passedConfig = rosterConfig || {};
+    const config = {
+      QB: passedConfig.QB || DEFAULT_ROSTER_CONFIG.QB,
+      RB: passedConfig.RB || DEFAULT_ROSTER_CONFIG.RB,
+      WR: passedConfig.WR || DEFAULT_ROSTER_CONFIG.WR,
+      TE: passedConfig.TE || DEFAULT_ROSTER_CONFIG.TE,
+      FLEX: passedConfig.FLEX || DEFAULT_ROSTER_CONFIG.FLEX,
+      K: passedConfig.K || DEFAULT_ROSTER_CONFIG.K,
+      DEF: passedConfig.DEF || DEFAULT_ROSTER_CONFIG.DEF,
+      BN: passedConfig.BN || DEFAULT_ROSTER_CONFIG.BN,
+    };
+    const rosterPlayerIds = new Set(rosterPlayers.map((p) => p.playerId));
+    const playerPositions = new Map(rosterPlayers.map((p) => [p.playerId, p.position]));
 
     // Check all players in lineup are on roster
     const allLineupPlayers = [
@@ -320,14 +336,14 @@ export class LineupService {
   private movePlayerInLineup(lineup: LineupSlots, playerId: number, toSlot: string): LineupSlots {
     // Remove player from current slot
     const newLineup: LineupSlots = {
-      QB: lineup.QB.filter(id => id !== playerId),
-      RB: lineup.RB.filter(id => id !== playerId),
-      WR: lineup.WR.filter(id => id !== playerId),
-      TE: lineup.TE.filter(id => id !== playerId),
-      FLEX: lineup.FLEX.filter(id => id !== playerId),
-      K: lineup.K.filter(id => id !== playerId),
-      DEF: lineup.DEF.filter(id => id !== playerId),
-      BN: lineup.BN.filter(id => id !== playerId),
+      QB: lineup.QB.filter((id) => id !== playerId),
+      RB: lineup.RB.filter((id) => id !== playerId),
+      WR: lineup.WR.filter((id) => id !== playerId),
+      TE: lineup.TE.filter((id) => id !== playerId),
+      FLEX: lineup.FLEX.filter((id) => id !== playerId),
+      K: lineup.K.filter((id) => id !== playerId),
+      DEF: lineup.DEF.filter((id) => id !== playerId),
+      BN: lineup.BN.filter((id) => id !== playerId),
     };
 
     // Add to new slot

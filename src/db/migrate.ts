@@ -19,9 +19,7 @@ async function ensureMigrationsTable() {
 }
 
 async function getAppliedMigrations(): Promise<Set<string>> {
-  const res = await pool.query<{ name: string }>(
-    `SELECT name FROM ${MIGRATIONS_TABLE};`
-  );
+  const res = await pool.query<{ name: string }>(`SELECT name FROM ${MIGRATIONS_TABLE};`);
   return new Set(res.rows.map((row) => row.name));
 }
 
@@ -78,9 +76,7 @@ async function runMigrations() {
 
     console.log(`📦 Found ${files.length} migration(s).`);
     console.log(
-      `📚 Already applied: ${
-        applied.size > 0 ? Array.from(applied).join(', ') : 'none'
-      }`
+      `📚 Already applied: ${applied.size > 0 ? Array.from(applied).join(', ') : 'none'}`
     );
 
     for (const file of files) {

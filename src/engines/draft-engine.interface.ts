@@ -41,7 +41,7 @@ export interface NextPickDetails {
   currentRound: number;
   currentRosterId: number | null;
   pickDeadline: Date;
-  status?: string;  // Optional: 'in_progress'
+  status?: string; // Optional: 'in_progress'
 }
 
 /**
@@ -84,10 +84,7 @@ export interface IDraftEngine {
    * Get details about the next pick after current pick.
    * Returns null if draft is complete.
    */
-  getNextPickDetails(
-    draft: Draft,
-    draftOrder: DraftOrderEntry[]
-  ): NextPickDetails | null;
+  getNextPickDetails(draft: Draft, draftOrder: DraftOrderEntry[]): NextPickDetails | null;
 
   /**
    * Check if it's time for an autopick based on deadline

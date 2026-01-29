@@ -1,7 +1,7 @@
-import rateLimit from "express-rate-limit";
-import { RedisStore } from "rate-limit-redis";
-import { Request } from "express";
-import { getRedisClient } from "../config/redis.config";
+import rateLimit from 'express-rate-limit';
+import { RedisStore } from 'rate-limit-redis';
+import { Request } from 'express';
+import { getRedisClient } from '../config/redis.config';
 
 // Match the shape from auth.middleware.ts
 interface AuthRequest extends Request {
@@ -30,11 +30,11 @@ export const authLimiter = rateLimit({
   max: isProd ? 5 : 100, // 5 (prod) vs 100 (dev)
   message: {
     error: {
-      code: "RATE_LIMITED",
-      message: "Too many login attempts. Please try again later.",
+      code: 'RATE_LIMITED',
+      message: 'Too many login attempts. Please try again later.',
     },
   },
-  keyGenerator: (req: Request) => req.ip || "unknown",
+  keyGenerator: (req: Request) => req.ip || 'unknown',
   standardHeaders: true,
   legacyHeaders: false,
   store: getRedisStore(),
@@ -47,8 +47,8 @@ export const authLimiter = rateLimit({
 export const draftPickLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 10,
-  message: { error: "Too many pick attempts, please slow down", status: 429 },
-  keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || "unknown",
+  message: { error: 'Too many pick attempts, please slow down', status: 429 },
+  keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
   standardHeaders: true,
   legacyHeaders: false,
   store: getRedisStore(),
@@ -62,10 +62,10 @@ export const queueLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 30,
   message: {
-    error: "Too many queue operations, please slow down",
+    error: 'Too many queue operations, please slow down',
     status: 429,
   },
-  keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || "unknown",
+  keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
   standardHeaders: true,
   legacyHeaders: false,
   store: getRedisStore(),
@@ -79,10 +79,10 @@ export const draftModifyLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 5,
   message: {
-    error: "Too many draft operations, please slow down",
+    error: 'Too many draft operations, please slow down',
     status: 429,
   },
-  keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || "unknown",
+  keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
   standardHeaders: true,
   legacyHeaders: false,
   store: getRedisStore(),
@@ -98,11 +98,11 @@ export const refreshTokenLimiter = rateLimit({
   max: 30, // 30 refresh attempts per hour
   message: {
     error: {
-      code: "RATE_LIMITED",
-      message: "Too many token refresh attempts. Please try again later.",
+      code: 'RATE_LIMITED',
+      message: 'Too many token refresh attempts. Please try again later.',
     },
   },
-  keyGenerator: (req: Request) => req.ip || "unknown",
+  keyGenerator: (req: Request) => req.ip || 'unknown',
   standardHeaders: true,
   legacyHeaders: false,
   store: getRedisStore(),

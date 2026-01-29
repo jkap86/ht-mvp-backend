@@ -1,16 +1,18 @@
-import { Pool, PoolClient } from 'pg';
+import { Pool } from 'pg';
 import { AuctionLotRepository } from './auction-lot.repository';
-import { AuctionLot, AuctionProxyBid, SlowAuctionSettings, auctionLotFromDatabase } from './auction.models';
+import {
+  AuctionLot,
+  AuctionProxyBid,
+  SlowAuctionSettings,
+  auctionLotFromDatabase,
+} from './auction.models';
 import { DraftRepository } from '../drafts.repository';
 import { Draft } from '../drafts.model';
 import { RosterRepository, LeagueRepository } from '../../leagues/leagues.repository';
 import { PlayerRepository } from '../../players/players.repository';
 import { ValidationException, NotFoundException } from '../../../utils/exceptions';
 import { getRosterBudgetDataWithClient } from './auction-budget-calculator';
-import {
-  resolvePriceWithClient,
-  OutbidNotification,
-} from './auction-price-resolver';
+import { resolvePriceWithClient, OutbidNotification } from './auction-price-resolver';
 import { getAuctionRosterLockId } from '../../../utils/locks';
 
 export interface NominationResult {
@@ -92,17 +94,17 @@ export class SlowAuctionService {
   }
 
   // Get budget info for all rosters in a draft
-  async getAllBudgets(
-    draftId: number
-  ): Promise<{
-    rosterId: number;
-    username: string;
-    totalBudget: number;
-    spent: number;
-    leadingCommitment: number;
-    available: number;
-    wonCount: number;
-  }[]> {
+  async getAllBudgets(draftId: number): Promise<
+    {
+      rosterId: number;
+      username: string;
+      totalBudget: number;
+      spent: number;
+      leadingCommitment: number;
+      available: number;
+      wonCount: number;
+    }[]
+  > {
     const draft = await this.draftRepo.findById(draftId);
     if (!draft) throw new NotFoundException('Draft not found');
 
@@ -119,7 +121,8 @@ export class SlowAuctionService {
         const budgetData = await this.lotRepo.getRosterBudgetData(draftId, roster.id);
         const remainingSlots = rosterSlots - budgetData.wonCount;
         const reservedForMinBids = Math.max(0, remainingSlots - 1) * settings.minBid;
-        const available = totalBudget - budgetData.spent - reservedForMinBids - budgetData.leadingCommitment;
+        const available =
+          totalBudget - budgetData.spent - reservedForMinBids - budgetData.leadingCommitment;
 
         return {
           rosterId: roster.id,
@@ -151,11 +154,7 @@ export class SlowAuctionService {
   }
 
   // NOMINATE: Create a new lot for a player
-  async nominate(
-    draftId: number,
-    rosterId: number,
-    playerId: number
-  ): Promise<NominationResult> {
+  async nominate(draftId: number, rosterId: number, playerId: number): Promise<NominationResult> {
     // 1. Validate draft exists, is auction, and in_progress
     const draft = await this.draftRepo.findById(draftId);
     if (!draft) throw new NotFoundException('Draft not found');
@@ -230,10 +229,9 @@ export class SlowAuctionService {
       await client.query('SELECT pg_advisory_xact_lock($1)', [getAuctionRosterLockId(rosterId)]);
 
       // 1. Lock the lot row and validate it exists and is active
-      const lotResult = await client.query(
-        'SELECT * FROM auction_lots WHERE id = $1 FOR UPDATE',
-        [lotId]
-      );
+      const lotResult = await client.query('SELECT * FROM auction_lots WHERE id = $1 FOR UPDATE', [
+        lotId,
+      ]);
       if (lotResult.rows.length === 0) {
         await client.query('ROLLBACK');
         throw new NotFoundException('Lot not found');
@@ -277,15 +275,18 @@ export class SlowAuctionService {
       const reservedForMinBids = Math.max(0, remainingSlots) * settings.minBid;
 
       // 4a. Worst-case check: if you win at maxBid, you must still fill remaining roster
-      const worstCaseIfWin = maxBid + budgetData.spent + (remainingSlots * settings.minBid);
+      const worstCaseIfWin = maxBid + budgetData.spent + remainingSlots * settings.minBid;
       if (worstCaseIfWin > totalBudget) {
-        const maxSafeBid = totalBudget - budgetData.spent - (remainingSlots * settings.minBid);
+        const maxSafeBid = totalBudget - budgetData.spent - remainingSlots * settings.minBid;
         await client.query('ROLLBACK');
-        throw new ValidationException(`Maximum safe bid is $${Math.max(settings.minBid, maxSafeBid)} (must reserve for remaining roster)`);
+        throw new ValidationException(
+          `Maximum safe bid is $${Math.max(settings.minBid, maxSafeBid)} (must reserve for remaining roster)`
+        );
       }
 
       // 4b. Affordable check based on current commitments
-      let maxAffordable = totalBudget - budgetData.spent - reservedForMinBids - budgetData.leadingCommitment;
+      let maxAffordable =
+        totalBudget - budgetData.spent - reservedForMinBids - budgetData.leadingCommitment;
       const isLeadingThisLot = lot.currentBidderRosterId === rosterId;
       if (isLeadingThisLot) {
         maxAffordable += lot.currentBid; // Can reuse current commitment
@@ -412,10 +413,9 @@ export class SlowAuctionService {
       await client.query('BEGIN');
 
       // Lock and get lot
-      const lotResult = await client.query(
-        'SELECT * FROM auction_lots WHERE id = $1 FOR UPDATE',
-        [lotId]
-      );
+      const lotResult = await client.query('SELECT * FROM auction_lots WHERE id = $1 FOR UPDATE', [
+        lotId,
+      ]);
       if (lotResult.rows.length === 0) {
         await client.query('ROLLBACK');
         throw new NotFoundException('Lot not found');
@@ -430,7 +430,9 @@ export class SlowAuctionService {
       if (lot.currentBidderRosterId) {
         // Lock winner's roster to prevent concurrent settlements
         // Use centralized lock ID for consistency with fast auction
-        await client.query('SELECT pg_advisory_xact_lock($1)', [getAuctionRosterLockId(lot.currentBidderRosterId)]);
+        await client.query('SELECT pg_advisory_xact_lock($1)', [
+          getAuctionRosterLockId(lot.currentBidderRosterId),
+        ]);
 
         // Re-validate budget and slots at settlement time
         const draft = await this.draftRepo.findById(lot.draftId);
@@ -447,7 +449,11 @@ export class SlowAuctionService {
         const totalBudget = league.leagueSettings?.auctionBudget ?? 200;
         const rosterSlots = league.leagueSettings?.rosterSlots ?? 15;
         const settings = this.getSettings(draft);
-        const budgetData = await getRosterBudgetDataWithClient(client, lot.draftId, lot.currentBidderRosterId);
+        const budgetData = await getRosterBudgetDataWithClient(
+          client,
+          lot.draftId,
+          lot.currentBidderRosterId
+        );
 
         // Check roster not full
         if (budgetData.wonCount >= rosterSlots) {
@@ -486,10 +492,10 @@ export class SlowAuctionService {
         );
 
         // Also remove the player from all draft queues in this draft
-        await client.query(
-          'DELETE FROM draft_queue WHERE draft_id = $1 AND player_id = $2',
-          [lot.draftId, lot.playerId]
-        );
+        await client.query('DELETE FROM draft_queue WHERE draft_id = $1 AND player_id = $2', [
+          lot.draftId,
+          lot.playerId,
+        ]);
 
         await client.query('COMMIT');
 

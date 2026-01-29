@@ -5,7 +5,10 @@ import {
   WaiverClaimsRepository,
   WaiverWireRepository,
 } from './waivers.repository';
-import { RosterPlayersRepository, RosterTransactionsRepository } from '../rosters/rosters.repository';
+import {
+  RosterPlayersRepository,
+  RosterTransactionsRepository,
+} from '../rosters/rosters.repository';
 import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import { TradesRepository } from '../trades/trades.repository';
 import {
@@ -266,9 +269,7 @@ export class WaiversService {
   /**
    * Process waiver claims for a specific league
    */
-  async processLeagueClaims(
-    leagueId: number
-  ): Promise<{ processed: number; successful: number }> {
+  async processLeagueClaims(leagueId: number): Promise<{ processed: number; successful: number }> {
     return processLeagueClaimsUseCase(
       {
         db: this.db,

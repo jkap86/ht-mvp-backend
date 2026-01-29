@@ -8,11 +8,7 @@ export interface AuthRequest extends Request {
   };
 }
 
-export const authMiddleware = (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction
-) => {
+export const authMiddleware = (req: AuthRequest, res: Response, next: NextFunction) => {
   const header = req.headers.authorization;
 
   if (!header || !header.startsWith('Bearer ')) {
@@ -35,7 +31,7 @@ export const authMiddleware = (
     };
 
     next();
-  } catch (err) {
+  } catch (_err) {
     return res.status(401).json({
       error: {
         code: 'INVALID_TOKEN',

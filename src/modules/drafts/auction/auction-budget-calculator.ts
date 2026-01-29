@@ -63,7 +63,8 @@ export function calculateMaxAffordableBid(
   const remainingSlots = rosterSlots - budgetData.wonCount - 1; // -1 for current lot
   const reservedForMinBids = Math.max(0, remainingSlots) * minBid;
 
-  let maxAffordable = totalBudget - budgetData.spent - reservedForMinBids - budgetData.leadingCommitment;
+  let maxAffordable =
+    totalBudget - budgetData.spent - reservedForMinBids - budgetData.leadingCommitment;
 
   // If leading the current lot, can reuse that commitment
   if (isLeadingCurrentLot) {

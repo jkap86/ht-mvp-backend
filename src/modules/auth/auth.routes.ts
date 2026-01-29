@@ -22,12 +22,7 @@ router.post(
 );
 
 // POST /api/auth/login
-router.post(
-  '/login',
-  authLimiter,
-  validateRequest(loginSchema, 'body'),
-  authController.login
-);
+router.post('/login', authLimiter, validateRequest(loginSchema, 'body'), authController.login);
 
 // POST /api/auth/refresh
 router.post(

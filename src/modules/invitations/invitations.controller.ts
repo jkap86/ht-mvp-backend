@@ -120,7 +120,10 @@ export class InvitationsController {
       const userId = requireUserId(req);
       const leagueId = requireLeagueId(req);
 
-      const invitations = await this.invitationsService.getLeaguePendingInvitations(leagueId, userId);
+      const invitations = await this.invitationsService.getLeaguePendingInvitations(
+        leagueId,
+        userId
+      );
       res.status(200).json(invitations);
     } catch (error) {
       next(error);
@@ -143,12 +146,14 @@ export class InvitationsController {
       }
 
       const users = await this.invitationsService.searchUsersForInvite(leagueId, query, userId);
-      res.status(200).json(users.map(u => ({
-        id: u.id,
-        username: u.username,
-        has_pending_invite: u.hasPendingInvite,
-        is_member: u.isMember,
-      })));
+      res.status(200).json(
+        users.map((u) => ({
+          id: u.id,
+          username: u.username,
+          has_pending_invite: u.hasPendingInvite,
+          is_member: u.isMember,
+        }))
+      );
     } catch (error) {
       next(error);
     }

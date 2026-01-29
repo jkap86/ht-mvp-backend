@@ -75,7 +75,7 @@ export class SleeperApiClient {
     this.client = axios.create({
       baseURL: 'https://api.sleeper.app/v1',
       timeout: 30000,
-      headers: { 'Accept': 'application/json' },
+      headers: { Accept: 'application/json' },
     });
   }
 
@@ -109,7 +109,10 @@ export class SleeperApiClient {
    * @param week - Week number (1-18 for regular season)
    * @returns Map of sleeper_player_id -> stats
    */
-  async fetchWeeklyStats(season: string, week: number): Promise<Record<string, SleeperPlayerStats>> {
+  async fetchWeeklyStats(
+    season: string,
+    week: number
+  ): Promise<Record<string, SleeperPlayerStats>> {
     try {
       const response = await this.client.get(`/stats/nfl/regular/${season}/${week}`);
       return response.data;
@@ -127,7 +130,10 @@ export class SleeperApiClient {
    * @param week - Week number (1-18 for regular season)
    * @returns Map of sleeper_player_id -> projected stats
    */
-  async fetchWeeklyProjections(season: string, week: number): Promise<Record<string, SleeperPlayerStats>> {
+  async fetchWeeklyProjections(
+    season: string,
+    week: number
+  ): Promise<Record<string, SleeperPlayerStats>> {
     try {
       const response = await this.client.get(`/projections/nfl/regular/${season}/${week}`);
       return response.data;

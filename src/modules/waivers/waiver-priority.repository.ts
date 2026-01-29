@@ -23,10 +23,10 @@ export class WaiverPriorityRepository {
     const conn = client || this.db;
 
     // Delete existing priorities for this league/season
-    await conn.query(
-      'DELETE FROM waiver_priority WHERE league_id = $1 AND season = $2',
-      [leagueId, season]
-    );
+    await conn.query('DELETE FROM waiver_priority WHERE league_id = $1 AND season = $2', [
+      leagueId,
+      season,
+    ]);
 
     // Insert new priorities (order by roster creation for initial)
     for (let i = 0; i < rosterIds.length; i++) {
@@ -54,7 +54,7 @@ export class WaiverPriorityRepository {
       [leagueId, season]
     );
 
-    return result.rows.map(row => ({
+    return result.rows.map((row) => ({
       ...waiverPriorityFromDatabase(row),
       teamName: row.team_name || `Team ${row.roster_id}`,
       username: row.username || 'Unknown',
@@ -64,7 +64,11 @@ export class WaiverPriorityRepository {
   /**
    * Get single roster's priority
    */
-  async getByRoster(rosterId: number, season: number, client?: PoolClient): Promise<WaiverPriority | null> {
+  async getByRoster(
+    rosterId: number,
+    season: number,
+    client?: PoolClient
+  ): Promise<WaiverPriority | null> {
     const conn = client || this.db;
     const result = await conn.query(
       'SELECT * FROM waiver_priority WHERE roster_id = $1 AND season = $2',

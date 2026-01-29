@@ -60,7 +60,7 @@ export async function resolvePriceWithClient(
      ORDER BY max_bid DESC, updated_at ASC`,
     [lot.id]
   );
-  const proxyBids: AuctionProxyBid[] = proxyBidsResult.rows.map(row => ({
+  const proxyBids: AuctionProxyBid[] = proxyBidsResult.rows.map((row) => ({
     id: row.id,
     lotId: row.lot_id,
     rosterId: row.roster_id,

@@ -14,10 +14,7 @@ import {
   MatchupPlayerPerformance,
 } from './matchups.model';
 import { LineupSlots, PositionSlot } from '../lineups/lineups.model';
-import {
-  NotFoundException,
-  ForbiddenException,
-} from '../../utils/exceptions';
+import { NotFoundException, ForbiddenException } from '../../utils/exceptions';
 
 /**
  * Core matchup service handling CRUD operations, detail fetching, and scoring updates.
@@ -39,11 +36,7 @@ export class MatchupService {
   /**
    * Get matchups for a week
    */
-  async getWeekMatchups(
-    leagueId: number,
-    week: number,
-    userId: string
-  ): Promise<MatchupDetails[]> {
+  async getWeekMatchups(leagueId: number, week: number, userId: string): Promise<MatchupDetails[]> {
     // Validate league membership
     const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
     if (!isMember) {
@@ -62,10 +55,7 @@ export class MatchupService {
   /**
    * Get a single matchup with full details
    */
-  async getMatchup(
-    matchupId: number,
-    userId: string
-  ): Promise<MatchupDetails | null> {
+  async getMatchup(matchupId: number, userId: string): Promise<MatchupDetails | null> {
     const matchup = await this.matchupsRepo.findById(matchupId);
     if (!matchup) return null;
 
@@ -81,7 +71,7 @@ export class MatchupService {
       matchup.week
     );
 
-    return matchups.find(m => m.id === matchupId) || null;
+    return matchups.find((m) => m.id === matchupId) || null;
   }
 
   /**
@@ -180,8 +170,8 @@ export class MatchupService {
     ]);
 
     // Create maps for lookup
-    const playerMap = new Map(players.map(p => [p.id, p]));
-    const statsMap = new Map(stats.map(s => [s.playerId, s]));
+    const playerMap = new Map(players.map((p) => [p.id, p]));
+    const statsMap = new Map(stats.map((s) => [s.playerId, s]));
 
     // Get scoring rules for this league
     const roster = await this.rosterRepo.findById(rosterId);
@@ -201,9 +191,7 @@ export class MatchupService {
       for (const playerId of playerIds) {
         const player = playerMap.get(playerId);
         const playerStats = statsMap.get(playerId);
-        const points = playerStats
-          ? calculatePlayerPoints(playerStats, scoringRules)
-          : 0;
+        const points = playerStats ? calculatePlayerPoints(playerStats, scoringRules) : 0;
 
         performances.push({
           playerId,
@@ -222,9 +210,7 @@ export class MatchupService {
     for (const playerId of benchIds) {
       const player = playerMap.get(playerId);
       const playerStats = statsMap.get(playerId);
-      const points = playerStats
-        ? calculatePlayerPoints(playerStats, scoringRules)
-        : 0;
+      const points = playerStats ? calculatePlayerPoints(playerStats, scoringRules) : 0;
 
       performances.push({
         playerId,
@@ -248,11 +234,7 @@ export class MatchupService {
   /**
    * Calculate and finalize matchup results for a week
    */
-  async finalizeWeekMatchups(
-    leagueId: number,
-    week: number,
-    userId: string
-  ): Promise<void> {
+  async finalizeWeekMatchups(leagueId: number, week: number, userId: string): Promise<void> {
     // Only commissioner can finalize matchups
     const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
     if (!isCommissioner) {
@@ -274,7 +256,7 @@ export class MatchupService {
 
     // Get all lineups for the week
     const lineups = await this.lineupsRepo.getByLeagueAndWeek(leagueId, season, week);
-    const lineupMap = new Map(lineups.map(l => [l.rosterId, l]));
+    const lineupMap = new Map(lineups.map((l) => [l.rosterId, l]));
 
     // Update matchup scores and finalize
     const client = await this.db.connect();
@@ -288,12 +270,7 @@ export class MatchupService {
         const roster1Points = lineup1?.totalPoints || 0;
         const roster2Points = lineup2?.totalPoints || 0;
 
-        await this.matchupsRepo.updatePoints(
-          matchup.id,
-          roster1Points,
-          roster2Points,
-          client
-        );
+        await this.matchupsRepo.updatePoints(matchup.id, roster1Points, roster2Points, client);
 
         await this.matchupsRepo.finalize(matchup.id, client);
       }

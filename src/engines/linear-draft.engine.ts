@@ -27,6 +27,6 @@ export class LinearDraftEngine extends BaseDraftEngine {
     const pickInRound = this.getPickInRound(pickNumber, totalRosters);
 
     // Linear: same order every round
-    return draftOrder.find(o => o.draftPosition === pickInRound);
+    return draftOrder.find((o) => o.draftPosition === pickInRound);
   }
 }

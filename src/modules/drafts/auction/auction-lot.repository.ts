@@ -40,10 +40,7 @@ export class AuctionLotRepository {
    * Find a lot by its ID
    */
   async findLotById(lotId: number): Promise<AuctionLot | null> {
-    const result = await this.db.query(
-      'SELECT * FROM auction_lots WHERE id = $1',
-      [lotId]
-    );
+    const result = await this.db.query('SELECT * FROM auction_lots WHERE id = $1', [lotId]);
     return result.rows.length > 0 ? auctionLotFromDatabase(result.rows[0]) : null;
   }
 
@@ -310,7 +307,10 @@ export class AuctionLotRepository {
   /**
    * Get budget data for all rosters in a draft (optimized batch query)
    */
-  async getAllRosterBudgetData(draftId: number, rosterIds: number[]): Promise<Map<number, RosterBudgetData>> {
+  async getAllRosterBudgetData(
+    draftId: number,
+    rosterIds: number[]
+  ): Promise<Map<number, RosterBudgetData>> {
     if (rosterIds.length === 0) {
       return new Map();
     }

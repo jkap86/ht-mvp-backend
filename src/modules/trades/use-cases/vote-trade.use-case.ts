@@ -82,7 +82,10 @@ export async function voteTrade(
 
     // Check if veto threshold reached and update status atomically
     if (voteCount.veto >= vetoThreshold) {
-      await ctx.tradesRepo.updateStatus(tradeId, 'vetoed', client);
+      const updated = await ctx.tradesRepo.updateStatus(tradeId, 'vetoed', client, 'in_review');
+      if (!updated) {
+        throw new ValidationException('Trade status changed during vote processing');
+      }
     }
 
     await client.query('COMMIT');
@@ -111,7 +114,11 @@ function emitTradeVetoedEvent(leagueId: number, tradeId: number): void {
   socket?.emitTradeVetoed(leagueId, { tradeId });
 }
 
-function emitTradeVoteCastEvent(leagueId: number, tradeId: number, votes: { approve: number; veto: number }): void {
+function emitTradeVoteCastEvent(
+  leagueId: number,
+  tradeId: number,
+  votes: { approve: number; veto: number }
+): void {
   const socket = tryGetSocketService();
   socket?.emitTradeVoteCast(leagueId, { tradeId, votes });
 }

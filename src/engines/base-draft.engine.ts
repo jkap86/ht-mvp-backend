@@ -1,6 +1,11 @@
-import { IDraftEngine, DraftTickResult, NextPickDetails, ActualPickerInfo } from './draft-engine.interface';
+import {
+  IDraftEngine,
+  DraftTickResult,
+  NextPickDetails,
+  ActualPickerInfo,
+} from './draft-engine.interface';
 import { Draft, DraftOrderEntry, DraftPick, draftToResponse } from '../modules/drafts/drafts.model';
-import { DraftRepository, QueueEntry } from '../modules/drafts/drafts.repository';
+import { DraftRepository } from '../modules/drafts/drafts.repository';
 import { DraftPickAsset } from '../modules/drafts/draft-pick-asset.model';
 import { PlayerRepository } from '../modules/players/players.repository';
 import { RosterPlayersRepository } from '../modules/rosters/rosters.repository';
@@ -112,7 +117,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
   /**
    * Check if draft is complete
    */
-  isDraftComplete(draft: Draft, afterPickNumber: number): boolean {
+  isDraftComplete(_draft: Draft, _afterPickNumber: number): boolean {
     // Need draft order to calculate total picks, but we can use rounds * rosters
     // For now, we'll check in getNextPickDetails which has access to draftOrder
     return false; // Handled in getNextPickDetails
@@ -190,7 +195,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
 
     // Check if current picker has autodraft enabled (should pick immediately)
     const draftOrder = await this.draftRepo.getDraftOrder(draftId);
-    const currentPicker = draftOrder.find(o => o.rosterId === draft.currentRosterId);
+    const currentPicker = draftOrder.find((o) => o.rosterId === draft.currentRosterId);
     const isAutodraftEnabled = currentPicker?.isAutodraftEnabled ?? false;
 
     // Check if current roster is empty (no user assigned) - should autopick immediately
@@ -223,7 +228,9 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     const pickAlreadyExists = await this.draftRepo.pickExists(draftId, draft.currentPick);
     if (pickAlreadyExists) {
       // Pick was made but draft state is stale - advance to next pick
-      logger.info(`Draft ${draftId}: pick ${draft.currentPick} already exists, recovering stale state`);
+      logger.info(
+        `Draft ${draftId}: pick ${draft.currentPick} already exists, recovering stale state`
+      );
       const nextPickInfo = await this.advanceToNextPick(draft, draftOrder);
 
       // Emit next pick or completion event
@@ -249,15 +256,18 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     }
 
     // Perform autopick (due to deadline expired or autodraft enabled)
-    logger.info(`Draft ${draftId}: performing autopick for roster ${draft.currentRosterId} (reason: ${reason})`);
+    logger.info(
+      `Draft ${draftId}: performing autopick for roster ${draft.currentRosterId} (reason: ${reason})`
+    );
     const pick = await this.performAutoPick(draft);
     const updatedDraft = await this.draftRepo.findById(draftId);
 
     // Re-fetch draft order to get the updated state after the pick
     const updatedDraftOrder = await this.draftRepo.getDraftOrder(draftId);
-    const nextPicker = updatedDraft?.status === 'in_progress' && updatedDraft.currentRosterId
-      ? updatedDraftOrder.find(o => o.rosterId === updatedDraft.currentRosterId)
-      : null;
+    const nextPicker =
+      updatedDraft?.status === 'in_progress' && updatedDraft.currentRosterId
+        ? updatedDraftOrder.find((o) => o.rosterId === updatedDraft.currentRosterId)
+        : null;
 
     return {
       actionTaken: true,
@@ -327,7 +337,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     await this.draftRepo.markPickAsAutoPick(pick.id);
 
     // Check if user had autodraft disabled - if so, force-enable it
-    const currentPicker = draftOrder.find(o => o.rosterId === draft.currentRosterId);
+    const currentPicker = draftOrder.find((o) => o.rosterId === draft.currentRosterId);
     if (currentPicker && !currentPicker.isAutodraftEnabled) {
       // Force-enable autodraft since they timed out
       await this.draftRepo.setAutodraftEnabled(draft.id, draft.currentRosterId, true);

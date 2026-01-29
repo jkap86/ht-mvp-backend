@@ -35,7 +35,9 @@ export class StatsService {
     logger.info(`Found ${sleeperIdMap.size} players with sleeper IDs`);
 
     // Transform and prepare stats for bulk upsert
-    const statsToUpsert: Array<Partial<PlayerStats> & { playerId: number; season: number; week: number }> = [];
+    const statsToUpsert: Array<
+      Partial<PlayerStats> & { playerId: number; season: number; week: number }
+    > = [];
     let skipped = 0;
 
     for (const sleeperId of sleeperIds) {
@@ -74,7 +76,10 @@ export class StatsService {
     logger.info(`Syncing projections for ${season} week ${week}...`);
 
     // Fetch projections from Sleeper
-    const sleeperProjections = await this.sleeperClient.fetchWeeklyProjections(season.toString(), week);
+    const sleeperProjections = await this.sleeperClient.fetchWeeklyProjections(
+      season.toString(),
+      week
+    );
     const sleeperIds = Object.keys(sleeperProjections);
     logger.info(`Fetched ${sleeperIds.length} player projections from Sleeper`);
 
@@ -82,7 +87,9 @@ export class StatsService {
     const sleeperIdMap = await this.playerRepo.getSleeperIdMap();
 
     // Transform and prepare stats for bulk upsert
-    const projectionsToUpsert: Array<Partial<PlayerStats> & { playerId: number; season: number; week: number }> = [];
+    const projectionsToUpsert: Array<
+      Partial<PlayerStats> & { playerId: number; season: number; week: number }
+    > = [];
     let skipped = 0;
 
     for (const sleeperId of sleeperIds) {
@@ -103,7 +110,9 @@ export class StatsService {
       await this.statsRepo.bulkUpsert(projectionsToUpsert);
     }
 
-    logger.info(`Projections sync complete: ${projectionsToUpsert.length} synced, ${skipped} skipped`);
+    logger.info(
+      `Projections sync complete: ${projectionsToUpsert.length} synced, ${skipped} skipped`
+    );
 
     return {
       synced: projectionsToUpsert.length,

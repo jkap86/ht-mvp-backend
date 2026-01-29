@@ -55,7 +55,10 @@ export async function proposeTrade(
   }
 
   // Validate recipient roster exists
-  const recipientRoster = await ctx.rosterRepo.findByLeagueAndRosterId(leagueId, request.recipientRosterId);
+  const recipientRoster = await ctx.rosterRepo.findByLeagueAndRosterId(
+    leagueId,
+    request.recipientRosterId
+  );
   if (!recipientRoster) {
     throw new NotFoundException('Recipient roster not found in this league');
   }
@@ -76,7 +79,9 @@ export async function proposeTrade(
 
   // Validate trade has at least one item (player or pick)
   const hasPlayers = request.offeringPlayerIds.length > 0 || request.requestingPlayerIds.length > 0;
-  const hasPicks = (request.offeringPickAssetIds?.length ?? 0) > 0 || (request.requestingPickAssetIds?.length ?? 0) > 0;
+  const hasPicks =
+    (request.offeringPickAssetIds?.length ?? 0) > 0 ||
+    (request.requestingPickAssetIds?.length ?? 0) > 0;
   if (!hasPlayers && !hasPicks) {
     throw new ValidationException('Trade must include at least one player or draft pick');
   }
@@ -91,7 +96,13 @@ export async function proposeTrade(
     await validateOfferingPlayers(ctx, client, proposerRoster, request.offeringPlayerIds, leagueId);
 
     // Validate requested players belong to recipient
-    await validateRequestingPlayers(ctx, client, recipientRoster.id, request.requestingPlayerIds, leagueId);
+    await validateRequestingPlayers(
+      ctx,
+      client,
+      recipientRoster.id,
+      request.requestingPlayerIds,
+      leagueId
+    );
 
     // Validate draft picks if included
     const offeringPickAssetIds = request.offeringPickAssetIds || [];
@@ -106,7 +117,10 @@ export async function proposeTrade(
       toRosterId: number;
     }> = [];
 
-    if ((offeringPickAssetIds.length > 0 || requestingPickAssetIds.length > 0) && ctx.pickAssetRepo) {
+    if (
+      (offeringPickAssetIds.length > 0 || requestingPickAssetIds.length > 0) &&
+      ctx.pickAssetRepo
+    ) {
       const pickCtx: ValidatePickTradeContext = { pickAssetRepo: ctx.pickAssetRepo };
       const validatedPicks = await validatePickTrade(
         pickCtx,
@@ -272,14 +286,16 @@ async function buildPlayerTradeItems(
   recipientRosterId: number,
   offeringPlayerIds: number[],
   requestingPlayerIds: number[]
-): Promise<Array<{
-  playerId: number;
-  fromRosterId: number;
-  toRosterId: number;
-  playerName: string;
-  playerPosition?: string;
-  playerTeam?: string;
-}>> {
+): Promise<
+  Array<{
+    playerId: number;
+    fromRosterId: number;
+    toRosterId: number;
+    playerName: string;
+    playerPosition?: string;
+    playerTeam?: string;
+  }>
+> {
   const items: Array<{
     playerId: number;
     fromRosterId: number;

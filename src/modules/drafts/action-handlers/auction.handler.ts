@@ -20,11 +20,7 @@ export class AuctionActionHandler implements ActionHandler {
     private readonly rosterRepo: RosterRepository
   ) {}
 
-  async handle(
-    ctx: ActionContext,
-    action: string,
-    params: Record<string, any>
-  ): Promise<any> {
+  async handle(ctx: ActionContext, action: string, params: Record<string, any>): Promise<any> {
     // Get user's roster for this league
     const roster = await this.rosterRepo.findByLeagueAndUser(ctx.leagueId, ctx.userId);
     if (!roster) {
@@ -46,7 +42,12 @@ export class AuctionActionHandler implements ActionHandler {
 
         case 'set_max_bid':
           if (auctionMode === 'fast') {
-            return await this.handleFastSetMaxBid(ctx.draftId, ctx.userId, params.lotId, params.maxBid);
+            return await this.handleFastSetMaxBid(
+              ctx.draftId,
+              ctx.userId,
+              params.lotId,
+              params.maxBid
+            );
           }
           return await this.handleSetMaxBid(ctx.draftId, roster.id, params.lotId, params.maxBid);
 
@@ -66,11 +67,7 @@ export class AuctionActionHandler implements ActionHandler {
     }
   }
 
-  private async handleNominate(
-    draftId: number,
-    rosterId: number,
-    playerId: number
-  ): Promise<any> {
+  private async handleNominate(draftId: number, rosterId: number, playerId: number): Promise<any> {
     const result = await this.slowAuctionService.nominate(draftId, rosterId, playerId);
 
     // Emit socket event - wrap in { lot } for consistency with fast auction
@@ -78,7 +75,12 @@ export class AuctionActionHandler implements ActionHandler {
     const socket = tryGetSocketService();
     socket?.emitAuctionLotCreated(draftId, { lot: auctionLotToResponse(result.lot) });
 
-    return { ok: true, action: 'nominate', data: { lot: auctionLotToResponse(result.lot) }, message: result.message };
+    return {
+      ok: true,
+      action: 'nominate',
+      data: { lot: auctionLotToResponse(result.lot) },
+      message: result.message,
+    };
   }
 
   private async handleFastNominate(
@@ -120,9 +122,9 @@ export class AuctionActionHandler implements ActionHandler {
       data: {
         proxyBid: result.proxyBid,
         lot: auctionLotToResponse(result.lot),
-        outbidNotifications: result.outbidNotifications
+        outbidNotifications: result.outbidNotifications,
       },
-      message: result.message
+      message: result.message,
     };
   }
 
@@ -142,9 +144,9 @@ export class AuctionActionHandler implements ActionHandler {
       data: {
         proxyBid: result.proxyBid,
         lot: result.lot,
-        outbidNotifications: result.outbidNotifications
+        outbidNotifications: result.outbidNotifications,
       },
-      message: result.message
+      message: result.message,
     };
   }
 }

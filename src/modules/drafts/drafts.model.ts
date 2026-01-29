@@ -18,7 +18,7 @@ export interface AuctionSettings {
 /** Default auction settings */
 export const DEFAULT_AUCTION_SETTINGS: AuctionSettings = {
   auctionMode: 'slow',
-  bidWindowSeconds: 43200,        // 12 hours
+  bidWindowSeconds: 43200, // 12 hours
   maxActiveNominationsPerTeam: 2,
   nominationSeconds: 45,
   resetOnBidSeconds: 10,

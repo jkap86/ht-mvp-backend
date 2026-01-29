@@ -76,7 +76,7 @@ export async function submitClaim(
     }
 
     // Validate FAAB bid if applicable
-    let bidAmount = request.bidAmount || 0;
+    const bidAmount = request.bidAmount || 0;
     if (settings.waiverType === 'faab') {
       const budget = await ctx.faabRepo.getByRoster(roster.id, season, client);
       if (!budget) {

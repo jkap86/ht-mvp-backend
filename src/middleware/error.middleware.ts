@@ -8,7 +8,7 @@ export const errorHandler = (
   err: Error | AppException,
   req: Request,
   res: Response,
-  next: NextFunction
+  _next: NextFunction
 ) => {
   metrics.increment('errors_total');
 

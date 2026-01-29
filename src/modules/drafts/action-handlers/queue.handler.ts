@@ -15,11 +15,7 @@ export class QueueActionHandler implements ActionHandler {
     private readonly rosterRepo: RosterRepository
   ) {}
 
-  async handle(
-    ctx: ActionContext,
-    action: string,
-    params: Record<string, any>
-  ): Promise<any> {
+  async handle(ctx: ActionContext, action: string, params: Record<string, any>): Promise<any> {
     // Get user's roster for this league
     const roster = await this.rosterRepo.findByLeagueAndUser(ctx.leagueId, ctx.userId);
     if (!roster) {

@@ -36,10 +36,7 @@ export class PlayoffRepository {
   /**
    * Find bracket by league and season
    */
-  async findByLeagueSeason(
-    leagueId: number,
-    season: number
-  ): Promise<PlayoffBracket | null> {
+  async findByLeagueSeason(leagueId: number, season: number): Promise<PlayoffBracket | null> {
     const result = await this.db.query(
       'SELECT * FROM playoff_brackets WHERE league_id = $1 AND season = $2',
       [leagueId, season]
@@ -52,10 +49,7 @@ export class PlayoffRepository {
    * Find bracket by ID
    */
   async findById(bracketId: number): Promise<PlayoffBracket | null> {
-    const result = await this.db.query(
-      'SELECT * FROM playoff_brackets WHERE id = $1',
-      [bracketId]
-    );
+    const result = await this.db.query('SELECT * FROM playoff_brackets WHERE id = $1', [bracketId]);
     if (result.rows.length === 0) return null;
     return playoffBracketFromDatabase(result.rows[0]);
   }
@@ -63,11 +57,7 @@ export class PlayoffRepository {
   /**
    * Update bracket status
    */
-  async updateStatus(
-    bracketId: number,
-    status: PlayoffStatus,
-    client?: PoolClient
-  ): Promise<void> {
+  async updateStatus(bracketId: number, status: PlayoffStatus, client?: PoolClient): Promise<void> {
     const db = client || this.db;
     await db.query(
       'UPDATE playoff_brackets SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
@@ -150,10 +140,7 @@ export class PlayoffRepository {
   /**
    * Get seed by roster ID
    */
-  async getSeedByRoster(
-    bracketId: number,
-    rosterId: number
-  ): Promise<PlayoffSeed | null> {
+  async getSeedByRoster(bracketId: number, rosterId: number): Promise<PlayoffSeed | null> {
     const result = await this.db.query(
       `SELECT ps.*, r.settings->>'team_name' as team_name, r.user_id
        FROM playoff_seeds ps
@@ -168,10 +155,7 @@ export class PlayoffRepository {
   /**
    * Get playoff matchups for a league/season
    */
-  async getPlayoffMatchups(
-    leagueId: number,
-    season: number
-  ): Promise<any[]> {
+  async getPlayoffMatchups(leagueId: number, season: number): Promise<any[]> {
     const result = await this.db.query(
       `SELECT m.*,
               r1.settings->>'team_name' as roster1_team_name,
@@ -219,11 +203,7 @@ export class PlayoffRepository {
   /**
    * Get matchups for a specific playoff round
    */
-  async getMatchupsByRound(
-    leagueId: number,
-    season: number,
-    round: number
-  ): Promise<any[]> {
+  async getMatchupsByRound(leagueId: number, season: number, round: number): Promise<any[]> {
     const result = await this.db.query(
       `SELECT m.*,
               r1.settings->>'team_name' as roster1_team_name,
@@ -258,11 +238,7 @@ export class PlayoffRepository {
   /**
    * Check if playoff matchups exist for a round
    */
-  async roundMatchupsExist(
-    leagueId: number,
-    season: number,
-    round: number
-  ): Promise<boolean> {
+  async roundMatchupsExist(leagueId: number, season: number, round: number): Promise<boolean> {
     const result = await this.db.query(
       `SELECT COUNT(*) as count FROM matchups
        WHERE league_id = $1 AND season = $2 AND playoff_round = $3`,

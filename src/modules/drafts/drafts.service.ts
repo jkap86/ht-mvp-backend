@@ -1,11 +1,7 @@
 import { DraftRepository } from './drafts.repository';
 import { draftToResponse, DraftType } from './drafts.model';
 import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
-import {
-  NotFoundException,
-  ForbiddenException,
-  ValidationException,
-} from '../../utils/exceptions';
+import { NotFoundException, ForbiddenException, ValidationException } from '../../utils/exceptions';
 import { DraftOrderService } from './draft-order.service';
 import { DraftPickService } from './draft-pick.service';
 import { DraftStateService } from './draft-state.service';
@@ -28,14 +24,16 @@ export class DraftService {
     const rosterConfig = leagueSettings?.roster_config;
     if (!rosterConfig) return 15; // fallback default
 
-    return (rosterConfig.QB || 0) +
-           (rosterConfig.RB || 0) +
-           (rosterConfig.WR || 0) +
-           (rosterConfig.TE || 0) +
-           (rosterConfig.FLEX || 0) +
-           (rosterConfig.K || 0) +
-           (rosterConfig.DEF || 0) +
-           (rosterConfig.BN || 0);
+    return (
+      (rosterConfig.QB || 0) +
+      (rosterConfig.RB || 0) +
+      (rosterConfig.WR || 0) +
+      (rosterConfig.TE || 0) +
+      (rosterConfig.FLEX || 0) +
+      (rosterConfig.K || 0) +
+      (rosterConfig.DEF || 0) +
+      (rosterConfig.BN || 0)
+    );
   }
 
   async getLeagueDrafts(leagueId: number, userId: string): Promise<any[]> {
@@ -99,7 +97,8 @@ export class DraftService {
         settings.bidWindowSeconds = options.auctionSettings.bid_window_seconds;
       }
       if (options.auctionSettings.max_active_nominations_per_team !== undefined) {
-        settings.maxActiveNominationsPerTeam = options.auctionSettings.max_active_nominations_per_team;
+        settings.maxActiveNominationsPerTeam =
+          options.auctionSettings.max_active_nominations_per_team;
       }
       // Fast auction settings
       if (options.auctionSettings.nomination_seconds !== undefined) {
@@ -119,7 +118,9 @@ export class DraftService {
 
     // Get league for roster config to calculate default rounds
     const league = await this.leagueRepo.findById(leagueId);
-    const defaultRounds = this.calculateTotalRosterSlots(league?.leagueSettings || league?.settings);
+    const defaultRounds = this.calculateTotalRosterSlots(
+      league?.leagueSettings || league?.settings
+    );
 
     const draft = await this.draftRepo.create(
       leagueId,
@@ -135,7 +136,7 @@ export class DraftService {
     // Generate draft pick assets for trading
     if (this.pickAssetRepo && league) {
       const rosters = await this.rosterRepo.findByLeagueId(leagueId);
-      const rosterIds = rosters.map(r => r.id);
+      const rosterIds = rosters.map((r) => r.id);
       const season = parseInt(league.season, 10);
       const rounds = options.rounds || defaultRounds;
 
@@ -158,7 +159,9 @@ export class DraftService {
             rosterIds
           );
         }
-        logger.info(`Generated future pick assets for dynasty league ${leagueId} (seasons ${season + 1}-${season + 3})`);
+        logger.info(
+          `Generated future pick assets for dynasty league ${leagueId} (seasons ${season + 1}-${season + 3})`
+        );
       }
 
       logger.info(`Generated ${rosterIds.length * rounds} pick assets for draft ${draft.id}`);
@@ -177,7 +180,10 @@ export class DraftService {
    * Get draft configuration options and defaults for a league.
    * Returns available draft types, default values, constraints, and any league-specific overrides.
    */
-  async getDraftConfig(leagueId: number, userId: string): Promise<{
+  async getDraftConfig(
+    leagueId: number,
+    userId: string
+  ): Promise<{
     draftTypes: Array<{ value: string; label: string; description: string }>;
     defaults: {
       draftType: string;
@@ -225,7 +231,7 @@ export class DraftService {
         rounds: totalRosterSlots,
         pickTimeSeconds: 90,
         auctionSettings: {
-          bidWindowSeconds: 43200,         // 12 hours
+          bidWindowSeconds: 43200, // 12 hours
           maxActiveNominationsPerTeam: 2,
           minBid: 1,
           minIncrement: 1,
@@ -379,11 +385,14 @@ export class DraftService {
       throw new ValidationException('Cannot edit completed draft settings');
     }
     if (draft.status === 'in_progress') {
-      throw new ValidationException('Cannot edit draft settings while in progress. Pause the draft first.');
+      throw new ValidationException(
+        'Cannot edit draft settings while in progress. Pause the draft first.'
+      );
     }
 
     // 4. If paused, only allow timer-related changes
-    const hasStructuralChanges = updates.draftType !== undefined ||
+    const hasStructuralChanges =
+      updates.draftType !== undefined ||
       updates.rounds !== undefined ||
       updates.auctionSettings?.auction_mode !== undefined ||
       updates.auctionSettings?.max_active_nominations_per_team !== undefined ||
@@ -407,7 +416,8 @@ export class DraftService {
         mergedSettings.bidWindowSeconds = updates.auctionSettings.bid_window_seconds;
       }
       if (updates.auctionSettings.max_active_nominations_per_team !== undefined) {
-        mergedSettings.maxActiveNominationsPerTeam = updates.auctionSettings.max_active_nominations_per_team;
+        mergedSettings.maxActiveNominationsPerTeam =
+          updates.auctionSettings.max_active_nominations_per_team;
       }
       if (updates.auctionSettings.nomination_seconds !== undefined) {
         mergedSettings.nominationSeconds = updates.auctionSettings.nomination_seconds;
@@ -433,11 +443,16 @@ export class DraftService {
     });
 
     // 7. If rounds changed and draft not started, regenerate pick assets
-    if (updates.rounds && updates.rounds !== draft.rounds && draft.status === 'not_started' && this.pickAssetRepo) {
+    if (
+      updates.rounds &&
+      updates.rounds !== draft.rounds &&
+      draft.status === 'not_started' &&
+      this.pickAssetRepo
+    ) {
       const league = await this.leagueRepo.findById(leagueId);
       if (league) {
         const rosters = await this.rosterRepo.findByLeagueId(leagueId);
-        const rosterIds = rosters.map(r => r.id);
+        const rosterIds = rosters.map((r) => r.id);
         const season = parseInt(league.season, 10);
 
         // Delete existing pick assets for this draft

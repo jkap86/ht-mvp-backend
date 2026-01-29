@@ -56,11 +56,7 @@ export class RosterPlayersRepository {
   /**
    * Check if a player is on any roster in a league
    */
-  async findOwner(
-    leagueId: number,
-    playerId: number,
-    client?: PoolClient
-  ): Promise<number | null> {
+  async findOwner(leagueId: number, playerId: number, client?: PoolClient): Promise<number | null> {
     const db = client || this.db;
     const result = await db.query(
       `SELECT rp.roster_id
@@ -193,10 +189,7 @@ export class RosterPlayersRepository {
    */
   async deleteAllByRosterId(rosterId: number, client?: PoolClient): Promise<number> {
     const db = client || this.db;
-    const result = await db.query(
-      'DELETE FROM roster_players WHERE roster_id = $1',
-      [rosterId]
-    );
+    const result = await db.query('DELETE FROM roster_players WHERE roster_id = $1', [rosterId]);
     return result.rowCount || 0;
   }
 }

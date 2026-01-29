@@ -3,11 +3,7 @@ import { Pool } from 'pg';
 import { DraftRepository } from './drafts.repository';
 import { DraftPickAssetRepository } from './draft-pick-asset.repository';
 import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
-import {
-  ForbiddenException,
-  NotFoundException,
-  ValidationException,
-} from '../../utils/exceptions';
+import { ForbiddenException, NotFoundException, ValidationException } from '../../utils/exceptions';
 import { tryGetSocketService } from '../../socket';
 
 /**
@@ -103,7 +99,7 @@ export class DraftOrderService {
     const shuffled = secureShuffleArray(allRosters);
 
     // Atomically update draft order in a single transaction
-    const rosterIds = shuffled.map(r => r.id);
+    const rosterIds = shuffled.map((r) => r.id);
     await this.draftRepo.updateDraftOrderAtomic(draftId, rosterIds);
 
     // Update pick asset positions to match new draft order
@@ -133,7 +129,7 @@ export class DraftOrderService {
       return;
     }
     // Use batch insert instead of N separate queries
-    const rosterIds = rosters.map(r => r.id);
+    const rosterIds = rosters.map((r) => r.id);
     await this.draftRepo.updateDraftOrderAtomic(draftId, rosterIds);
   }
 }

@@ -1,10 +1,7 @@
 import { MatchupsRepository } from './matchups.repository';
 import { LeagueRepository } from '../leagues/leagues.repository';
 import { Matchup, Standing } from './matchups.model';
-import {
-  NotFoundException,
-  ForbiddenException,
-} from '../../utils/exceptions';
+import { NotFoundException, ForbiddenException } from '../../utils/exceptions';
 
 /**
  * Streak result for a team
@@ -28,10 +25,7 @@ export class StandingsService {
   /**
    * Get current standings for a league
    */
-  async getStandings(
-    leagueId: number,
-    userId: string
-  ): Promise<Standing[]> {
+  async getStandings(leagueId: number, userId: string): Promise<Standing[]> {
     // Validate league membership
     const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
     if (!isMember) {

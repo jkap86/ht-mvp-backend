@@ -1,5 +1,5 @@
 import { Pool } from 'pg';
-import { ChatMessage, ChatMessageWithUser } from './chat.model';
+import { ChatMessageWithUser } from './chat.model';
 
 export class ChatRepository {
   constructor(private readonly pool: Pool) {}
@@ -27,7 +27,11 @@ export class ChatRepository {
     return result.rows[0];
   }
 
-  async findByLeagueId(leagueId: number, limit = 50, before?: number): Promise<ChatMessageWithUser[]> {
+  async findByLeagueId(
+    leagueId: number,
+    limit = 50,
+    before?: number
+  ): Promise<ChatMessageWithUser[]> {
     let query = `
       SELECT
         m.id,

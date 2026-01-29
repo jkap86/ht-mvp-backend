@@ -65,20 +65,39 @@ export class TradesController {
       const userId = requireUserId(req);
       const leagueId = requireLeagueId(req);
 
-      const { recipient_roster_id, offering_player_ids, requesting_player_ids, message } = req.body;
+      const {
+        recipient_roster_id,
+        offering_player_ids,
+        requesting_player_ids,
+        offering_pick_asset_ids,
+        requesting_pick_asset_ids,
+        message,
+      } = req.body;
 
       if (!recipient_roster_id) {
         throw new ValidationException('recipient_roster_id is required');
       }
 
       if (!Array.isArray(offering_player_ids) || !Array.isArray(requesting_player_ids)) {
-        throw new ValidationException('offering_player_ids and requesting_player_ids must be arrays');
+        throw new ValidationException(
+          'offering_player_ids and requesting_player_ids must be arrays'
+        );
+      }
+
+      // Validate pick asset IDs are arrays if provided
+      if (offering_pick_asset_ids !== undefined && !Array.isArray(offering_pick_asset_ids)) {
+        throw new ValidationException('offering_pick_asset_ids must be an array');
+      }
+      if (requesting_pick_asset_ids !== undefined && !Array.isArray(requesting_pick_asset_ids)) {
+        throw new ValidationException('requesting_pick_asset_ids must be an array');
       }
 
       const trade = await this.tradesService.proposeTrade(leagueId, userId, {
         recipientRosterId: recipient_roster_id,
         offeringPlayerIds: offering_player_ids,
         requestingPlayerIds: requesting_player_ids,
+        offeringPickAssetIds: offering_pick_asset_ids,
+        requestingPickAssetIds: requesting_pick_asset_ids,
         message,
       });
 
@@ -161,15 +180,33 @@ export class TradesController {
         throw new ValidationException('Invalid trade ID');
       }
 
-      const { offering_player_ids, requesting_player_ids, message } = req.body;
+      const {
+        offering_player_ids,
+        requesting_player_ids,
+        offering_pick_asset_ids,
+        requesting_pick_asset_ids,
+        message,
+      } = req.body;
 
       if (!Array.isArray(offering_player_ids) || !Array.isArray(requesting_player_ids)) {
-        throw new ValidationException('offering_player_ids and requesting_player_ids must be arrays');
+        throw new ValidationException(
+          'offering_player_ids and requesting_player_ids must be arrays'
+        );
+      }
+
+      // Validate pick asset IDs are arrays if provided
+      if (offering_pick_asset_ids !== undefined && !Array.isArray(offering_pick_asset_ids)) {
+        throw new ValidationException('offering_pick_asset_ids must be an array');
+      }
+      if (requesting_pick_asset_ids !== undefined && !Array.isArray(requesting_pick_asset_ids)) {
+        throw new ValidationException('requesting_pick_asset_ids must be an array');
       }
 
       const trade = await this.tradesService.counterTrade(tradeId, userId, {
         offeringPlayerIds: offering_player_ids,
         requestingPlayerIds: requesting_player_ids,
+        offeringPickAssetIds: offering_pick_asset_ids,
+        requestingPickAssetIds: requesting_pick_asset_ids,
         message,
       });
 

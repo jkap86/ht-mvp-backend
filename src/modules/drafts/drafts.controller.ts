@@ -4,7 +4,12 @@ import { DraftService } from './drafts.service';
 import { DraftQueueService } from './draft-queue.service';
 import { SlowAuctionService } from './auction/slow-auction.service';
 import { AuthorizationService } from '../auth/authorization.service';
-import { requireUserId, requireLeagueId, requireDraftId, requirePlayerId } from '../../utils/controller-helpers';
+import {
+  requireUserId,
+  requireLeagueId,
+  requireDraftId,
+  requirePlayerId,
+} from '../../utils/controller-helpers';
 import { ValidationException } from '../../utils/exceptions';
 import { ActionDispatcher } from './action-handlers';
 import { auctionLotToResponse } from './auction/auction.models';
@@ -338,7 +343,13 @@ export class DraftController {
       const playerId = requirePlayerId(req);
       const idempotencyKey = req.headers['x-idempotency-key'] as string | undefined;
 
-      const pick = await this.draftService.makePick(leagueId, draftId, userId, playerId, idempotencyKey);
+      const pick = await this.draftService.makePick(
+        leagueId,
+        draftId,
+        userId,
+        playerId,
+        idempotencyKey
+      );
       res.status(201).json(pick);
     } catch (error) {
       next(error);

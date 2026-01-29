@@ -32,8 +32,10 @@ function isPastThursdayLockTime(): boolean {
 
   // If it's Thursday, check if past 8:20 PM
   if (dayOfWeek === 4) {
-    return hours > THURSDAY_LOCK_HOUR ||
-           (hours === THURSDAY_LOCK_HOUR && minutes >= THURSDAY_LOCK_MINUTE);
+    return (
+      hours > THURSDAY_LOCK_HOUR ||
+      (hours === THURSDAY_LOCK_HOUR && minutes >= THURSDAY_LOCK_MINUTE)
+    );
   }
 
   // If it's Friday (5), Saturday (6), Sunday (0), Monday (1), Tuesday (2), or Wednesday (3) after Thursday
@@ -121,7 +123,9 @@ export async function runStatsSync(): Promise<void> {
 
     // Sync stats for the current week
     const result = await statsService.syncWeeklyStats(seasonNum, week);
-    logger.info(`Stats sync complete: ${result.synced} synced, ${result.skipped} skipped, ${result.total} total`);
+    logger.info(
+      `Stats sync complete: ${result.synced} synced, ${result.skipped} skipped, ${result.total} total`
+    );
 
     // Notify leagues with active matchups for this week
     if (result.synced > 0) {
@@ -140,7 +144,10 @@ export async function runStatsSync(): Promise<void> {
 /**
  * Sync stats for a specific week (manual trigger)
  */
-export async function syncWeekStats(season: number, week: number): Promise<{ synced: number; skipped: number; total: number }> {
+export async function syncWeekStats(
+  season: number,
+  week: number
+): Promise<{ synced: number; skipped: number; total: number }> {
   logger.info(`Manual stats sync for ${season} week ${week}...`);
   const statsService = container.resolve<StatsService>(KEYS.STATS_SERVICE);
   const matchupsRepo = container.resolve<MatchupsRepository>(KEYS.MATCHUPS_REPO);
@@ -158,7 +165,10 @@ export async function syncWeekStats(season: number, week: number): Promise<{ syn
 /**
  * Sync projections for a specific week (manual trigger)
  */
-export async function syncWeekProjections(season: number, week: number): Promise<{ synced: number; skipped: number; total: number }> {
+export async function syncWeekProjections(
+  season: number,
+  week: number
+): Promise<{ synced: number; skipped: number; total: number }> {
   logger.info(`Manual projections sync for ${season} week ${week}...`);
   const statsService = container.resolve<StatsService>(KEYS.STATS_SERVICE);
   return statsService.syncWeeklyProjections(season, week);

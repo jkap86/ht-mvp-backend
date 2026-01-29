@@ -1,11 +1,7 @@
 import { Pool } from 'pg';
 import { MatchupsRepository } from './matchups.repository';
 import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
-import {
-  NotFoundException,
-  ForbiddenException,
-  ValidationException,
-} from '../../utils/exceptions';
+import { NotFoundException, ForbiddenException, ValidationException } from '../../utils/exceptions';
 
 /**
  * Generated matchup data for a single game
@@ -40,11 +36,7 @@ export class ScheduleGeneratorService {
   /**
    * Generate round-robin schedule for regular season
    */
-  async generateSchedule(
-    leagueId: number,
-    weeks: number,
-    userId: string
-  ): Promise<void> {
+  async generateSchedule(leagueId: number, weeks: number, userId: string): Promise<void> {
     // Only commissioner can generate schedule
     const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
     if (!isCommissioner) {
@@ -67,7 +59,7 @@ export class ScheduleGeneratorService {
     await this.matchupsRepo.deleteByLeague(leagueId, season);
 
     // Generate round-robin matchups
-    const rosterIds = rosters.map(r => r.id);
+    const rosterIds = rosters.map((r) => r.id);
     const matchups = this.generateRoundRobinMatchups(rosterIds, weeks);
 
     // Create matchups in database
@@ -76,15 +68,7 @@ export class ScheduleGeneratorService {
       await client.query('BEGIN');
 
       for (const { week, roster1Id, roster2Id } of matchups) {
-        await this.matchupsRepo.create(
-          leagueId,
-          season,
-          week,
-          roster1Id,
-          roster2Id,
-          false,
-          client
-        );
+        await this.matchupsRepo.create(leagueId, season, week, roster1Id, roster2Id, false, client);
       }
 
       await client.query('COMMIT');
@@ -99,10 +83,7 @@ export class ScheduleGeneratorService {
   /**
    * Generate round-robin matchups for given rosters
    */
-  generateRoundRobinMatchups(
-    rosterIds: number[],
-    weeks: number
-  ): GeneratedMatchup[] {
+  generateRoundRobinMatchups(rosterIds: number[], weeks: number): GeneratedMatchup[] {
     const matchups: GeneratedMatchup[] = [];
     const teams = [...rosterIds];
 
@@ -116,7 +97,7 @@ export class ScheduleGeneratorService {
 
     for (let week = 1; week <= weeks; week++) {
       // Calculate which round within the round-robin cycle
-      const round = ((week - 1) % roundsNeeded);
+      const round = (week - 1) % roundsNeeded;
 
       // Generate pairings for this round using circle method
       const rotatedTeams = this.rotateTeams(teams, round);

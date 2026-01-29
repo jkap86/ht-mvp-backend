@@ -3,7 +3,6 @@ import { LeagueRepository, RosterRepository } from './leagues.repository';
 import { UserRepository } from '../auth/auth.repository';
 import { RosterPlayersRepository } from '../rosters/rosters.repository';
 import { tryGetSocketService } from '../../socket/socket.service';
-import { logger } from '../../config/env.config';
 import {
   NotFoundException,
   ForbiddenException,
@@ -103,7 +102,7 @@ export class RosterService {
       throw new ForbiddenException('You are not a member of this league');
     }
 
-    return rosters.map(r => ({
+    return rosters.map((r) => ({
       id: r.id,
       league_id: r.leagueId,
       user_id: r.userId,
@@ -197,7 +196,7 @@ export class RosterService {
     }
 
     // Get team name before deletion
-    const teamName = await this.rosterRepo.getTeamName(targetRosterId) || 'Unknown Team';
+    const teamName = (await this.rosterRepo.getTeamName(targetRosterId)) || 'Unknown Team';
 
     // Use transaction to delete everything
     const client = await this.db.connect();
@@ -232,16 +231,10 @@ export class RosterService {
       );
 
       // Delete waiver priority entry
-      await client.query(
-        'DELETE FROM waiver_priority WHERE roster_id = $1',
-        [targetRosterId]
-      );
+      await client.query('DELETE FROM waiver_priority WHERE roster_id = $1', [targetRosterId]);
 
       // Delete FAAB budget entry
-      await client.query(
-        'DELETE FROM faab_budgets WHERE roster_id = $1',
-        [targetRosterId]
-      );
+      await client.query('DELETE FROM faab_budgets WHERE roster_id = $1', [targetRosterId]);
 
       // Delete the roster itself
       await this.rosterRepo.delete(targetRosterId, client);

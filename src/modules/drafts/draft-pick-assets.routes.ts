@@ -15,11 +15,7 @@ const authService = container.resolve<AuthorizationService>(KEYS.AUTHORIZATION_S
 const rosterRepo = container.resolve<RosterRepository>(KEYS.ROSTER_REPO);
 
 // Create controller
-const pickAssetsController = new DraftPickAssetsController(
-  pickAssetRepo,
-  authService,
-  rosterRepo
-);
+const pickAssetsController = new DraftPickAssetsController(pickAssetRepo, authService, rosterRepo);
 
 // League-level routes (mounted under /api/leagues/:leagueId/pick-assets)
 const leagueRouter = Router({ mergeParams: true });

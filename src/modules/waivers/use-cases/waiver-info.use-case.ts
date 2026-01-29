@@ -11,10 +11,7 @@ import {
   WaiverWirePlayerWithDetails,
   parseWaiverSettings,
 } from '../waivers.model';
-import {
-  NotFoundException,
-  ForbiddenException,
-} from '../../../utils/exceptions';
+import { NotFoundException, ForbiddenException } from '../../../utils/exceptions';
 
 export interface WaiverInfoContext {
   db: Pool;
@@ -93,7 +90,7 @@ export async function initializeForSeason(
 
   // Get all rosters in the league
   const rosters = await ctx.rosterRepo.findByLeagueId(leagueId);
-  const rosterIds = rosters.map(r => r.id);
+  const rosterIds = rosters.map((r) => r.id);
 
   const client = await ctx.db.connect();
   try {

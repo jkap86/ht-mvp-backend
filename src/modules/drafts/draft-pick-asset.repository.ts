@@ -11,11 +11,9 @@ export class DraftPickAssetRepository {
   /**
    * Find a single pick asset by ID
    */
-  async findById(id: number): Promise<DraftPickAsset | null> {
-    const result = await this.db.query(
-      'SELECT * FROM draft_pick_assets WHERE id = $1',
-      [id]
-    );
+  async findById(id: number, client?: PoolClient): Promise<DraftPickAsset | null> {
+    const queryRunner = client || this.db;
+    const result = await queryRunner.query('SELECT * FROM draft_pick_assets WHERE id = $1', [id]);
     return result.rows.length > 0 ? draftPickAssetFromDatabase(result.rows[0]) : null;
   }
 
@@ -117,10 +115,7 @@ export class DraftPickAssetRepository {
   /**
    * Find all pick assets owned by a specific roster
    */
-  async findByOwner(
-    rosterId: number,
-    leagueId?: number
-  ): Promise<DraftPickAssetWithDetails[]> {
+  async findByOwner(rosterId: number, leagueId?: number): Promise<DraftPickAssetWithDetails[]> {
     let query = `SELECT
         dpa.*,
         orig_u.username as original_username,
@@ -134,7 +129,7 @@ export class DraftPickAssetRepository {
        JOIN users owner_u ON owner_r.user_id = owner_u.id
        WHERE dpa.current_owner_roster_id = $1`;
 
-    const params: (number)[] = [rosterId];
+    const params: number[] = [rosterId];
 
     if (leagueId !== undefined) {
       params.push(leagueId);
@@ -341,8 +336,9 @@ export class DraftPickAssetRepository {
   /**
    * Check if a pick has already been used (draft pick made with it)
    */
-  async isPickUsed(assetId: number): Promise<boolean> {
-    const result = await this.db.query(
+  async isPickUsed(assetId: number, client?: PoolClient): Promise<boolean> {
+    const queryRunner = client || this.db;
+    const result = await queryRunner.query(
       `SELECT EXISTS(
         SELECT 1 FROM draft_picks
         WHERE draft_pick_asset_id = $1
@@ -355,8 +351,9 @@ export class DraftPickAssetRepository {
   /**
    * Check if the pick's round has already passed in the draft
    */
-  async isRoundPassed(assetId: number): Promise<boolean> {
-    const result = await this.db.query(
+  async isRoundPassed(assetId: number, client?: PoolClient): Promise<boolean> {
+    const queryRunner = client || this.db;
+    const result = await queryRunner.query(
       `SELECT
         dpa.round,
         d.current_round,
@@ -444,10 +441,7 @@ export class DraftPickAssetRepository {
    */
   async deleteByDraftId(draftId: number, client?: PoolClient): Promise<void> {
     const queryRunner = client || this.db;
-    await queryRunner.query(
-      'DELETE FROM draft_pick_assets WHERE draft_id = $1',
-      [draftId]
-    );
+    await queryRunner.query('DELETE FROM draft_pick_assets WHERE draft_id = $1', [draftId]);
   }
 
   /**

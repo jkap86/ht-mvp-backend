@@ -1,1 +1,6 @@
-export { SocketService, initializeSocket, getSocketService, tryGetSocketService } from './socket.service';
+export {
+  SocketService,
+  initializeSocket,
+  getSocketService,
+  tryGetSocketService,
+} from './socket.service';

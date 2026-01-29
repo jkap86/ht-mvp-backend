@@ -10,7 +10,7 @@ export const DRAFT_STATUS = {
   COMPLETED: 'completed',
 } as const;
 
-export type DraftStatus = typeof DRAFT_STATUS[keyof typeof DRAFT_STATUS];
+export type DraftStatus = (typeof DRAFT_STATUS)[keyof typeof DRAFT_STATUS];
 
 export const DRAFT_TYPE = {
   SNAKE: 'snake',
@@ -18,4 +18,4 @@ export const DRAFT_TYPE = {
   AUCTION: 'auction',
 } as const;
 
-export type DraftType = typeof DRAFT_TYPE[keyof typeof DRAFT_TYPE];
+export type DraftType = (typeof DRAFT_TYPE)[keyof typeof DRAFT_TYPE];

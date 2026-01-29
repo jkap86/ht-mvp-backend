@@ -75,7 +75,7 @@ export class SocketService {
         socket.userId = payload.userId;
         socket.username = payload.username;
         next();
-      } catch (error) {
+      } catch (_error) {
         next(new Error('Invalid token'));
       }
     });
@@ -243,7 +243,10 @@ export class SocketService {
   }
 
   // Emit autodraft toggled event when a user enables/disables autodraft
-  emitAutodraftToggled(draftId: number, data: { rosterId: number; enabled: boolean; forced: boolean }): void {
+  emitAutodraftToggled(
+    draftId: number,
+    data: { rosterId: number; enabled: boolean; forced: boolean }
+  ): void {
     this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.DRAFT.AUTODRAFT_TOGGLED, data);
   }
 
@@ -253,14 +256,17 @@ export class SocketService {
   }
 
   // Emit pick traded event when a draft pick asset changes ownership
-  emitPickTraded(leagueId: number, data: {
-    pickAssetId: number;
-    season: number;
-    round: number;
-    previousOwnerRosterId: number;
-    newOwnerRosterId: number;
-    tradeId: number;
-  }): void {
+  emitPickTraded(
+    leagueId: number,
+    data: {
+      pickAssetId: number;
+      season: number;
+      round: number;
+      previousOwnerRosterId: number;
+      newOwnerRosterId: number;
+      tradeId: number;
+    }
+  ): void {
     this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.DRAFT.PICK_TRADED, data);
   }
 
@@ -280,7 +286,10 @@ export class SocketService {
   }
 
   // Emit auction lot won event
-  emitAuctionLotWon(draftId: number, data: { lotId: number; playerId: number; winnerRosterId: number; price: number }): void {
+  emitAuctionLotWon(
+    draftId: number,
+    data: { lotId: number; playerId: number; winnerRosterId: number; price: number }
+  ): void {
     this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.AUCTION.LOT_WON, data);
   }
 
@@ -295,7 +304,10 @@ export class SocketService {
   }
 
   // Emit nominator changed event (for fast auction)
-  emitAuctionNominatorChanged(draftId: number, data: { nominatorRosterId: number; nominationNumber: number }): void {
+  emitAuctionNominatorChanged(
+    draftId: number,
+    data: { nominatorRosterId: number; nominationNumber: number }
+  ): void {
     this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.AUCTION.NOMINATOR_CHANGED, data);
   }
 
@@ -400,7 +412,9 @@ export class SocketService {
 
   // Emit waiver priority updated event
   emitWaiverPriorityUpdated(leagueId: number, priorities: any[]): void {
-    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.WAIVER.PRIORITY_UPDATED, { priorities });
+    this.io
+      .to(ROOM_NAMES.league(leagueId))
+      .emit(SOCKET_EVENTS.WAIVER.PRIORITY_UPDATED, { priorities });
   }
 
   // Emit FAAB budget updated event
@@ -428,7 +442,10 @@ export class SocketService {
   }
 
   // Emit member joined event
-  emitMemberJoined(leagueId: number, data: { rosterId: number; teamName: string; userId: string }): void {
+  emitMemberJoined(
+    leagueId: number,
+    data: { rosterId: number; teamName: string; userId: string }
+  ): void {
     this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.MEMBER.JOINED, data);
   }
 

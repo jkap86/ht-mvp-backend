@@ -102,32 +102,32 @@ export type ScoringType = 'ppr' | 'half_ppr' | 'standard';
 
 export interface ScoringRules {
   // Passing
-  passYards: number;      // points per yard (e.g., 0.04)
-  passTd: number;         // points per TD (e.g., 4)
-  passInt: number;        // points per INT (e.g., -2)
+  passYards: number; // points per yard (e.g., 0.04)
+  passTd: number; // points per TD (e.g., 4)
+  passInt: number; // points per INT (e.g., -2)
   // Rushing
-  rushYards: number;      // e.g., 0.1
-  rushTd: number;         // e.g., 6
+  rushYards: number; // e.g., 0.1
+  rushTd: number; // e.g., 6
   // Receiving
-  receptions: number;     // PPR: 1, Half: 0.5, Standard: 0
-  recYards: number;       // e.g., 0.1
-  recTd: number;          // e.g., 6
+  receptions: number; // PPR: 1, Half: 0.5, Standard: 0
+  recYards: number; // e.g., 0.1
+  recTd: number; // e.g., 6
   // Misc
-  fumblesLost: number;    // e.g., -2
+  fumblesLost: number; // e.g., -2
   twoPtConversions: number; // e.g., 2
   // Kicking
-  fgMade: number;         // e.g., 3
-  fgMissed: number;       // e.g., -1
-  patMade: number;        // e.g., 1
-  patMissed: number;      // e.g., -1
+  fgMade: number; // e.g., 3
+  fgMissed: number; // e.g., -1
+  patMade: number; // e.g., 1
+  patMissed: number; // e.g., -1
   // Defense
-  defTd: number;          // e.g., 6
-  defInt: number;         // e.g., 2
-  defSack: number;        // e.g., 1
-  defFumbleRec: number;   // e.g., 2
-  defSafety: number;      // e.g., 2
+  defTd: number; // e.g., 6
+  defInt: number; // e.g., 2
+  defSack: number; // e.g., 1
+  defFumbleRec: number; // e.g., 2
+  defSafety: number; // e.g., 2
   // Defensive points allowed brackets
-  defPointsAllowed0: number;    // 0 points: e.g., 10
+  defPointsAllowed0: number; // 0 points: e.g., 10
   defPointsAllowed1to6: number; // 1-6 points: e.g., 7
   defPointsAllowed7to13: number;
   defPointsAllowed14to20: number;

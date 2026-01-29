@@ -45,7 +45,9 @@ export async function rejectTrade(
     // Re-verify status after acquiring lock (another transaction may have changed it)
     const currentTrade = await ctx.tradesRepo.findById(tradeId, client);
     if (!currentTrade || currentTrade.status !== 'pending') {
-      throw new ValidationException(`Cannot reject trade with status: ${currentTrade?.status || 'unknown'}`);
+      throw new ValidationException(
+        `Cannot reject trade with status: ${currentTrade?.status || 'unknown'}`
+      );
     }
 
     await ctx.tradesRepo.updateStatus(tradeId, 'rejected', client);

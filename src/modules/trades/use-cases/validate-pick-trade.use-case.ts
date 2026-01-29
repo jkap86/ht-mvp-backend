@@ -43,13 +43,7 @@ export async function validatePickTrade(
 
   // Validate offering picks (proposer -> recipient)
   for (const assetId of offeringPickAssetIds) {
-    const asset = await validateSinglePick(
-      ctx,
-      assetId,
-      proposerRosterId,
-      leagueId,
-      'offering'
-    );
+    const asset = await validateSinglePick(ctx, assetId, proposerRosterId, leagueId, 'offering');
     validatedPicks.push({
       asset,
       fromRosterId: proposerRosterId,
@@ -59,13 +53,7 @@ export async function validatePickTrade(
 
   // Validate requesting picks (recipient -> proposer)
   for (const assetId of requestingPickAssetIds) {
-    const asset = await validateSinglePick(
-      ctx,
-      assetId,
-      recipientRosterId,
-      leagueId,
-      'requesting'
-    );
+    const asset = await validateSinglePick(ctx, assetId, recipientRosterId, leagueId, 'requesting');
     validatedPicks.push({
       asset,
       fromRosterId: recipientRosterId,
@@ -94,9 +82,7 @@ async function validateSinglePick(
 
   // Verify the pick belongs to the expected league
   if (asset.leagueId !== leagueId) {
-    throw new ValidationException(
-      `Draft pick ${assetId} does not belong to this league`
-    );
+    throw new ValidationException(`Draft pick ${assetId} does not belong to this league`);
   }
 
   // Verify ownership
@@ -141,9 +127,7 @@ async function validateSinglePick(
 /**
  * Build trade item data for validated pick assets
  */
-export function buildPickTradeItems(
-  validatedPicks: PickValidationResult[]
-): Array<{
+export function buildPickTradeItems(validatedPicks: PickValidationResult[]): Array<{
   itemType: 'draft_pick';
   draftPickAssetId: number;
   pickSeason: number;

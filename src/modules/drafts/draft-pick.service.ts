@@ -4,12 +4,7 @@ import { DraftPickAssetRepository } from './draft-pick-asset.repository';
 import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import { RosterPlayersRepository } from '../rosters/rosters.repository';
 import { PlayerRepository } from '../players/players.repository';
-import {
-  NotFoundException,
-  ForbiddenException,
-  ValidationException,
-  ConflictException,
-} from '../../utils/exceptions';
+import { NotFoundException, ForbiddenException, ValidationException } from '../../utils/exceptions';
 import { tryGetSocketService } from '../../socket';
 import { DraftEngineFactory, IDraftEngine } from '../../engines';
 import { populateRostersFromDraft } from './draft-completion.utils';
@@ -70,9 +65,7 @@ export class DraftPickService {
     const engine = this.engineFactory.createEngine(draft.draftType);
 
     // Load pick assets to check for traded picks
-    const pickAssets = this.pickAssetRepo
-      ? await this.pickAssetRepo.findByDraftId(draftId)
-      : [];
+    const pickAssets = this.pickAssetRepo ? await this.pickAssetRepo.findByDraftId(draftId) : [];
 
     // Use getActualPickerForPickNumber to account for traded picks
     const actualPicker = engine.getActualPickerForPickNumber?.(
@@ -83,8 +76,9 @@ export class DraftPickService {
     );
 
     // Fall back to original picker logic if engine doesn't support traded picks
-    const currentPickerRosterId = actualPicker?.rosterId
-      ?? engine.getPickerForPickNumber(draft, draftOrder, draft.currentPick)?.rosterId;
+    const currentPickerRosterId =
+      actualPicker?.rosterId ??
+      engine.getPickerForPickNumber(draft, draftOrder, draft.currentPick)?.rosterId;
 
     if (currentPickerRosterId !== userRoster.id) {
       throw new ValidationException('It is not your turn to pick');
@@ -223,5 +217,4 @@ export class DraftPickService {
       status: 'in_progress',
     };
   }
-
 }

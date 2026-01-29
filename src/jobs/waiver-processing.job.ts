@@ -1,7 +1,6 @@
 import { Pool } from 'pg';
 import { container, KEYS } from '../container';
 import { WaiversService } from '../modules/waivers/waivers.service';
-import { LeagueRepository } from '../modules/leagues/leagues.repository';
 import { parseWaiverSettings } from '../modules/waivers/waivers.model';
 import { tryGetSocketService } from '../socket/socket.service';
 import { logger } from '../config/logger.config';
@@ -44,14 +43,15 @@ async function processWaivers(): Promise<void> {
 
     if (!lockResult.rows[0].acquired) {
       // Another instance has the lock, skip this tick
-      logger.debug('waiver-processing lock not acquired, skipping', { jobName: 'waiver-processing' });
+      logger.debug('waiver-processing lock not acquired, skipping', {
+        jobName: 'waiver-processing',
+      });
       return;
     }
 
     logger.debug('waiver-processing tick started', { jobName: 'waiver-processing' });
 
     try {
-      const leagueRepo = container.resolve<LeagueRepository>(KEYS.LEAGUE_REPO);
       const waiversService = container.resolve<WaiversService>(KEYS.WAIVERS_SERVICE);
 
       // Get all active leagues with waiver settings
@@ -83,12 +83,15 @@ async function processWaivers(): Promise<void> {
 
           // Check if we already processed waivers for this league in this hour
           // This prevents duplicate processing if the job runs multiple times per hour
-          const lastProcessed = await client.query<{ count: string }>(`
+          const lastProcessed = await client.query<{ count: string }>(
+            `
             SELECT COUNT(*) as count FROM waiver_claims
             WHERE league_id = $1
             AND status IN ('successful', 'failed')
             AND processed_at >= date_trunc('hour', NOW())
-          `, [league.id]);
+          `,
+            [league.id]
+          );
 
           if (parseInt(lastProcessed.rows[0].count, 10) > 0) {
             logger.debug(`Waivers already processed for league ${league.id} this hour`, {
@@ -98,7 +101,9 @@ async function processWaivers(): Promise<void> {
           }
 
           // Process claims for this league
-          logger.info(`Processing waivers for league ${league.id}`, { jobName: 'waiver-processing' });
+          logger.info(`Processing waivers for league ${league.id}`, {
+            jobName: 'waiver-processing',
+          });
           const result = await waiversService.processLeagueClaims(league.id);
 
           leaguesProcessed++;
@@ -116,7 +121,6 @@ async function processWaivers(): Promise<void> {
             processed: result.processed,
             successful: result.successful,
           });
-
         } catch (leagueError) {
           logger.error(`Failed to process waivers for league ${league.id}`, {
             jobName: 'waiver-processing',
@@ -134,7 +138,6 @@ async function processWaivers(): Promise<void> {
         successfulClaims,
         durationMs,
       });
-
     } finally {
       // Always release advisory lock
       await client.query('SELECT pg_advisory_unlock($1)', [WAIVER_PROCESSING_LOCK_ID]);

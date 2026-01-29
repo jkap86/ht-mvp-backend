@@ -58,7 +58,10 @@ export class PlayerStatsRepository {
   /**
    * Upsert player stats (insert or update)
    */
-  async upsert(stats: Partial<PlayerStats> & { playerId: number; season: number; week: number }, client?: PoolClient): Promise<PlayerStats> {
+  async upsert(
+    stats: Partial<PlayerStats> & { playerId: number; season: number; week: number },
+    client?: PoolClient
+  ): Promise<PlayerStats> {
     const db = client || this.db;
     const result = await db.query(
       `INSERT INTO player_stats (
@@ -127,7 +130,9 @@ export class PlayerStatsRepository {
   /**
    * Bulk upsert player stats
    */
-  async bulkUpsert(statsList: Array<Partial<PlayerStats> & { playerId: number; season: number; week: number }>): Promise<void> {
+  async bulkUpsert(
+    statsList: Array<Partial<PlayerStats> & { playerId: number; season: number; week: number }>
+  ): Promise<void> {
     if (statsList.length === 0) return;
 
     const client = await this.db.connect();

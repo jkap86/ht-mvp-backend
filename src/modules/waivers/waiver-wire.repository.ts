@@ -65,7 +65,11 @@ export class WaiverWireRepository {
   /**
    * Get waiver wire expiration for a player
    */
-  async getPlayerExpiration(leagueId: number, playerId: number, client?: PoolClient): Promise<Date | null> {
+  async getPlayerExpiration(
+    leagueId: number,
+    playerId: number,
+    client?: PoolClient
+  ): Promise<Date | null> {
     const conn = client || this.db;
     const result = await conn.query(
       'SELECT waiver_expires_at FROM waiver_wire WHERE league_id = $1 AND player_id = $2',
@@ -92,7 +96,7 @@ export class WaiverWireRepository {
       [leagueId]
     );
 
-    return result.rows.map(row => ({
+    return result.rows.map((row) => ({
       ...waiverWirePlayerFromDatabase(row),
       playerName: row.player_name || 'Unknown',
       playerPosition: row.player_position,
@@ -106,9 +110,7 @@ export class WaiverWireRepository {
    */
   async removeExpired(client?: PoolClient): Promise<number> {
     const conn = client || this.db;
-    const result = await conn.query(
-      'DELETE FROM waiver_wire WHERE waiver_expires_at <= NOW()'
-    );
+    const result = await conn.query('DELETE FROM waiver_wire WHERE waiver_expires_at <= NOW()');
     return result.rowCount ?? 0;
   }
 }

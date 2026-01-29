@@ -107,7 +107,7 @@ export class WaiverClaimsRepository {
       [rosterId]
     );
 
-    return result.rows.map(row => ({
+    return result.rows.map((row) => ({
       ...waiverClaimFromDatabase(row),
       teamName: row.team_name || `Team ${row.roster_id}`,
       username: row.username || 'Unknown',
@@ -136,7 +136,11 @@ export class WaiverClaimsRepository {
   /**
    * Get pending claims for a specific player
    */
-  async getPendingByPlayer(leagueId: number, playerId: number, client?: PoolClient): Promise<WaiverClaim[]> {
+  async getPendingByPlayer(
+    leagueId: number,
+    playerId: number,
+    client?: PoolClient
+  ): Promise<WaiverClaim[]> {
     const conn = client || this.db;
     const result = await conn.query(
       `SELECT * FROM waiver_claims
@@ -183,7 +187,11 @@ export class WaiverClaimsRepository {
   /**
    * Update drop player
    */
-  async updateDropPlayer(claimId: number, dropPlayerId: number | null, client?: PoolClient): Promise<WaiverClaim> {
+  async updateDropPlayer(
+    claimId: number,
+    dropPlayerId: number | null,
+    client?: PoolClient
+  ): Promise<WaiverClaim> {
     const conn = client || this.db;
     const result = await conn.query(
       'UPDATE waiver_claims SET drop_player_id = $2 WHERE id = $1 RETURNING *',

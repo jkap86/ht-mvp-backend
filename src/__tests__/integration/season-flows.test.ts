@@ -7,7 +7,10 @@ import { MatchupsRepository } from '../../modules/matchups/matchups.repository';
 import { LineupsRepository } from '../../modules/lineups/lineups.repository';
 import { PlayerStatsRepository } from '../../modules/scoring/scoring.repository';
 import { LeagueRepository, RosterRepository } from '../../modules/leagues/leagues.repository';
-import { RosterPlayersRepository, RosterTransactionsRepository } from '../../modules/rosters/rosters.repository';
+import {
+  RosterPlayersRepository,
+  RosterTransactionsRepository,
+} from '../../modules/rosters/rosters.repository';
 import {
   WaiverPriorityRepository,
   FaabBudgetRepository,
@@ -22,9 +25,9 @@ import {
 import { DEFAULT_SCORING_RULES, PlayerStats } from '../../modules/scoring/scoring.model';
 import { LineupSlots, RosterLineup } from '../../modules/lineups/lineups.model';
 import { Roster, League } from '../../modules/leagues/leagues.model';
-import { WaiverClaim, WaiverClaimWithDetails } from '../../modules/waivers/waivers.model';
+import { WaiverClaim } from '../../modules/waivers/waivers.model';
 import { Trade, TradeItem } from '../../modules/trades/trades.model';
-import { RosterTransaction, RosterPlayer } from '../../modules/rosters/rosters.model';
+import { RosterTransaction } from '../../modules/rosters/rosters.model';
 
 // Mock socket service to prevent emission errors
 jest.mock('../../socket', () => ({
@@ -46,15 +49,17 @@ jest.mock('../../socket', () => ({
 
 // ==================== HELPER FUNCTIONS ====================
 
-const createMockPoolClient = (): jest.Mocked<PoolClient> => ({
-  query: jest.fn().mockResolvedValue({ rows: [] }),
-  release: jest.fn(),
-} as unknown as jest.Mocked<PoolClient>);
+const createMockPoolClient = (): jest.Mocked<PoolClient> =>
+  ({
+    query: jest.fn().mockResolvedValue({ rows: [] }),
+    release: jest.fn(),
+  }) as unknown as jest.Mocked<PoolClient>;
 
-const createMockPool = (mockClient: jest.Mocked<PoolClient>): jest.Mocked<Pool> => ({
-  connect: jest.fn().mockResolvedValue(mockClient),
-  query: jest.fn().mockResolvedValue({ rows: [] }),
-} as unknown as jest.Mocked<Pool>);
+const createMockPool = (mockClient: jest.Mocked<PoolClient>): jest.Mocked<Pool> =>
+  ({
+    connect: jest.fn().mockResolvedValue(mockClient),
+    query: jest.fn().mockResolvedValue({ rows: [] }),
+  }) as unknown as jest.Mocked<Pool>;
 
 // ==================== TEST 1: Schedule -> Lineup -> Stats -> Score flow ====================
 
@@ -71,32 +76,73 @@ describe('Season Sanity Integration Tests', () => {
     let mockLeagueRepo: jest.Mocked<LeagueRepository>;
 
     const mockLeague = new League(
-      1,                    // id
-      'Test League',        // name
-      'active',             // status
-      {                     // settings
+      1, // id
+      'Test League', // name
+      'active', // status
+      {
+        // settings
         commissioner_roster_id: 1,
         roster_size: 15,
       },
-      { type: 'ppr' },      // scoringSettings
-      '2024',               // season
-      4,                    // totalRosters
-      new Date(),           // createdAt
-      new Date(),           // updatedAt
-      undefined,            // userRosterId
-      1,                    // commissionerRosterId
-      'redraft',            // mode
-      {},                   // leagueSettings
-      1,                    // currentWeek
-      'regular_season',     // seasonStatus
-      'ABC123'              // inviteCode
+      { type: 'ppr' }, // scoringSettings
+      '2024', // season
+      4, // totalRosters
+      new Date(), // createdAt
+      new Date(), // updatedAt
+      undefined, // userRosterId
+      1, // commissionerRosterId
+      'redraft', // mode
+      {}, // leagueSettings
+      1, // currentWeek
+      'regular_season', // seasonStatus
+      'ABC123' // inviteCode
     );
 
     const mockRosters: Roster[] = [
-      { id: 1, leagueId: 1, userId: 'user-1', rosterId: 1, settings: { team_name: 'Team Alpha' }, starters: [], bench: [], createdAt: new Date(), updatedAt: new Date() },
-      { id: 2, leagueId: 1, userId: 'user-2', rosterId: 2, settings: { team_name: 'Team Beta' }, starters: [], bench: [], createdAt: new Date(), updatedAt: new Date() },
-      { id: 3, leagueId: 1, userId: 'user-3', rosterId: 3, settings: { team_name: 'Team Gamma' }, starters: [], bench: [], createdAt: new Date(), updatedAt: new Date() },
-      { id: 4, leagueId: 1, userId: 'user-4', rosterId: 4, settings: { team_name: 'Team Delta' }, starters: [], bench: [], createdAt: new Date(), updatedAt: new Date() },
+      {
+        id: 1,
+        leagueId: 1,
+        userId: 'user-1',
+        rosterId: 1,
+        settings: { team_name: 'Team Alpha' },
+        starters: [],
+        bench: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      {
+        id: 2,
+        leagueId: 1,
+        userId: 'user-2',
+        rosterId: 2,
+        settings: { team_name: 'Team Beta' },
+        starters: [],
+        bench: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      {
+        id: 3,
+        leagueId: 1,
+        userId: 'user-3',
+        rosterId: 3,
+        settings: { team_name: 'Team Gamma' },
+        starters: [],
+        bench: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      {
+        id: 4,
+        leagueId: 1,
+        userId: 'user-4',
+        rosterId: 4,
+        settings: { team_name: 'Team Delta' },
+        starters: [],
+        bench: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
     ];
 
     beforeEach(() => {
@@ -144,12 +190,7 @@ describe('Season Sanity Integration Tests', () => {
         mockLeagueRepo
       );
 
-      scoringService = new ScoringService(
-        mockPool,
-        mockStatsRepo,
-        mockLineupsRepo,
-        mockLeagueRepo
-      );
+      scoringService = new ScoringService(mockPool, mockStatsRepo, mockLineupsRepo, mockLeagueRepo);
     });
 
     it('should generate schedule, set lineups, insert stats, and calculate correct scores rounded to 2 decimal places', async () => {
@@ -158,20 +199,22 @@ describe('Season Sanity Integration Tests', () => {
       mockLeagueRepo.findById.mockResolvedValue(mockLeague);
       mockRosterRepo.findByLeagueId.mockResolvedValue(mockRosters);
       mockMatchupsRepo.deleteByLeague.mockResolvedValue();
-      mockMatchupsRepo.create.mockImplementation(async (leagueId, season, week, roster1Id, roster2Id) => ({
-        id: Math.floor(Math.random() * 1000),
-        leagueId,
-        season,
-        week,
-        roster1Id,
-        roster2Id,
-        roster1Points: null,
-        roster2Points: null,
-        isFinal: false,
-        isPlayoff: false,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }));
+      mockMatchupsRepo.create.mockImplementation(
+        async (leagueId, season, week, roster1Id, roster2Id) => ({
+          id: Math.floor(Math.random() * 1000),
+          leagueId,
+          season,
+          week,
+          roster1Id,
+          roster2Id,
+          roster1Points: null,
+          roster2Points: null,
+          isFinal: false,
+          isPlayoff: false,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        })
+      );
 
       await scheduleGeneratorService.generateSchedule(1, 13, 'user-1');
 
@@ -180,7 +223,7 @@ describe('Season Sanity Integration Tests', () => {
       expect(mockMatchupsRepo.create).toHaveBeenCalled();
       const createCalls = mockMatchupsRepo.create.mock.calls;
       // Week 1 should have 2 matchups for 4 teams
-      const week1Matchups = createCalls.filter(call => call[2] === 1);
+      const week1Matchups = createCalls.filter((call) => call[2] === 1);
       expect(week1Matchups.length).toBe(2);
 
       // STEP 2: Set a lineup for roster 1 (simulating setLineup)
@@ -228,22 +271,270 @@ describe('Season Sanity Integration Tests', () => {
       // The scoring function will still calculate getDefensePointsAllowedScore for all players
       // So for non-DEF, we use 99 (35+ allowed = -4 points) to neutralize effect
       const mockPlayerStats: PlayerStats[] = [
-        { id: 1, playerId: 101, season: 2024, week: 1, passYards: 300, passTd: 3, passInt: 0, rushYards: 0, rushTd: 0, receptions: 0, recYards: 0, recTd: 0, fumblesLost: 0, twoPtConversions: 0, fgMade: 0, fgMissed: 0, patMade: 0, patMissed: 0, defTd: 0, defInt: 0, defSacks: 0, defFumbleRec: 0, defSafety: 0, defPointsAllowed: 99, createdAt: new Date(), updatedAt: new Date() },
-        { id: 2, playerId: 102, season: 2024, week: 1, passYards: 0, passTd: 0, passInt: 0, rushYards: 100, rushTd: 1, receptions: 0, recYards: 0, recTd: 0, fumblesLost: 0, twoPtConversions: 0, fgMade: 0, fgMissed: 0, patMade: 0, patMissed: 0, defTd: 0, defInt: 0, defSacks: 0, defFumbleRec: 0, defSafety: 0, defPointsAllowed: 99, createdAt: new Date(), updatedAt: new Date() },
-        { id: 3, playerId: 103, season: 2024, week: 1, passYards: 0, passTd: 0, passInt: 0, rushYards: 80, rushTd: 0, receptions: 5, recYards: 50, recTd: 0, fumblesLost: 0, twoPtConversions: 0, fgMade: 0, fgMissed: 0, patMade: 0, patMissed: 0, defTd: 0, defInt: 0, defSacks: 0, defFumbleRec: 0, defSafety: 0, defPointsAllowed: 99, createdAt: new Date(), updatedAt: new Date() },
-        { id: 4, playerId: 104, season: 2024, week: 1, passYards: 0, passTd: 0, passInt: 0, rushYards: 0, rushTd: 0, receptions: 8, recYards: 120, recTd: 1, fumblesLost: 0, twoPtConversions: 0, fgMade: 0, fgMissed: 0, patMade: 0, patMissed: 0, defTd: 0, defInt: 0, defSacks: 0, defFumbleRec: 0, defSafety: 0, defPointsAllowed: 99, createdAt: new Date(), updatedAt: new Date() },
-        { id: 5, playerId: 105, season: 2024, week: 1, passYards: 0, passTd: 0, passInt: 0, rushYards: 0, rushTd: 0, receptions: 6, recYards: 85, recTd: 0, fumblesLost: 0, twoPtConversions: 0, fgMade: 0, fgMissed: 0, patMade: 0, patMissed: 0, defTd: 0, defInt: 0, defSacks: 0, defFumbleRec: 0, defSafety: 0, defPointsAllowed: 99, createdAt: new Date(), updatedAt: new Date() },
-        { id: 6, playerId: 106, season: 2024, week: 1, passYards: 0, passTd: 0, passInt: 0, rushYards: 0, rushTd: 0, receptions: 4, recYards: 45, recTd: 1, fumblesLost: 0, twoPtConversions: 0, fgMade: 0, fgMissed: 0, patMade: 0, patMissed: 0, defTd: 0, defInt: 0, defSacks: 0, defFumbleRec: 0, defSafety: 0, defPointsAllowed: 99, createdAt: new Date(), updatedAt: new Date() },
-        { id: 7, playerId: 107, season: 2024, week: 1, passYards: 0, passTd: 0, passInt: 0, rushYards: 75, rushTd: 0, receptions: 3, recYards: 30, recTd: 0, fumblesLost: 0, twoPtConversions: 0, fgMade: 0, fgMissed: 0, patMade: 0, patMissed: 0, defTd: 0, defInt: 0, defSacks: 0, defFumbleRec: 0, defSafety: 0, defPointsAllowed: 99, createdAt: new Date(), updatedAt: new Date() },
-        { id: 8, playerId: 108, season: 2024, week: 1, passYards: 0, passTd: 0, passInt: 0, rushYards: 0, rushTd: 0, receptions: 0, recYards: 0, recTd: 0, fumblesLost: 0, twoPtConversions: 0, fgMade: 3, fgMissed: 0, patMade: 2, patMissed: 0, defTd: 0, defInt: 0, defSacks: 0, defFumbleRec: 0, defSafety: 0, defPointsAllowed: 99, createdAt: new Date(), updatedAt: new Date() },
-        { id: 9, playerId: 109, season: 2024, week: 1, passYards: 0, passTd: 0, passInt: 0, rushYards: 0, rushTd: 0, receptions: 0, recYards: 0, recTd: 0, fumblesLost: 0, twoPtConversions: 0, fgMade: 0, fgMissed: 0, patMade: 0, patMissed: 0, defTd: 0, defInt: 1, defSacks: 2, defFumbleRec: 0, defSafety: 0, defPointsAllowed: 14, createdAt: new Date(), updatedAt: new Date() },
+        {
+          id: 1,
+          playerId: 101,
+          season: 2024,
+          week: 1,
+          passYards: 300,
+          passTd: 3,
+          passInt: 0,
+          rushYards: 0,
+          rushTd: 0,
+          receptions: 0,
+          recYards: 0,
+          recTd: 0,
+          fumblesLost: 0,
+          twoPtConversions: 0,
+          fgMade: 0,
+          fgMissed: 0,
+          patMade: 0,
+          patMissed: 0,
+          defTd: 0,
+          defInt: 0,
+          defSacks: 0,
+          defFumbleRec: 0,
+          defSafety: 0,
+          defPointsAllowed: 99,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        {
+          id: 2,
+          playerId: 102,
+          season: 2024,
+          week: 1,
+          passYards: 0,
+          passTd: 0,
+          passInt: 0,
+          rushYards: 100,
+          rushTd: 1,
+          receptions: 0,
+          recYards: 0,
+          recTd: 0,
+          fumblesLost: 0,
+          twoPtConversions: 0,
+          fgMade: 0,
+          fgMissed: 0,
+          patMade: 0,
+          patMissed: 0,
+          defTd: 0,
+          defInt: 0,
+          defSacks: 0,
+          defFumbleRec: 0,
+          defSafety: 0,
+          defPointsAllowed: 99,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        {
+          id: 3,
+          playerId: 103,
+          season: 2024,
+          week: 1,
+          passYards: 0,
+          passTd: 0,
+          passInt: 0,
+          rushYards: 80,
+          rushTd: 0,
+          receptions: 5,
+          recYards: 50,
+          recTd: 0,
+          fumblesLost: 0,
+          twoPtConversions: 0,
+          fgMade: 0,
+          fgMissed: 0,
+          patMade: 0,
+          patMissed: 0,
+          defTd: 0,
+          defInt: 0,
+          defSacks: 0,
+          defFumbleRec: 0,
+          defSafety: 0,
+          defPointsAllowed: 99,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        {
+          id: 4,
+          playerId: 104,
+          season: 2024,
+          week: 1,
+          passYards: 0,
+          passTd: 0,
+          passInt: 0,
+          rushYards: 0,
+          rushTd: 0,
+          receptions: 8,
+          recYards: 120,
+          recTd: 1,
+          fumblesLost: 0,
+          twoPtConversions: 0,
+          fgMade: 0,
+          fgMissed: 0,
+          patMade: 0,
+          patMissed: 0,
+          defTd: 0,
+          defInt: 0,
+          defSacks: 0,
+          defFumbleRec: 0,
+          defSafety: 0,
+          defPointsAllowed: 99,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        {
+          id: 5,
+          playerId: 105,
+          season: 2024,
+          week: 1,
+          passYards: 0,
+          passTd: 0,
+          passInt: 0,
+          rushYards: 0,
+          rushTd: 0,
+          receptions: 6,
+          recYards: 85,
+          recTd: 0,
+          fumblesLost: 0,
+          twoPtConversions: 0,
+          fgMade: 0,
+          fgMissed: 0,
+          patMade: 0,
+          patMissed: 0,
+          defTd: 0,
+          defInt: 0,
+          defSacks: 0,
+          defFumbleRec: 0,
+          defSafety: 0,
+          defPointsAllowed: 99,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        {
+          id: 6,
+          playerId: 106,
+          season: 2024,
+          week: 1,
+          passYards: 0,
+          passTd: 0,
+          passInt: 0,
+          rushYards: 0,
+          rushTd: 0,
+          receptions: 4,
+          recYards: 45,
+          recTd: 1,
+          fumblesLost: 0,
+          twoPtConversions: 0,
+          fgMade: 0,
+          fgMissed: 0,
+          patMade: 0,
+          patMissed: 0,
+          defTd: 0,
+          defInt: 0,
+          defSacks: 0,
+          defFumbleRec: 0,
+          defSafety: 0,
+          defPointsAllowed: 99,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        {
+          id: 7,
+          playerId: 107,
+          season: 2024,
+          week: 1,
+          passYards: 0,
+          passTd: 0,
+          passInt: 0,
+          rushYards: 75,
+          rushTd: 0,
+          receptions: 3,
+          recYards: 30,
+          recTd: 0,
+          fumblesLost: 0,
+          twoPtConversions: 0,
+          fgMade: 0,
+          fgMissed: 0,
+          patMade: 0,
+          patMissed: 0,
+          defTd: 0,
+          defInt: 0,
+          defSacks: 0,
+          defFumbleRec: 0,
+          defSafety: 0,
+          defPointsAllowed: 99,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        {
+          id: 8,
+          playerId: 108,
+          season: 2024,
+          week: 1,
+          passYards: 0,
+          passTd: 0,
+          passInt: 0,
+          rushYards: 0,
+          rushTd: 0,
+          receptions: 0,
+          recYards: 0,
+          recTd: 0,
+          fumblesLost: 0,
+          twoPtConversions: 0,
+          fgMade: 3,
+          fgMissed: 0,
+          patMade: 2,
+          patMissed: 0,
+          defTd: 0,
+          defInt: 0,
+          defSacks: 0,
+          defFumbleRec: 0,
+          defSafety: 0,
+          defPointsAllowed: 99,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        {
+          id: 9,
+          playerId: 109,
+          season: 2024,
+          week: 1,
+          passYards: 0,
+          passTd: 0,
+          passInt: 0,
+          rushYards: 0,
+          rushTd: 0,
+          receptions: 0,
+          recYards: 0,
+          recTd: 0,
+          fumblesLost: 0,
+          twoPtConversions: 0,
+          fgMade: 0,
+          fgMissed: 0,
+          patMade: 0,
+          patMissed: 0,
+          defTd: 0,
+          defInt: 1,
+          defSacks: 2,
+          defFumbleRec: 0,
+          defSafety: 0,
+          defPointsAllowed: 14,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
       ];
 
       mockStatsRepo.findByPlayersAndWeek.mockResolvedValue(mockPlayerStats);
 
       // STEP 4: Calculate lineup points
       const rules = DEFAULT_SCORING_RULES['ppr'];
-      const { total, playerPoints } = await scoringService.calculateLineupPoints(mockLineup, 2024, 1, rules);
+      const { total, playerPoints } = await scoringService.calculateLineupPoints(
+        mockLineup,
+        2024,
+        1,
+        rules
+      );
 
       // Verify individual player points
       expect(playerPoints.get(101)).toBe(20); // QB
@@ -281,7 +572,34 @@ describe('Season Sanity Integration Tests', () => {
       // 253 pass yards * 0.04 = 10.12 points, but defPointsAllowed=99 gives -4
       // Total: 10.12 - 4 = 6.12 points
       const edgeCaseStats: PlayerStats[] = [
-        { id: 10, playerId: 201, season: 2024, week: 1, passYards: 253, passTd: 0, passInt: 0, rushYards: 0, rushTd: 0, receptions: 0, recYards: 0, recTd: 0, fumblesLost: 0, twoPtConversions: 0, fgMade: 0, fgMissed: 0, patMade: 0, patMissed: 0, defTd: 0, defInt: 0, defSacks: 0, defFumbleRec: 0, defSafety: 0, defPointsAllowed: 99, createdAt: new Date(), updatedAt: new Date() },
+        {
+          id: 10,
+          playerId: 201,
+          season: 2024,
+          week: 1,
+          passYards: 253,
+          passTd: 0,
+          passInt: 0,
+          rushYards: 0,
+          rushTd: 0,
+          receptions: 0,
+          recYards: 0,
+          recTd: 0,
+          fumblesLost: 0,
+          twoPtConversions: 0,
+          fgMade: 0,
+          fgMissed: 0,
+          patMade: 0,
+          patMissed: 0,
+          defTd: 0,
+          defInt: 0,
+          defSacks: 0,
+          defFumbleRec: 0,
+          defSafety: 0,
+          defPointsAllowed: 99,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
       ];
 
       mockStatsRepo.findByPlayersAndWeek.mockResolvedValue(edgeCaseStats);
@@ -312,26 +630,27 @@ describe('Season Sanity Integration Tests', () => {
     let mockTradesRepo: jest.Mocked<TradesRepository>;
 
     const mockLeague = new League(
-      1,                    // id
-      'Test League',        // name
-      'active',             // status
-      {                     // settings
+      1, // id
+      'Test League', // name
+      'active', // status
+      {
+        // settings
         commissioner_roster_id: 1,
         waiver_type: 'standard',
         roster_size: 15,
       },
-      {},                   // scoringSettings
-      '2024',               // season
-      10,                   // totalRosters
-      new Date(),           // createdAt
-      new Date(),           // updatedAt
-      undefined,            // userRosterId
-      1,                    // commissionerRosterId
-      'redraft',            // mode
-      {},                   // leagueSettings
-      5,                    // currentWeek
-      'regular_season',     // seasonStatus
-      'XYZ789'              // inviteCode
+      {}, // scoringSettings
+      '2024', // season
+      10, // totalRosters
+      new Date(), // createdAt
+      new Date(), // updatedAt
+      undefined, // userRosterId
+      1, // commissionerRosterId
+      'redraft', // mode
+      {}, // leagueSettings
+      5, // currentWeek
+      'regular_season', // seasonStatus
+      'XYZ789' // inviteCode
     );
 
     const mockRoster: Roster = {
@@ -450,17 +769,6 @@ describe('Season Sanity Integration Tests', () => {
         updatedAt: new Date(),
       };
 
-      const mockClaimWithDetails: WaiverClaimWithDetails = {
-        ...mockClaim,
-        teamName: 'Champion Squad',
-        username: 'user1',
-        playerName: 'New Player',
-        playerPosition: 'WR',
-        playerTeam: 'NYG',
-        dropPlayerName: 'Old Player',
-        dropPlayerPosition: 'WR',
-      };
-
       // Mock league lookup
       mockLeagueRepo.findById.mockResolvedValue(mockLeague);
 
@@ -488,7 +796,16 @@ describe('Season Sanity Integration Tests', () => {
 
       // Mock priority for standard waivers
       mockPriorityRepo.getByLeague.mockResolvedValue([
-        { id: 1, leagueId: 1, rosterId: 1, season: 2024, priority: 1, updatedAt: new Date(), teamName: 'Champion Squad', username: 'user1' },
+        {
+          id: 1,
+          leagueId: 1,
+          rosterId: 1,
+          season: 2024,
+          priority: 1,
+          updatedAt: new Date(),
+          teamName: 'Champion Squad',
+          username: 'user1',
+        },
       ]);
 
       // Mock waiver wire check (player is on waiver wire but expired, so can be claimed)
@@ -504,22 +821,24 @@ describe('Season Sanity Integration Tests', () => {
 
       // Track transaction log entries
       const createdTransactions: any[] = [];
-      mockTransactionsRepo.create.mockImplementation(async (leagueId, rosterId, playerId, type, season, week) => {
-        const transaction = {
-          id: createdTransactions.length + 1,
-          leagueId,
-          rosterId,
-          playerId,
-          transactionType: type,
-          season,
-          week,
-          createdAt: new Date(),
-          relatedTransactionId: null,
-          playerName: playerId === addPlayerId ? 'New Player' : 'Old Player',
-        };
-        createdTransactions.push(transaction);
-        return transaction as RosterTransaction;
-      });
+      mockTransactionsRepo.create.mockImplementation(
+        async (leagueId, rosterId, playerId, type, season, week) => {
+          const transaction = {
+            id: createdTransactions.length + 1,
+            leagueId,
+            rosterId,
+            playerId,
+            transactionType: type,
+            season,
+            week,
+            createdAt: new Date(),
+            relatedTransactionId: null,
+            playerName: playerId === addPlayerId ? 'New Player' : 'Old Player',
+          };
+          createdTransactions.push(transaction);
+          return transaction as RosterTransaction;
+        }
+      );
 
       // Track roster updates
       const addedPlayers: number[] = [];
@@ -527,7 +846,13 @@ describe('Season Sanity Integration Tests', () => {
 
       mockRosterPlayersRepo.addPlayer.mockImplementation(async (rosterId, playerId) => {
         addedPlayers.push(playerId);
-        return { id: 99, rosterId, playerId, acquiredType: 'waiver' as const, acquiredAt: new Date() };
+        return {
+          id: 99,
+          rosterId,
+          playerId,
+          acquiredType: 'waiver' as const,
+          acquiredAt: new Date(),
+        };
       });
 
       mockRosterPlayersRepo.removePlayer.mockImplementation(async (rosterId, playerId) => {
@@ -565,8 +890,8 @@ describe('Season Sanity Integration Tests', () => {
       // VERIFY: Transaction log entries were created
       expect(createdTransactions.length).toBe(2);
 
-      const addTransaction = createdTransactions.find(t => t.transactionType === 'add');
-      const dropTransaction = createdTransactions.find(t => t.transactionType === 'drop');
+      const addTransaction = createdTransactions.find((t) => t.transactionType === 'add');
+      const dropTransaction = createdTransactions.find((t) => t.transactionType === 'drop');
 
       expect(addTransaction).toBeDefined();
       expect(addTransaction.playerId).toBe(addPlayerId);
@@ -603,28 +928,29 @@ describe('Season Sanity Integration Tests', () => {
     let mockLeagueRepo: jest.Mocked<LeagueRepository>;
 
     const mockLeague = new League(
-      1,                    // id
-      'Trade League',       // name
-      'active',             // status
-      {                     // settings
+      1, // id
+      'Trade League', // name
+      'active', // status
+      {
+        // settings
         commissioner_roster_id: 1,
         roster_size: 15,
         trade_expiry_hours: 48,
         trade_review_enabled: false,
         trade_voting_enabled: false,
       },
-      {},                   // scoringSettings
-      '2024',               // season
-      12,                   // totalRosters
-      new Date(),           // createdAt
-      new Date(),           // updatedAt
-      undefined,            // userRosterId
-      1,                    // commissionerRosterId
-      'redraft',            // mode
-      {},                   // leagueSettings
-      8,                    // currentWeek
-      'regular_season',     // seasonStatus
-      'TRADE99'             // inviteCode
+      {}, // scoringSettings
+      '2024', // season
+      12, // totalRosters
+      new Date(), // createdAt
+      new Date(), // updatedAt
+      undefined, // userRosterId
+      1, // commissionerRosterId
+      'redraft', // mode
+      {}, // leagueSettings
+      8, // currentWeek
+      'regular_season', // seasonStatus
+      'TRADE99' // inviteCode
     );
 
     // Team A (rosterId: 1) has players 1001, 1002
@@ -781,10 +1107,22 @@ describe('Season Sanity Integration Tests', () => {
       // Mock that both players exist on their respective rosters
       mockRosterPlayersRepo.findByRosterAndPlayer.mockImplementation(async (rosterId, playerId) => {
         if (rosterId === 1 && playerId === playerFromA) {
-          return { id: 1, rosterId: 1, playerId: playerFromA, acquiredType: 'draft' as const, acquiredAt: new Date() };
+          return {
+            id: 1,
+            rosterId: 1,
+            playerId: playerFromA,
+            acquiredType: 'draft' as const,
+            acquiredAt: new Date(),
+          };
         }
         if (rosterId === 2 && playerId === playerFromB) {
-          return { id: 2, rosterId: 2, playerId: playerFromB, acquiredType: 'draft' as const, acquiredAt: new Date() };
+          return {
+            id: 2,
+            rosterId: 2,
+            playerId: playerFromB,
+            acquiredType: 'draft' as const,
+            acquiredAt: new Date(),
+          };
         }
         return null;
       });
@@ -797,7 +1135,13 @@ describe('Season Sanity Integration Tests', () => {
 
       mockRosterPlayersRepo.addPlayer.mockImplementation(async (rosterId, playerId) => {
         rosterChanges.push({ action: 'add', rosterId, playerId });
-        return { id: 99, rosterId, playerId, acquiredType: 'trade' as const, acquiredAt: new Date() };
+        return {
+          id: 99,
+          rosterId,
+          playerId,
+          acquiredType: 'trade' as const,
+          acquiredAt: new Date(),
+        };
       });
 
       mockRosterPlayersRepo.removePlayer.mockImplementation(async (rosterId, playerId) => {
@@ -834,7 +1178,7 @@ describe('Season Sanity Integration Tests', () => {
       mockTradesRepo.findByIdWithDetails.mockResolvedValue({
         ...mockTrade,
         status: 'completed',
-        items: mockTradeItems.map(item => ({
+        items: mockTradeItems.map((item) => ({
           ...item,
           fullName: item.playerName ?? '',
           position: item.playerPosition,
@@ -855,10 +1199,10 @@ describe('Season Sanity Integration Tests', () => {
 
       // VERIFY: Both players were removed from their original rosters
       const removeFromA = rosterChanges.find(
-        c => c.action === 'remove' && c.rosterId === 1 && c.playerId === playerFromA
+        (c) => c.action === 'remove' && c.rosterId === 1 && c.playerId === playerFromA
       );
       const removeFromB = rosterChanges.find(
-        c => c.action === 'remove' && c.rosterId === 2 && c.playerId === playerFromB
+        (c) => c.action === 'remove' && c.rosterId === 2 && c.playerId === playerFromB
       );
 
       expect(removeFromA).toBeDefined();
@@ -866,10 +1210,10 @@ describe('Season Sanity Integration Tests', () => {
 
       // VERIFY: Both players were added to their new rosters
       const addToB = rosterChanges.find(
-        c => c.action === 'add' && c.rosterId === 2 && c.playerId === playerFromA
+        (c) => c.action === 'add' && c.rosterId === 2 && c.playerId === playerFromA
       );
       const addToA = rosterChanges.find(
-        c => c.action === 'add' && c.rosterId === 1 && c.playerId === playerFromB
+        (c) => c.action === 'add' && c.rosterId === 1 && c.playerId === playerFromB
       );
 
       expect(addToB).toBeDefined();
@@ -882,10 +1226,10 @@ describe('Season Sanity Integration Tests', () => {
 
       // Item 1: Player 1001 goes from roster 1 to roster 2
       const item1From = transactionLogs.find(
-        t => t.rosterId === 1 && t.playerId === playerFromA && t.type === 'trade'
+        (t) => t.rosterId === 1 && t.playerId === playerFromA && t.type === 'trade'
       );
       const item1To = transactionLogs.find(
-        t => t.rosterId === 2 && t.playerId === playerFromA && t.type === 'trade'
+        (t) => t.rosterId === 2 && t.playerId === playerFromA && t.type === 'trade'
       );
 
       expect(item1From).toBeDefined();
@@ -893,10 +1237,10 @@ describe('Season Sanity Integration Tests', () => {
 
       // Item 2: Player 2001 goes from roster 2 to roster 1
       const item2From = transactionLogs.find(
-        t => t.rosterId === 2 && t.playerId === playerFromB && t.type === 'trade'
+        (t) => t.rosterId === 2 && t.playerId === playerFromB && t.type === 'trade'
       );
       const item2To = transactionLogs.find(
-        t => t.rosterId === 1 && t.playerId === playerFromB && t.type === 'trade'
+        (t) => t.rosterId === 1 && t.playerId === playerFromB && t.type === 'trade'
       );
 
       expect(item2From).toBeDefined();
@@ -925,7 +1269,13 @@ describe('Season Sanity Integration Tests', () => {
       // Mock that player from A exists
       mockRosterPlayersRepo.findByRosterAndPlayer.mockImplementation(async (rosterId, playerId) => {
         if (rosterId === 1 && playerId === playerFromA) {
-          return { id: 1, rosterId: 1, playerId: playerFromA, acquiredType: 'draft' as const, acquiredAt: new Date() };
+          return {
+            id: 1,
+            rosterId: 1,
+            playerId: playerFromA,
+            acquiredType: 'draft' as const,
+            acquiredAt: new Date(),
+          };
         }
         // Player from B is NOT on their roster (simulating a data inconsistency)
         if (rosterId === 2 && playerId === playerFromB) {
@@ -943,7 +1293,11 @@ describe('Season Sanity Integration Tests', () => {
       expect(mockTransactionsRepo.create).not.toHaveBeenCalled();
 
       // VERIFY: Trade status was not updated to completed
-      expect(mockTradesRepo.updateStatus).not.toHaveBeenCalledWith(1, 'completed', expect.anything());
+      expect(mockTradesRepo.updateStatus).not.toHaveBeenCalledWith(
+        1,
+        'completed',
+        expect.anything()
+      );
     });
   });
 });

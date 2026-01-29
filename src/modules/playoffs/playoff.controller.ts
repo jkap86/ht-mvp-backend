@@ -30,11 +30,10 @@ export class PlayoffController {
         throw new ValidationException('playoff_teams and start_week must be numbers');
       }
 
-      const bracketView = await this.playoffService.generatePlayoffBracket(
-        leagueId,
-        userId,
-        { playoffTeams, startWeek }
-      );
+      const bracketView = await this.playoffService.generatePlayoffBracket(leagueId, userId, {
+        playoffTeams,
+        startWeek,
+      });
 
       res.status(201).json(playoffBracketViewToResponse(bracketView));
     } catch (error) {

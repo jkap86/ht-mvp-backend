@@ -1,9 +1,21 @@
 import { Pool, PoolClient } from 'pg';
 import { TradesService } from '../../../modules/trades/trades.service';
-import { TradesRepository, TradeItemsRepository, TradeVotesRepository } from '../../../modules/trades/trades.repository';
-import { RosterPlayersRepository, RosterTransactionsRepository } from '../../../modules/rosters/rosters.repository';
+import {
+  TradesRepository,
+  TradeItemsRepository,
+  TradeVotesRepository,
+} from '../../../modules/trades/trades.repository';
+import {
+  RosterPlayersRepository,
+  RosterTransactionsRepository,
+} from '../../../modules/rosters/rosters.repository';
 import { LeagueRepository, RosterRepository } from '../../../modules/leagues/leagues.repository';
-import { Trade, TradeItem, TradeWithDetails, TradeItemWithPlayer } from '../../../modules/trades/trades.model';
+import {
+  Trade,
+  TradeItem,
+  TradeWithDetails,
+  TradeItemWithPlayer,
+} from '../../../modules/trades/trades.model';
 import {
   NotFoundException,
   ForbiddenException,
@@ -121,60 +133,69 @@ const mockRosterPlayer: any = {
 };
 
 // Mock pool client
-const createMockPoolClient = (): jest.Mocked<PoolClient> => ({
-  query: jest.fn().mockResolvedValue({ rows: [] }),
-  release: jest.fn(),
-} as unknown as jest.Mocked<PoolClient>);
+const createMockPoolClient = (): jest.Mocked<PoolClient> =>
+  ({
+    query: jest.fn().mockResolvedValue({ rows: [] }),
+    release: jest.fn(),
+  }) as unknown as jest.Mocked<PoolClient>;
 
 // Mock pool
-const createMockPool = (mockClient: jest.Mocked<PoolClient>): jest.Mocked<Pool> => ({
-  connect: jest.fn().mockResolvedValue(mockClient),
-} as unknown as jest.Mocked<Pool>);
+const createMockPool = (mockClient: jest.Mocked<PoolClient>): jest.Mocked<Pool> =>
+  ({
+    connect: jest.fn().mockResolvedValue(mockClient),
+  }) as unknown as jest.Mocked<Pool>;
 
 // Mock repositories
-const createMockTradesRepo = (): jest.Mocked<TradesRepository> => ({
-  findById: jest.fn(),
-  findByLeague: jest.fn(),
-  findByIdWithDetails: jest.fn(),
-  findPendingByPlayer: jest.fn(),
-  findExpiredTrades: jest.fn(),
-  findReviewCompleteTrades: jest.fn(),
-  create: jest.fn(),
-  updateStatus: jest.fn(),
-  setReviewPeriod: jest.fn(),
-} as unknown as jest.Mocked<TradesRepository>);
+const createMockTradesRepo = (): jest.Mocked<TradesRepository> =>
+  ({
+    findById: jest.fn(),
+    findByLeague: jest.fn(),
+    findByIdWithDetails: jest.fn(),
+    findPendingByPlayer: jest.fn(),
+    findExpiredTrades: jest.fn(),
+    findReviewCompleteTrades: jest.fn(),
+    create: jest.fn(),
+    updateStatus: jest.fn(),
+    setReviewPeriod: jest.fn(),
+  }) as unknown as jest.Mocked<TradesRepository>;
 
-const createMockTradeItemsRepo = (): jest.Mocked<TradeItemsRepository> => ({
-  createBulk: jest.fn(),
-  findByTrade: jest.fn(),
-} as unknown as jest.Mocked<TradeItemsRepository>);
+const createMockTradeItemsRepo = (): jest.Mocked<TradeItemsRepository> =>
+  ({
+    createBulk: jest.fn(),
+    findByTrade: jest.fn(),
+  }) as unknown as jest.Mocked<TradeItemsRepository>;
 
-const createMockTradeVotesRepo = (): jest.Mocked<TradeVotesRepository> => ({
-  create: jest.fn(),
-  hasVoted: jest.fn(),
-  countVotes: jest.fn(),
-} as unknown as jest.Mocked<TradeVotesRepository>);
+const createMockTradeVotesRepo = (): jest.Mocked<TradeVotesRepository> =>
+  ({
+    create: jest.fn(),
+    hasVoted: jest.fn(),
+    countVotes: jest.fn(),
+  }) as unknown as jest.Mocked<TradeVotesRepository>;
 
-const createMockRosterRepo = (): jest.Mocked<RosterRepository> => ({
-  findById: jest.fn(),
-  findByLeagueAndUser: jest.fn(),
-} as unknown as jest.Mocked<RosterRepository>);
+const createMockRosterRepo = (): jest.Mocked<RosterRepository> =>
+  ({
+    findById: jest.fn(),
+    findByLeagueAndUser: jest.fn(),
+  }) as unknown as jest.Mocked<RosterRepository>;
 
-const createMockRosterPlayersRepo = (): jest.Mocked<RosterPlayersRepository> => ({
-  findByRosterAndPlayer: jest.fn(),
-  getPlayerCount: jest.fn(),
-  addPlayer: jest.fn(),
-  removePlayer: jest.fn(),
-} as unknown as jest.Mocked<RosterPlayersRepository>);
+const createMockRosterPlayersRepo = (): jest.Mocked<RosterPlayersRepository> =>
+  ({
+    findByRosterAndPlayer: jest.fn(),
+    getPlayerCount: jest.fn(),
+    addPlayer: jest.fn(),
+    removePlayer: jest.fn(),
+  }) as unknown as jest.Mocked<RosterPlayersRepository>;
 
-const createMockTransactionsRepo = (): jest.Mocked<RosterTransactionsRepository> => ({
-  create: jest.fn(),
-} as unknown as jest.Mocked<RosterTransactionsRepository>);
+const createMockTransactionsRepo = (): jest.Mocked<RosterTransactionsRepository> =>
+  ({
+    create: jest.fn(),
+  }) as unknown as jest.Mocked<RosterTransactionsRepository>;
 
-const createMockLeagueRepo = (): jest.Mocked<LeagueRepository> => ({
-  findById: jest.fn(),
-  isUserMember: jest.fn(),
-} as unknown as jest.Mocked<LeagueRepository>);
+const createMockLeagueRepo = (): jest.Mocked<LeagueRepository> =>
+  ({
+    findById: jest.fn(),
+    isUserMember: jest.fn(),
+  }) as unknown as jest.Mocked<LeagueRepository>;
 
 describe('TradesService', () => {
   let tradesService: TradesService;
@@ -222,24 +243,24 @@ describe('TradesService', () => {
     it('should throw ForbiddenException when user not in league', async () => {
       mockRosterRepo.findByLeagueAndUser.mockResolvedValue(null);
 
-      await expect(
-        tradesService.proposeTrade(1, 'user-123', proposeRequest)
-      ).rejects.toThrow(ForbiddenException);
-      await expect(
-        tradesService.proposeTrade(1, 'user-123', proposeRequest)
-      ).rejects.toThrow('not a member of this league');
+      await expect(tradesService.proposeTrade(1, 'user-123', proposeRequest)).rejects.toThrow(
+        ForbiddenException
+      );
+      await expect(tradesService.proposeTrade(1, 'user-123', proposeRequest)).rejects.toThrow(
+        'not a member of this league'
+      );
     });
 
     it('should throw NotFoundException when recipient roster not found', async () => {
       mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster);
       mockRosterRepo.findById.mockResolvedValue(null);
 
-      await expect(
-        tradesService.proposeTrade(1, 'user-123', proposeRequest)
-      ).rejects.toThrow(NotFoundException);
-      await expect(
-        tradesService.proposeTrade(1, 'user-123', proposeRequest)
-      ).rejects.toThrow('Recipient roster not found');
+      await expect(tradesService.proposeTrade(1, 'user-123', proposeRequest)).rejects.toThrow(
+        NotFoundException
+      );
+      await expect(tradesService.proposeTrade(1, 'user-123', proposeRequest)).rejects.toThrow(
+        'Recipient roster not found'
+      );
     });
 
     it('should throw ValidationException when trading with self', async () => {
@@ -262,12 +283,12 @@ describe('TradesService', () => {
         settings: { ...mockLeague.settings, trade_deadline: '2020-01-01' },
       });
 
-      await expect(
-        tradesService.proposeTrade(1, 'user-123', proposeRequest)
-      ).rejects.toThrow(ValidationException);
-      await expect(
-        tradesService.proposeTrade(1, 'user-123', proposeRequest)
-      ).rejects.toThrow('Trade deadline has passed');
+      await expect(tradesService.proposeTrade(1, 'user-123', proposeRequest)).rejects.toThrow(
+        ValidationException
+      );
+      await expect(tradesService.proposeTrade(1, 'user-123', proposeRequest)).rejects.toThrow(
+        'Trade deadline has passed'
+      );
     });
 
     it('should throw ValidationException when no players included', async () => {
@@ -297,12 +318,12 @@ describe('TradesService', () => {
       mockLeagueRepo.findById.mockResolvedValue(mockLeague);
       mockRosterPlayersRepo.findByRosterAndPlayer.mockResolvedValue(null);
 
-      await expect(
-        tradesService.proposeTrade(1, 'user-123', proposeRequest)
-      ).rejects.toThrow(ValidationException);
-      await expect(
-        tradesService.proposeTrade(1, 'user-123', proposeRequest)
-      ).rejects.toThrow('You do not own player');
+      await expect(tradesService.proposeTrade(1, 'user-123', proposeRequest)).rejects.toThrow(
+        ValidationException
+      );
+      await expect(tradesService.proposeTrade(1, 'user-123', proposeRequest)).rejects.toThrow(
+        'You do not own player'
+      );
     });
 
     it('should throw ConflictException when player already in pending trade', async () => {
@@ -312,12 +333,12 @@ describe('TradesService', () => {
       mockRosterPlayersRepo.findByRosterAndPlayer.mockResolvedValue(mockRosterPlayer);
       mockTradesRepo.findPendingByPlayer.mockResolvedValue([mockTrade]);
 
-      await expect(
-        tradesService.proposeTrade(1, 'user-123', proposeRequest)
-      ).rejects.toThrow(ConflictException);
-      await expect(
-        tradesService.proposeTrade(1, 'user-123', proposeRequest)
-      ).rejects.toThrow('already in a pending trade');
+      await expect(tradesService.proposeTrade(1, 'user-123', proposeRequest)).rejects.toThrow(
+        ConflictException
+      );
+      await expect(tradesService.proposeTrade(1, 'user-123', proposeRequest)).rejects.toThrow(
+        'already in a pending trade'
+      );
     });
 
     it('should create trade successfully', async () => {

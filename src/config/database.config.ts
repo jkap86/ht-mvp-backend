@@ -26,7 +26,7 @@ export function getDatabaseConfig(): PoolConfig {
     if (!rejectUnauthorized) {
       console.warn(
         '[SECURITY] Database SSL certificate validation is disabled. ' +
-        'Set DATABASE_SSL_REJECT_UNAUTHORIZED=true for non-Heroku deployments.'
+          'Set DATABASE_SSL_REJECT_UNAUTHORIZED=true for non-Heroku deployments.'
       );
     }
   }

@@ -18,7 +18,7 @@ export function getPoolMetrics() {
 
 // Wrap pool.query to measure timing and log slow queries
 const originalQuery = pool.query.bind(pool);
-(pool as any).query = async function(text: string | any, params?: any[]) {
+(pool as any).query = async function (text: string | any, params?: any[]) {
   const start = Date.now();
   try {
     return await originalQuery(text, params);

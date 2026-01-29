@@ -30,11 +30,7 @@ export function createWaiversRoutes(controller: WaiversController): Router {
 
   // Get user's waiver claims
   // GET /leagues/:leagueId/waivers/claims
-  router.get(
-    '/claims',
-    validateRequest(getClaimsSchema),
-    controller.getClaims.bind(controller)
-  );
+  router.get('/claims', validateRequest(getClaimsSchema), controller.getClaims.bind(controller));
 
   // Update a waiver claim
   // PUT /leagues/:leagueId/waivers/claims/:claimId

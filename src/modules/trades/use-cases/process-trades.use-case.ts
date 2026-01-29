@@ -1,9 +1,5 @@
-import { Pool } from 'pg';
-import { TradesRepository, TradeItemsRepository, TradeVotesRepository } from '../trades.repository';
-import { RosterPlayersRepository, RosterTransactionsRepository } from '../../rosters/rosters.repository';
-import { LeagueRepository } from '../../leagues/leagues.repository';
+import { TradesRepository, TradeVotesRepository } from '../trades.repository';
 import { tryGetSocketService } from '../../../socket';
-import { Trade } from '../trades.model';
 import { getTradeLockId } from '../../../utils/locks';
 import { executeTrade, AcceptTradeContext, PickTradedEvent } from './accept-trade.use-case';
 
@@ -33,7 +29,11 @@ export async function invalidateTradesWithPlayer(
     }
 
     if (updated) {
-      emitTradeInvalidatedEvent(trade.leagueId, trade.id, 'A player involved in this trade is no longer available');
+      emitTradeInvalidatedEvent(
+        trade.leagueId,
+        trade.id,
+        'A player involved in this trade is no longer available'
+      );
     }
   }
 }
@@ -59,7 +59,11 @@ export async function invalidateTradesWithPick(
     }
 
     if (updated) {
-      emitTradeInvalidatedEvent(trade.leagueId, trade.id, 'A draft pick involved in this trade is no longer available');
+      emitTradeInvalidatedEvent(
+        trade.leagueId,
+        trade.id,
+        'A draft pick involved in this trade is no longer available'
+      );
     }
   }
 }
@@ -68,9 +72,7 @@ export async function invalidateTradesWithPick(
  * Process expired trades (called by job)
  * Uses conditional update to prevent overwriting trades that were accepted/rejected concurrently
  */
-export async function processExpiredTrades(
-  ctx: { tradesRepo: TradesRepository }
-): Promise<number> {
+export async function processExpiredTrades(ctx: { tradesRepo: TradesRepository }): Promise<number> {
   const expired = await ctx.tradesRepo.findExpiredTrades();
   let expiredCount = 0;
 
@@ -91,16 +93,18 @@ export async function processExpiredTrades(
 /**
  * Process trades with completed review period (called by job)
  */
-export async function processReviewCompleteTrades(
-  ctx: ProcessTradesContext
-): Promise<number> {
+export async function processReviewCompleteTrades(ctx: ProcessTradesContext): Promise<number> {
   const trades = await ctx.tradesRepo.findReviewCompleteTrades();
   let processed = 0;
 
   for (const trade of trades) {
     const voteCount = await ctx.tradeVotesRepo.countVotes(trade.id);
     const league = await ctx.leagueRepo.findById(trade.leagueId);
-    const vetoThreshold = league?.settings?.trade_veto_count || DEFAULT_VETO_COUNT;
+    if (!league) {
+      console.warn(`League ${trade.leagueId} not found for trade ${trade.id}, skipping`);
+      continue;
+    }
+    const vetoThreshold = league.settings?.trade_veto_count || DEFAULT_VETO_COUNT;
 
     const client = await ctx.db.connect();
     // Collect events to emit AFTER commit
@@ -129,7 +133,12 @@ export async function processReviewCompleteTrades(
           continue;
         }
         pickTradedEvents = await executeTrade(ctx, trade, client);
-        const updated = await ctx.tradesRepo.updateStatus(trade.id, 'completed', client, 'in_review');
+        const updated = await ctx.tradesRepo.updateStatus(
+          trade.id,
+          'completed',
+          client,
+          'in_review'
+        );
         if (!updated) {
           // Trade status changed concurrently, skip
           await client.query('ROLLBACK');

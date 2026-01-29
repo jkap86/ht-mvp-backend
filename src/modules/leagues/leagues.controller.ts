@@ -40,7 +40,14 @@ export class LeagueController {
     try {
       const userId = requireUserId(req);
 
-      const { name, season, total_rosters = 12, settings = {}, scoring_settings = {}, is_public = false } = req.body;
+      const {
+        name,
+        season,
+        total_rosters = 12,
+        settings = {},
+        scoring_settings = {},
+        is_public = false,
+      } = req.body;
 
       const league = await this.leagueService.createLeague(
         {

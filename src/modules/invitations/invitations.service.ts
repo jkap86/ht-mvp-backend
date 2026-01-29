@@ -64,7 +64,10 @@ export class InvitationsService {
     }
 
     // Check if user already has a pending invite
-    const hasPendingInvite = await this.invitationsRepo.hasPendingInvite(leagueId, invitedUser.userId);
+    const hasPendingInvite = await this.invitationsRepo.hasPendingInvite(
+      leagueId,
+      invitedUser.userId
+    );
     if (hasPendingInvite) {
       throw new ConflictException(`${username} already has a pending invitation`);
     }
@@ -91,7 +94,11 @@ export class InvitationsService {
 
     // Emit socket event to invited user
     const socketService = tryGetSocketService();
-    socketService?.emitToUser(invitedUser.userId, SOCKET_EVENTS.INVITATION.RECEIVED, invitationWithDetailsToResponse(invitationWithDetails));
+    socketService?.emitToUser(
+      invitedUser.userId,
+      SOCKET_EVENTS.INVITATION.RECEIVED,
+      invitationWithDetailsToResponse(invitationWithDetails)
+    );
 
     return invitationWithDetails;
   }
@@ -219,7 +226,7 @@ export class InvitationsService {
     }
 
     const invitations = await this.invitationsRepo.findByLeagueId(leagueId);
-    return invitations.map(inv => ({
+    return invitations.map((inv) => ({
       ...invitationWithDetailsToResponse(inv),
       invited_username: (inv as any).invitedUsername,
     }));

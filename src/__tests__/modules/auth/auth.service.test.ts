@@ -18,18 +18,19 @@ const mockUser = new User(
 );
 
 // Create mock repository
-const createMockUserRepository = (): jest.Mocked<UserRepository> => ({
-  findByUsername: jest.fn(),
-  findById: jest.fn(),
-  create: jest.fn(),
-  emailExists: jest.fn(),
-  usernameExists: jest.fn(),
-  searchByUsername: jest.fn(),
-  updateRefreshToken: jest.fn(),
-  clearRefreshToken: jest.fn(),
-  getRefreshToken: jest.fn(),
-  getRefreshTokenWithExpiry: jest.fn(),
-} as unknown as jest.Mocked<UserRepository>);
+const createMockUserRepository = (): jest.Mocked<UserRepository> =>
+  ({
+    findByUsername: jest.fn(),
+    findById: jest.fn(),
+    create: jest.fn(),
+    emailExists: jest.fn(),
+    usernameExists: jest.fn(),
+    searchByUsername: jest.fn(),
+    updateRefreshToken: jest.fn(),
+    clearRefreshToken: jest.fn(),
+    getRefreshToken: jest.fn(),
+    getRefreshTokenWithExpiry: jest.fn(),
+  }) as unknown as jest.Mocked<UserRepository>;
 
 describe('AuthService', () => {
   let authService: AuthService;
@@ -83,21 +84,21 @@ describe('AuthService', () => {
     });
 
     it('should throw ValidationException for invalid username format', async () => {
-      await expect(
-        authService.register('ab', 'test@example.com', 'password123')
-      ).rejects.toThrow(ValidationException);
-      await expect(
-        authService.register('ab', 'test@example.com', 'password123')
-      ).rejects.toThrow('Username must be 3-20 characters');
+      await expect(authService.register('ab', 'test@example.com', 'password123')).rejects.toThrow(
+        ValidationException
+      );
+      await expect(authService.register('ab', 'test@example.com', 'password123')).rejects.toThrow(
+        'Username must be 3-20 characters'
+      );
     });
 
     it('should throw ValidationException for password too short', async () => {
-      await expect(
-        authService.register('validuser', 'test@example.com', '12345')
-      ).rejects.toThrow(ValidationException);
-      await expect(
-        authService.register('validuser', 'test@example.com', '12345')
-      ).rejects.toThrow('Password must be at least');
+      await expect(authService.register('validuser', 'test@example.com', '12345')).rejects.toThrow(
+        ValidationException
+      );
+      await expect(authService.register('validuser', 'test@example.com', '12345')).rejects.toThrow(
+        'Password must be at least'
+      );
     });
   });
 
@@ -116,23 +117,23 @@ describe('AuthService', () => {
     it('should throw InvalidCredentialsException for wrong password', async () => {
       mockUserRepo.findByUsername.mockResolvedValue(mockUser);
 
-      await expect(
-        authService.login('testuser', 'wrong_password')
-      ).rejects.toThrow(InvalidCredentialsException);
-      await expect(
-        authService.login('testuser', 'wrong_password')
-      ).rejects.toThrow('Invalid credentials');
+      await expect(authService.login('testuser', 'wrong_password')).rejects.toThrow(
+        InvalidCredentialsException
+      );
+      await expect(authService.login('testuser', 'wrong_password')).rejects.toThrow(
+        'Invalid credentials'
+      );
     });
 
     it('should throw InvalidCredentialsException when user not found', async () => {
       mockUserRepo.findByUsername.mockResolvedValue(null);
 
-      await expect(
-        authService.login('nonexistent', 'password123')
-      ).rejects.toThrow(InvalidCredentialsException);
-      await expect(
-        authService.login('nonexistent', 'password123')
-      ).rejects.toThrow('Invalid credentials');
+      await expect(authService.login('nonexistent', 'password123')).rejects.toThrow(
+        InvalidCredentialsException
+      );
+      await expect(authService.login('nonexistent', 'password123')).rejects.toThrow(
+        'Invalid credentials'
+      );
     });
   });
 
@@ -150,12 +151,10 @@ describe('AuthService', () => {
     it('should throw InvalidCredentialsException when user not found', async () => {
       mockUserRepo.findById.mockResolvedValue(null);
 
-      await expect(
-        authService.getCurrentUser('nonexistent-id')
-      ).rejects.toThrow(InvalidCredentialsException);
-      await expect(
-        authService.getCurrentUser('nonexistent-id')
-      ).rejects.toThrow('User not found');
+      await expect(authService.getCurrentUser('nonexistent-id')).rejects.toThrow(
+        InvalidCredentialsException
+      );
+      await expect(authService.getCurrentUser('nonexistent-id')).rejects.toThrow('User not found');
     });
   });
 
@@ -175,20 +174,20 @@ describe('AuthService', () => {
     });
 
     it('should throw InvalidCredentialsException on invalid refresh token', async () => {
-      await expect(
-        authService.refreshAccessToken('invalid_token')
-      ).rejects.toThrow(InvalidCredentialsException);
-      await expect(
-        authService.refreshAccessToken('invalid_token')
-      ).rejects.toThrow('Invalid refresh token');
+      await expect(authService.refreshAccessToken('invalid_token')).rejects.toThrow(
+        InvalidCredentialsException
+      );
+      await expect(authService.refreshAccessToken('invalid_token')).rejects.toThrow(
+        'Invalid refresh token'
+      );
     });
 
     it('should throw InvalidCredentialsException when user not found after token verification', async () => {
       mockUserRepo.findById.mockResolvedValue(null);
 
-      await expect(
-        authService.refreshAccessToken('valid_refresh_token')
-      ).rejects.toThrow(InvalidCredentialsException);
+      await expect(authService.refreshAccessToken('valid_refresh_token')).rejects.toThrow(
+        InvalidCredentialsException
+      );
     });
   });
 });

@@ -8,7 +8,7 @@ export interface PlayoffBracket {
   id: number;
   leagueId: number;
   season: number;
-  playoffTeams: number;  // 4, 6, or 8
+  playoffTeams: number; // 4, 6, or 8
   totalRounds: number;
   startWeek: number;
   championshipWeek: number;
@@ -138,7 +138,7 @@ export function playoffMatchupToResponse(matchup: PlayoffMatchup) {
 export interface PlayoffRound {
   round: number;
   week: number;
-  name: string;  // "Quarterfinals", "Semifinals", "Championship"
+  name: string; // "Quarterfinals", "Semifinals", "Championship"
   matchups: PlayoffMatchup[];
 }
 
@@ -204,11 +204,14 @@ export interface BracketMatchupConfig {
   week: number;
   round: number;
   seed1: number;
-  seed2: number | null;  // null for bye
+  seed2: number | null; // null for bye
   bracketPosition: number;
 }
 
-export function generateBracketConfig(playoffTeams: number, startWeek: number): BracketMatchupConfig[] {
+export function generateBracketConfig(
+  playoffTeams: number,
+  startWeek: number
+): BracketMatchupConfig[] {
   if (playoffTeams === 4) {
     // 4-team: 2 rounds
     return [

@@ -5,10 +5,7 @@ export class UserRepository {
   constructor(private readonly db: Pool) {}
 
   async findByUsername(username: string): Promise<User | null> {
-    const result = await this.db.query(
-      'SELECT * FROM users WHERE username = $1',
-      [username]
-    );
+    const result = await this.db.query('SELECT * FROM users WHERE username = $1', [username]);
 
     if (result.rows.length === 0) {
       return null;
@@ -18,10 +15,7 @@ export class UserRepository {
   }
 
   async findById(userId: string): Promise<User | null> {
-    const result = await this.db.query(
-      'SELECT * FROM users WHERE id = $1',
-      [userId]
-    );
+    const result = await this.db.query('SELECT * FROM users WHERE id = $1', [userId]);
 
     if (result.rows.length === 0) {
       return null;
@@ -42,19 +36,17 @@ export class UserRepository {
   }
 
   async emailExists(email: string): Promise<boolean> {
-    const result = await this.db.query(
-      'SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)',
-      [email]
-    );
+    const result = await this.db.query('SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)', [
+      email,
+    ]);
 
     return result.rows[0].exists;
   }
 
   async usernameExists(username: string): Promise<boolean> {
-    const result = await this.db.query(
-      'SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)',
-      [username]
-    );
+    const result = await this.db.query('SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)', [
+      username,
+    ]);
 
     return result.rows[0].exists;
   }
@@ -97,10 +89,7 @@ export class UserRepository {
   }
 
   async getRefreshToken(userId: string): Promise<string | null> {
-    const result = await this.db.query(
-      'SELECT refresh_token FROM users WHERE id = $1',
-      [userId]
-    );
+    const result = await this.db.query('SELECT refresh_token FROM users WHERE id = $1', [userId]);
 
     if (result.rows.length === 0) {
       return null;
@@ -109,7 +98,9 @@ export class UserRepository {
     return result.rows[0].refresh_token;
   }
 
-  async getRefreshTokenWithExpiry(userId: string): Promise<{ token: string | null; expiresAt: Date | null }> {
+  async getRefreshTokenWithExpiry(
+    userId: string
+  ): Promise<{ token: string | null; expiresAt: Date | null }> {
     const result = await this.db.query(
       'SELECT refresh_token, refresh_token_expires_at FROM users WHERE id = $1',
       [userId]

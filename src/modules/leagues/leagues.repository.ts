@@ -16,10 +16,7 @@ export class LeagueRepository {
   constructor(private readonly db: Pool) {}
 
   async findById(id: number): Promise<League | null> {
-    const result = await this.db.query(
-      'SELECT * FROM leagues WHERE id = $1',
-      [id]
-    );
+    const result = await this.db.query('SELECT * FROM leagues WHERE id = $1', [id]);
 
     if (result.rows.length === 0) {
       return null;
@@ -29,10 +26,9 @@ export class LeagueRepository {
   }
 
   async findByInviteCode(inviteCode: string): Promise<League | null> {
-    const result = await this.db.query(
-      'SELECT * FROM leagues WHERE invite_code = $1',
-      [inviteCode.toUpperCase()]
-    );
+    const result = await this.db.query('SELECT * FROM leagues WHERE invite_code = $1', [
+      inviteCode.toUpperCase(),
+    ]);
 
     if (result.rows.length === 0) {
       return null;
@@ -126,7 +122,9 @@ export class LeagueRepository {
     }
 
     if (updates.leagueSettings) {
-      setClauses.push(`league_settings = COALESCE(league_settings, '{}'::jsonb) || $${paramIndex++}::jsonb`);
+      setClauses.push(
+        `league_settings = COALESCE(league_settings, '{}'::jsonb) || $${paramIndex++}::jsonb`
+      );
       values.push(JSON.stringify(updates.leagueSettings));
     }
 
@@ -209,14 +207,20 @@ export class LeagueRepository {
       await client.query('DELETE FROM roster_transactions WHERE league_id = $1', [leagueId]);
 
       // Clear roster player data
-      await client.query(`
+      await client.query(
+        `
         DELETE FROM roster_players WHERE roster_id IN
         (SELECT id FROM rosters WHERE league_id = $1)
-      `, [leagueId]);
-      await client.query(`
+      `,
+        [leagueId]
+      );
+      await client.query(
+        `
         DELETE FROM roster_lineups WHERE roster_id IN
         (SELECT id FROM rosters WHERE league_id = $1)
-      `, [leagueId]);
+      `,
+        [leagueId]
+      );
 
       // Optionally clear chat
       if (options.clearChat !== false) {
@@ -236,20 +240,27 @@ export class LeagueRepository {
       if (!options.keepMembers) {
         // Delete all rosters EXCEPT the commissioner
         if (commissionerRosterId) {
-          await client.query('DELETE FROM rosters WHERE league_id = $1 AND id != $2', [leagueId, commissionerRosterId]);
+          await client.query('DELETE FROM rosters WHERE league_id = $1 AND id != $2', [
+            leagueId,
+            commissionerRosterId,
+          ]);
         } else {
           await client.query('DELETE FROM rosters WHERE league_id = $1', [leagueId]);
         }
       }
 
       // Always reset roster data for remaining rosters
-      await client.query(`
+      await client.query(
+        `
         UPDATE rosters SET starters = '[]', bench = '[]', updated_at = CURRENT_TIMESTAMP
         WHERE league_id = $1
-      `, [leagueId]);
+      `,
+        [leagueId]
+      );
 
       // Update league for new season
-      const result = await client.query(`
+      const result = await client.query(
+        `
         UPDATE leagues SET
           season = $2,
           season_status = 'pre_season',
@@ -258,7 +269,9 @@ export class LeagueRepository {
           updated_at = CURRENT_TIMESTAMP
         WHERE id = $1
         RETURNING *
-      `, [leagueId, newSeason]);
+      `,
+        [leagueId, newSeason]
+      );
 
       await client.query('COMMIT');
       return League.fromDatabase(result.rows[0]);
@@ -306,7 +319,7 @@ export class LeagueRepository {
       [userId, limit, offset]
     );
 
-    return result.rows.map(row => ({
+    return result.rows.map((row) => ({
       id: row.id,
       name: row.name,
       season: row.season,
@@ -331,7 +344,7 @@ export class RosterRepository {
       [leagueId]
     );
 
-    return result.rows.map(row => ({
+    return result.rows.map((row) => ({
       id: row.id,
       leagueId: row.league_id,
       userId: row.user_id,
@@ -349,7 +362,10 @@ export class RosterRepository {
    * Get all rosters for a league AND verify user membership in a single query.
    * Returns null if the user is not a member (avoids race condition with separate isUserMember check).
    */
-  async findByLeagueIdWithMembershipCheck(leagueId: number, userId: string): Promise<Roster[] | null> {
+  async findByLeagueIdWithMembershipCheck(
+    leagueId: number,
+    userId: string
+  ): Promise<Roster[] | null> {
     const result = await this.db.query(
       `WITH membership_check AS (
          SELECT EXISTS(SELECT 1 FROM rosters WHERE league_id = $1 AND user_id = $2) as is_member
@@ -377,7 +393,7 @@ export class RosterRepository {
       return null;
     }
 
-    return result.rows.map(row => ({
+    return result.rows.map((row) => ({
       id: row.id,
       leagueId: row.league_id,
       userId: row.user_id,
@@ -397,10 +413,10 @@ export class RosterRepository {
     client?: PoolClient
   ): Promise<Roster | null> {
     const db = client || this.db;
-    const result = await db.query(
-      'SELECT * FROM rosters WHERE league_id = $1 AND user_id = $2',
-      [leagueId, userId]
-    );
+    const result = await db.query('SELECT * FROM rosters WHERE league_id = $1 AND user_id = $2', [
+      leagueId,
+      userId,
+    ]);
 
     if (result.rows.length === 0) return null;
 
@@ -419,10 +435,7 @@ export class RosterRepository {
   }
 
   async findById(id: number): Promise<Roster | null> {
-    const result = await this.db.query(
-      'SELECT * FROM rosters WHERE id = $1',
-      [id]
-    );
+    const result = await this.db.query('SELECT * FROM rosters WHERE id = $1', [id]);
 
     if (result.rows.length === 0) return null;
 
@@ -505,10 +518,9 @@ export class RosterRepository {
 
   async getRosterCount(leagueId: number, client?: PoolClient): Promise<number> {
     const db = client || this.db;
-    const result = await db.query(
-      'SELECT COUNT(*) as count FROM rosters WHERE league_id = $1',
-      [leagueId]
-    );
+    const result = await db.query('SELECT COUNT(*) as count FROM rosters WHERE league_id = $1', [
+      leagueId,
+    ]);
     return parseInt(result.rows[0].count, 10);
   }
 
@@ -517,10 +529,7 @@ export class RosterRepository {
    */
   async delete(rosterId: number, client?: PoolClient): Promise<boolean> {
     const db = client || this.db;
-    const result = await db.query(
-      'DELETE FROM rosters WHERE id = $1',
-      [rosterId]
-    );
+    const result = await db.query('DELETE FROM rosters WHERE id = $1', [rosterId]);
     return result.rowCount !== null && result.rowCount > 0;
   }
 
@@ -601,11 +610,7 @@ export class RosterRepository {
    * Assign a user to an existing empty roster.
    * Used when a user joins a league that already has randomized draft order.
    */
-  async assignUserToRoster(
-    rosterId: number,
-    userId: string,
-    client?: PoolClient
-  ): Promise<Roster> {
+  async assignUserToRoster(rosterId: number, userId: string, client?: PoolClient): Promise<Roster> {
     const db = client || this.db;
     const result = await db.query(
       `UPDATE rosters SET user_id = $2, updated_at = CURRENT_TIMESTAMP

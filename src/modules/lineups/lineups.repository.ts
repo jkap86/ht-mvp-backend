@@ -1,9 +1,5 @@
 import { Pool, PoolClient } from 'pg';
-import {
-  RosterLineup,
-  LineupSlots,
-  rosterLineupFromDatabase,
-} from './lineups.model';
+import { RosterLineup, LineupSlots, rosterLineupFromDatabase } from './lineups.model';
 
 export class LineupsRepository {
   constructor(private readonly db: Pool) {}
@@ -11,7 +7,11 @@ export class LineupsRepository {
   /**
    * Get lineup for a roster/week
    */
-  async findByRosterAndWeek(rosterId: number, season: number, week: number): Promise<RosterLineup | null> {
+  async findByRosterAndWeek(
+    rosterId: number,
+    season: number,
+    week: number
+  ): Promise<RosterLineup | null> {
     const result = await this.db.query(
       `SELECT * FROM roster_lineups
        WHERE roster_id = $1 AND season = $2 AND week = $3`,
@@ -83,7 +83,11 @@ export class LineupsRepository {
   /**
    * Get all lineups for a league/week
    */
-  async getByLeagueAndWeek(leagueId: number, season: number, week: number): Promise<RosterLineup[]> {
+  async getByLeagueAndWeek(
+    leagueId: number,
+    season: number,
+    week: number
+  ): Promise<RosterLineup[]> {
     const result = await this.db.query(
       `SELECT rl.*
        FROM roster_lineups rl

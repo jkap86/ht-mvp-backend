@@ -20,10 +20,7 @@ export class PlayerRepository {
 
   async findByIds(ids: number[]): Promise<Player[]> {
     if (ids.length === 0) return [];
-    const result = await this.db.query(
-      'SELECT * FROM players WHERE id = ANY($1)',
-      [ids]
-    );
+    const result = await this.db.query('SELECT * FROM players WHERE id = ANY($1)', [ids]);
     return result.rows.map(playerFromDatabase);
   }
 
@@ -129,25 +126,27 @@ export class PlayerRepository {
 
       // Build parameterized batch insert
       const values: any[] = [];
-      const placeholders = batch.map((player, idx) => {
-        const baseIdx = idx * 13;
-        values.push(
-          player.player_id,
-          player.first_name || null,
-          player.last_name || null,
-          player.full_name || `${player.first_name} ${player.last_name}`,
-          player.fantasy_positions || [],
-          player.position || null,
-          player.team || null,
-          player.years_exp || null,
-          player.age || null,
-          player.active ?? true,
-          player.status || null,
-          player.injury_status || null,
-          player.number || null
-        );
-        return `($${baseIdx + 1}, $${baseIdx + 2}, $${baseIdx + 3}, $${baseIdx + 4}, $${baseIdx + 5}, $${baseIdx + 6}, $${baseIdx + 7}, $${baseIdx + 8}, $${baseIdx + 9}, $${baseIdx + 10}, $${baseIdx + 11}, $${baseIdx + 12}, $${baseIdx + 13})`;
-      }).join(', ');
+      const placeholders = batch
+        .map((player, idx) => {
+          const baseIdx = idx * 13;
+          values.push(
+            player.player_id,
+            player.first_name || null,
+            player.last_name || null,
+            player.full_name || `${player.first_name} ${player.last_name}`,
+            player.fantasy_positions || [],
+            player.position || null,
+            player.team || null,
+            player.years_exp || null,
+            player.age || null,
+            player.active ?? true,
+            player.status || null,
+            player.injury_status || null,
+            player.number || null
+          );
+          return `($${baseIdx + 1}, $${baseIdx + 2}, $${baseIdx + 3}, $${baseIdx + 4}, $${baseIdx + 5}, $${baseIdx + 6}, $${baseIdx + 7}, $${baseIdx + 8}, $${baseIdx + 9}, $${baseIdx + 10}, $${baseIdx + 11}, $${baseIdx + 12}, $${baseIdx + 13})`;
+        })
+        .join(', ');
 
       await this.db.query(
         `INSERT INTO players (

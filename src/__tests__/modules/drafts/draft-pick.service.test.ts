@@ -34,9 +34,30 @@ const mockDraft: Draft = {
 };
 
 const mockDraftOrder: DraftOrderEntry[] = [
-  { id: 1, draftId: 1, rosterId: 1, draftPosition: 1, username: 'user1', isAutodraftEnabled: false },
-  { id: 2, draftId: 1, rosterId: 2, draftPosition: 2, username: 'user2', isAutodraftEnabled: false },
-  { id: 3, draftId: 1, rosterId: 3, draftPosition: 3, username: 'user3', isAutodraftEnabled: false },
+  {
+    id: 1,
+    draftId: 1,
+    rosterId: 1,
+    draftPosition: 1,
+    username: 'user1',
+    isAutodraftEnabled: false,
+  },
+  {
+    id: 2,
+    draftId: 1,
+    rosterId: 2,
+    draftPosition: 2,
+    username: 'user2',
+    isAutodraftEnabled: false,
+  },
+  {
+    id: 3,
+    draftId: 1,
+    rosterId: 3,
+    draftPosition: 3,
+    username: 'user3',
+    isAutodraftEnabled: false,
+  },
 ];
 
 // Use 'any' for mockRoster to avoid strict typing issues with the Roster interface
@@ -65,62 +86,67 @@ const mockPick = {
 };
 
 // Mock repositories
-const createMockDraftRepo = (): jest.Mocked<DraftRepository> => ({
-  findById: jest.fn(),
-  findByLeagueId: jest.fn(),
-  create: jest.fn(),
-  update: jest.fn(),
-  delete: jest.fn(),
-  getDraftOrder: jest.fn(),
-  createDraftOrder: jest.fn(),
-  clearDraftOrder: jest.fn(),
-  getDraftPicks: jest.fn(),
-  createDraftPick: jest.fn(),
-  createDraftPickWithCleanup: jest.fn(),
-  isPlayerDrafted: jest.fn(),
-  removePlayerFromAllQueues: jest.fn(),
-  makePickAndAdvanceTx: jest.fn(),
-} as unknown as jest.Mocked<DraftRepository>);
+const createMockDraftRepo = (): jest.Mocked<DraftRepository> =>
+  ({
+    findById: jest.fn(),
+    findByLeagueId: jest.fn(),
+    create: jest.fn(),
+    update: jest.fn(),
+    delete: jest.fn(),
+    getDraftOrder: jest.fn(),
+    createDraftOrder: jest.fn(),
+    clearDraftOrder: jest.fn(),
+    getDraftPicks: jest.fn(),
+    createDraftPick: jest.fn(),
+    createDraftPickWithCleanup: jest.fn(),
+    isPlayerDrafted: jest.fn(),
+    removePlayerFromAllQueues: jest.fn(),
+    makePickAndAdvanceTx: jest.fn(),
+  }) as unknown as jest.Mocked<DraftRepository>;
 
-const createMockLeagueRepo = (): jest.Mocked<LeagueRepository> => ({
-  isUserMember: jest.fn(),
-  findById: jest.fn(),
-  isUserCommissioner: jest.fn(),
-} as unknown as jest.Mocked<LeagueRepository>);
+const createMockLeagueRepo = (): jest.Mocked<LeagueRepository> =>
+  ({
+    isUserMember: jest.fn(),
+    findById: jest.fn(),
+    isUserCommissioner: jest.fn(),
+  }) as unknown as jest.Mocked<LeagueRepository>;
 
-const createMockRosterRepo = (): jest.Mocked<RosterRepository> => ({
-  findByLeagueAndUser: jest.fn(),
-  findByLeague: jest.fn(),
-} as unknown as jest.Mocked<RosterRepository>);
+const createMockRosterRepo = (): jest.Mocked<RosterRepository> =>
+  ({
+    findByLeagueAndUser: jest.fn(),
+    findByLeague: jest.fn(),
+  }) as unknown as jest.Mocked<RosterRepository>;
 
-const createMockPlayerRepo = (): jest.Mocked<PlayerRepository> => ({
-  findById: jest.fn().mockResolvedValue({
-    id: 100,
-    fullName: 'Test Player',
-    position: 'QB',
-    team: 'TST',
-  }),
-} as unknown as jest.Mocked<PlayerRepository>);
+const createMockPlayerRepo = (): jest.Mocked<PlayerRepository> =>
+  ({
+    findById: jest.fn().mockResolvedValue({
+      id: 100,
+      fullName: 'Test Player',
+      position: 'QB',
+      team: 'TST',
+    }),
+  }) as unknown as jest.Mocked<PlayerRepository>;
 
-const createMockEngine = (): jest.Mocked<IDraftEngine> => ({
-  draftType: 'snake',
-  getPickerForPickNumber: jest.fn((draft, draftOrder, pickNumber) => {
-    const totalRosters = draftOrder.length;
-    const round = Math.ceil(pickNumber / totalRosters);
-    const pickInRound = ((pickNumber - 1) % totalRosters) + 1;
-    // Snake logic: reverse even rounds
-    const isReversed = round % 2 === 0;
-    const position = isReversed ? totalRosters - pickInRound + 1 : pickInRound;
-    return draftOrder.find((o: DraftOrderEntry) => o.draftPosition === position);
-  }),
-  getPickInRound: jest.fn((pickNumber, totalRosters) => ((pickNumber - 1) % totalRosters) + 1),
-  getRound: jest.fn((pickNumber, totalRosters) => Math.ceil(pickNumber / totalRosters)),
-  isDraftComplete: jest.fn(),
-  getNextPickDetails: jest.fn(),
-  shouldAutoPick: jest.fn(),
-  calculatePickDeadline: jest.fn(() => new Date(Date.now() + 90000)),
-  tick: jest.fn(),
-} as unknown as jest.Mocked<IDraftEngine>);
+const createMockEngine = (): jest.Mocked<IDraftEngine> =>
+  ({
+    draftType: 'snake',
+    getPickerForPickNumber: jest.fn((draft, draftOrder, pickNumber) => {
+      const totalRosters = draftOrder.length;
+      const round = Math.ceil(pickNumber / totalRosters);
+      const pickInRound = ((pickNumber - 1) % totalRosters) + 1;
+      // Snake logic: reverse even rounds
+      const isReversed = round % 2 === 0;
+      const position = isReversed ? totalRosters - pickInRound + 1 : pickInRound;
+      return draftOrder.find((o: DraftOrderEntry) => o.draftPosition === position);
+    }),
+    getPickInRound: jest.fn((pickNumber, totalRosters) => ((pickNumber - 1) % totalRosters) + 1),
+    getRound: jest.fn((pickNumber, totalRosters) => Math.ceil(pickNumber / totalRosters)),
+    isDraftComplete: jest.fn(),
+    getNextPickDetails: jest.fn(),
+    shouldAutoPick: jest.fn(),
+    calculatePickDeadline: jest.fn(() => new Date(Date.now() + 90000)),
+    tick: jest.fn(),
+  }) as unknown as jest.Mocked<IDraftEngine>;
 
 const createMockEngineFactory = (): jest.Mocked<DraftEngineFactory> => {
   const mockEngine = createMockEngine();
@@ -130,9 +156,10 @@ const createMockEngineFactory = (): jest.Mocked<DraftEngineFactory> => {
   } as unknown as jest.Mocked<DraftEngineFactory>;
 };
 
-const createMockRosterPlayersRepo = (): jest.Mocked<RosterPlayersRepository> => ({
-  addDraftedPlayer: jest.fn(),
-} as unknown as jest.Mocked<RosterPlayersRepository>);
+const createMockRosterPlayersRepo = (): jest.Mocked<RosterPlayersRepository> =>
+  ({
+    addDraftedPlayer: jest.fn(),
+  }) as unknown as jest.Mocked<RosterPlayersRepository>;
 
 describe('DraftPickService', () => {
   let draftPickService: DraftPickService;
@@ -150,7 +177,14 @@ describe('DraftPickService', () => {
     mockEngineFactory = createMockEngineFactory();
     mockPlayerRepo = createMockPlayerRepo();
     mockRosterPlayersRepo = createMockRosterPlayersRepo();
-    draftPickService = new DraftPickService(mockDraftRepo, mockLeagueRepo, mockRosterRepo, mockEngineFactory, mockPlayerRepo, mockRosterPlayersRepo);
+    draftPickService = new DraftPickService(
+      mockDraftRepo,
+      mockLeagueRepo,
+      mockRosterRepo,
+      mockEngineFactory,
+      mockPlayerRepo,
+      mockRosterPlayersRepo
+    );
   });
 
   describe('getDraftPicks', () => {
@@ -167,12 +201,12 @@ describe('DraftPickService', () => {
     it('should throw ForbiddenException when user is not a member', async () => {
       mockLeagueRepo.isUserMember.mockResolvedValue(false);
 
-      await expect(
-        draftPickService.getDraftPicks(1, 1, 'user-123')
-      ).rejects.toThrow(ForbiddenException);
-      await expect(
-        draftPickService.getDraftPicks(1, 1, 'user-123')
-      ).rejects.toThrow('not a member');
+      await expect(draftPickService.getDraftPicks(1, 1, 'user-123')).rejects.toThrow(
+        ForbiddenException
+      );
+      await expect(draftPickService.getDraftPicks(1, 1, 'user-123')).rejects.toThrow(
+        'not a member'
+      );
     });
   });
 
@@ -204,48 +238,48 @@ describe('DraftPickService', () => {
     it('should throw ForbiddenException when user not a league member', async () => {
       mockLeagueRepo.isUserMember.mockResolvedValue(false);
 
-      await expect(
-        draftPickService.makePick(1, 1, 'user-123', 100)
-      ).rejects.toThrow(ForbiddenException);
-      await expect(
-        draftPickService.makePick(1, 1, 'user-123', 100)
-      ).rejects.toThrow('not a member');
+      await expect(draftPickService.makePick(1, 1, 'user-123', 100)).rejects.toThrow(
+        ForbiddenException
+      );
+      await expect(draftPickService.makePick(1, 1, 'user-123', 100)).rejects.toThrow(
+        'not a member'
+      );
     });
 
     it('should throw NotFoundException when draft not found', async () => {
       mockLeagueRepo.isUserMember.mockResolvedValue(true);
       mockDraftRepo.findById.mockResolvedValue(null);
 
-      await expect(
-        draftPickService.makePick(1, 999, 'user-123', 100)
-      ).rejects.toThrow(NotFoundException);
-      await expect(
-        draftPickService.makePick(1, 999, 'user-123', 100)
-      ).rejects.toThrow('Draft not found');
+      await expect(draftPickService.makePick(1, 999, 'user-123', 100)).rejects.toThrow(
+        NotFoundException
+      );
+      await expect(draftPickService.makePick(1, 999, 'user-123', 100)).rejects.toThrow(
+        'Draft not found'
+      );
     });
 
     it('should throw NotFoundException when draft not in league', async () => {
       mockLeagueRepo.isUserMember.mockResolvedValue(true);
       mockDraftRepo.findById.mockResolvedValue({ ...mockDraft, leagueId: 999 });
 
-      await expect(
-        draftPickService.makePick(1, 1, 'user-123', 100)
-      ).rejects.toThrow(NotFoundException);
-      await expect(
-        draftPickService.makePick(1, 1, 'user-123', 100)
-      ).rejects.toThrow('not found in this league');
+      await expect(draftPickService.makePick(1, 1, 'user-123', 100)).rejects.toThrow(
+        NotFoundException
+      );
+      await expect(draftPickService.makePick(1, 1, 'user-123', 100)).rejects.toThrow(
+        'not found in this league'
+      );
     });
 
     it('should throw ValidationException when draft is not in progress', async () => {
       mockLeagueRepo.isUserMember.mockResolvedValue(true);
       mockDraftRepo.findById.mockResolvedValue({ ...mockDraft, status: 'not_started' });
 
-      await expect(
-        draftPickService.makePick(1, 1, 'user-123', 100)
-      ).rejects.toThrow(ValidationException);
-      await expect(
-        draftPickService.makePick(1, 1, 'user-123', 100)
-      ).rejects.toThrow('not in progress');
+      await expect(draftPickService.makePick(1, 1, 'user-123', 100)).rejects.toThrow(
+        ValidationException
+      );
+      await expect(draftPickService.makePick(1, 1, 'user-123', 100)).rejects.toThrow(
+        'not in progress'
+      );
     });
 
     it('should throw ForbiddenException when user not in league roster', async () => {
@@ -253,12 +287,12 @@ describe('DraftPickService', () => {
       mockDraftRepo.findById.mockResolvedValue(mockDraft);
       mockRosterRepo.findByLeagueAndUser.mockResolvedValue(null);
 
-      await expect(
-        draftPickService.makePick(1, 1, 'user-123', 100)
-      ).rejects.toThrow(ForbiddenException);
-      await expect(
-        draftPickService.makePick(1, 1, 'user-123', 100)
-      ).rejects.toThrow('not in this league');
+      await expect(draftPickService.makePick(1, 1, 'user-123', 100)).rejects.toThrow(
+        ForbiddenException
+      );
+      await expect(draftPickService.makePick(1, 1, 'user-123', 100)).rejects.toThrow(
+        'not in this league'
+      );
     });
 
     it('should throw ValidationException when not user turn', async () => {
@@ -268,12 +302,12 @@ describe('DraftPickService', () => {
       mockRosterRepo.findByLeagueAndUser.mockResolvedValue(otherRoster);
       mockDraftRepo.getDraftOrder.mockResolvedValue(mockDraftOrder);
 
-      await expect(
-        draftPickService.makePick(1, 1, 'user-123', 100)
-      ).rejects.toThrow(ValidationException);
-      await expect(
-        draftPickService.makePick(1, 1, 'user-123', 100)
-      ).rejects.toThrow('not your turn');
+      await expect(draftPickService.makePick(1, 1, 'user-123', 100)).rejects.toThrow(
+        ValidationException
+      );
+      await expect(draftPickService.makePick(1, 1, 'user-123', 100)).rejects.toThrow(
+        'not your turn'
+      );
     });
 
     it('should throw ConflictException when player already drafted', async () => {
@@ -286,12 +320,12 @@ describe('DraftPickService', () => {
         new ConflictException('Player has already been drafted')
       );
 
-      await expect(
-        draftPickService.makePick(1, 1, 'user-123', 100)
-      ).rejects.toThrow(ConflictException);
-      await expect(
-        draftPickService.makePick(1, 1, 'user-123', 100)
-      ).rejects.toThrow('already been drafted');
+      await expect(draftPickService.makePick(1, 1, 'user-123', 100)).rejects.toThrow(
+        ConflictException
+      );
+      await expect(draftPickService.makePick(1, 1, 'user-123', 100)).rejects.toThrow(
+        'already been drafted'
+      );
     });
 
     it('should complete draft when all picks are made', async () => {
@@ -304,7 +338,11 @@ describe('DraftPickService', () => {
         currentRound: 15,
         currentRosterId: 3, // roster at position 3
       };
-      const completedDraft = { ...lastPickDraft, status: 'completed' as const, completedAt: new Date() };
+      const completedDraft = {
+        ...lastPickDraft,
+        status: 'completed' as const,
+        completedAt: new Date(),
+      };
       // User's roster must be the one at position 3
       const lastPickRoster = { ...mockRoster, id: 3 };
       mockDraftRepo.findById.mockResolvedValue(lastPickDraft);
@@ -342,12 +380,12 @@ describe('DraftPickService', () => {
         new ConflictException('Pick already made for this position')
       );
 
-      await expect(
-        draftPickService.makePick(1, 1, 'user-123', 100)
-      ).rejects.toThrow(ConflictException);
-      await expect(
-        draftPickService.makePick(1, 1, 'user-123', 100)
-      ).rejects.toThrow('Pick already made');
+      await expect(draftPickService.makePick(1, 1, 'user-123', 100)).rejects.toThrow(
+        ConflictException
+      );
+      await expect(draftPickService.makePick(1, 1, 'user-123', 100)).rejects.toThrow(
+        'Pick already made'
+      );
     });
 
     it('should call makePickAndAdvanceTx with expectedPickNumber for atomicity', async () => {

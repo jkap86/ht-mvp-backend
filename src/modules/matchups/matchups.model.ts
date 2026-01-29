@@ -131,7 +131,7 @@ export function matchupWithLineupsToResponse(matchup: MatchupWithLineups) {
       roster_id: matchup.team1.rosterId,
       team_name: matchup.team1.teamName,
       total_points: matchup.team1.totalPoints,
-      players: matchup.team1.players.map(p => ({
+      players: matchup.team1.players.map((p) => ({
         player_id: p.playerId,
         full_name: p.fullName,
         position: p.position,
@@ -145,7 +145,7 @@ export function matchupWithLineupsToResponse(matchup: MatchupWithLineups) {
       roster_id: matchup.team2.rosterId,
       team_name: matchup.team2.teamName,
       total_points: matchup.team2.totalPoints,
-      players: matchup.team2.players.map(p => ({
+      players: matchup.team2.players.map((p) => ({
         player_id: p.playerId,
         full_name: p.fullName,
         position: p.position,

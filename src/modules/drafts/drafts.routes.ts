@@ -9,7 +9,11 @@ import { RosterRepository } from '../leagues/leagues.repository';
 import { AuthorizationService } from '../auth/authorization.service';
 import { authMiddleware } from '../../middleware/auth.middleware';
 import { validateRequest } from '../../middleware/validation.middleware';
-import { draftPickLimiter, queueLimiter, draftModifyLimiter } from '../../middleware/rate-limit.middleware';
+import {
+  draftPickLimiter,
+  queueLimiter,
+  draftModifyLimiter,
+} from '../../middleware/rate-limit.middleware';
 import { container, KEYS } from '../../container';
 import {
   createDraftSchema,
@@ -38,7 +42,9 @@ const actionDispatcher = new ActionDispatcher();
 actionDispatcher.register(new StateActionHandler(draftService));
 actionDispatcher.register(new PickActionHandler(draftService));
 actionDispatcher.register(new QueueActionHandler(queueService, rosterRepo));
-actionDispatcher.register(new AuctionActionHandler(slowAuctionService, fastAuctionService, rosterRepo));
+actionDispatcher.register(
+  new AuctionActionHandler(slowAuctionService, fastAuctionService, rosterRepo)
+);
 
 // Draft controller with dispatcher for unified /actions endpoint
 const draftController = new DraftController(
@@ -64,13 +70,23 @@ router.get('/', draftController.getLeagueDrafts);
 router.get('/config', draftController.getDraftConfig);
 
 // POST /api/leagues/:leagueId/drafts
-router.post('/', draftModifyLimiter, validateRequest(createDraftSchema), draftController.createDraft);
+router.post(
+  '/',
+  draftModifyLimiter,
+  validateRequest(createDraftSchema),
+  draftController.createDraft
+);
 
 // GET /api/leagues/:leagueId/drafts/:draftId
 router.get('/:draftId', draftController.getDraft);
 
 // PATCH /api/leagues/:leagueId/drafts/:draftId/settings (commissioner only)
-router.patch('/:draftId/settings', draftModifyLimiter, validateRequest(updateDraftSettingsSchema), draftController.updateDraftSettings);
+router.patch(
+  '/:draftId/settings',
+  draftModifyLimiter,
+  validateRequest(updateDraftSettingsSchema),
+  draftController.updateDraftSettings
+);
 
 // DELETE /api/leagues/:leagueId/drafts/:draftId
 router.delete('/:draftId', draftController.deleteDraft);
@@ -85,7 +101,12 @@ router.post('/:draftId/randomize', draftModifyLimiter, draftController.randomize
 router.post('/:draftId/start', draftModifyLimiter, draftController.startDraft);
 
 // POST /api/leagues/:leagueId/drafts/:draftId/actions (unified action endpoint)
-router.post('/:draftId/actions', draftModifyLimiter, validateRequest(draftActionSchema), draftController.performAction);
+router.post(
+  '/:draftId/actions',
+  draftModifyLimiter,
+  validateRequest(draftActionSchema),
+  draftController.performAction
+);
 
 // POST /api/leagues/:leagueId/drafts/:draftId/undo (commissioner undo last pick)
 router.post('/:draftId/undo', draftModifyLimiter, draftController.undoPick);
@@ -94,7 +115,12 @@ router.post('/:draftId/undo', draftModifyLimiter, draftController.undoPick);
 router.get('/:draftId/picks', draftController.getDraftPicks);
 
 // POST /api/leagues/:leagueId/drafts/:draftId/pick
-router.post('/:draftId/pick', draftPickLimiter, validateRequest(makePickSchema), draftController.makePick);
+router.post(
+  '/:draftId/pick',
+  draftPickLimiter,
+  validateRequest(makePickSchema),
+  draftController.makePick
+);
 
 // GET /api/leagues/:leagueId/drafts/:draftId/auction/state
 router.get('/:draftId/auction/state', draftController.getAuctionState);
@@ -113,10 +139,20 @@ router.get('/:draftId/auction/budgets', draftController.getAuctionBudgets);
 router.get('/:draftId/queue', queueController.getQueue);
 
 // POST /api/leagues/:leagueId/drafts/:draftId/queue
-router.post('/:draftId/queue', queueLimiter, validateRequest(addToQueueSchema), queueController.addToQueue);
+router.post(
+  '/:draftId/queue',
+  queueLimiter,
+  validateRequest(addToQueueSchema),
+  queueController.addToQueue
+);
 
 // PUT /api/leagues/:leagueId/drafts/:draftId/queue (reorder)
-router.put('/:draftId/queue', queueLimiter, validateRequest(reorderQueueSchema), queueController.reorderQueue);
+router.put(
+  '/:draftId/queue',
+  queueLimiter,
+  validateRequest(reorderQueueSchema),
+  queueController.reorderQueue
+);
 
 // DELETE /api/leagues/:leagueId/drafts/:draftId/queue/:playerId
 router.delete('/:draftId/queue/:playerId', queueLimiter, queueController.removeFromQueue);

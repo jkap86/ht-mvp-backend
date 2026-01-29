@@ -24,7 +24,12 @@ export const auctionSettingsSchema = z.object({
 
 export const createDraftSchema = z.object({
   draft_type: draftTypeSchema.default('snake'),
-  rounds: z.number().int().min(1, 'Rounds must be at least 1').max(30, 'Rounds cannot exceed 30').default(15),
+  rounds: z
+    .number()
+    .int()
+    .min(1, 'Rounds must be at least 1')
+    .max(30, 'Rounds cannot exceed 30')
+    .default(15),
   pick_time_seconds: z
     .number()
     .int()
@@ -37,7 +42,12 @@ export const createDraftSchema = z.object({
 /** Schema for updating draft settings (commissioner only) */
 export const updateDraftSettingsSchema = z.object({
   draft_type: draftTypeSchema.optional(),
-  rounds: z.number().int().min(1, 'Rounds must be at least 1').max(30, 'Rounds cannot exceed 30').optional(),
+  rounds: z
+    .number()
+    .int()
+    .min(1, 'Rounds must be at least 1')
+    .max(30, 'Rounds cannot exceed 30')
+    .optional(),
   pick_time_seconds: z
     .number()
     .int()
@@ -86,7 +96,9 @@ export const draftActionSchema = z.discriminatedUnion('action', [
   }),
   z.object({
     action: z.literal('queue_reorder'),
-    playerIds: z.array(z.number().int().positive('Each player ID must be a positive integer')).min(1),
+    playerIds: z
+      .array(z.number().int().positive('Each player ID must be a positive integer'))
+      .min(1),
   }),
 
   // Auction actions

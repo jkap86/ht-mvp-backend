@@ -1,10 +1,7 @@
 import { TradesRepository } from '../trades.repository';
 import { LeagueRepository, RosterRepository } from '../../leagues/leagues.repository';
 import { TradeWithDetails } from '../trades.model';
-import {
-  NotFoundException,
-  ForbiddenException,
-} from '../../../utils/exceptions';
+import { NotFoundException, ForbiddenException } from '../../../utils/exceptions';
 
 export interface GetTradesContext {
   tradesRepo: TradesRepository;
@@ -14,6 +11,7 @@ export interface GetTradesContext {
 
 /**
  * Get trades for a league
+ * Uses optimized batch fetch to avoid N+1 queries
  */
 export async function getTradesForLeague(
   ctx: GetTradesContext,
@@ -27,20 +25,15 @@ export async function getTradesForLeague(
   if (!isMember) throw new ForbiddenException('Not a league member');
 
   const roster = await ctx.rosterRepo.findByLeagueAndUser(leagueId, userId);
-  const trades = await ctx.tradesRepo.findByLeague(
+
+  // Use batch fetch method to avoid N+1 queries
+  return ctx.tradesRepo.findByLeagueWithDetails(
     leagueId,
+    roster?.id,
     statuses as any[],
     limit,
     offset
   );
-
-  const tradesWithDetails: TradeWithDetails[] = [];
-  for (const trade of trades) {
-    const details = await ctx.tradesRepo.findByIdWithDetails(trade.id, roster?.id);
-    if (details) tradesWithDetails.push(details);
-  }
-
-  return tradesWithDetails;
 }
 
 /**

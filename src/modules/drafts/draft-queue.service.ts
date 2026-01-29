@@ -71,7 +71,11 @@ export class DraftQueueService {
   /**
    * Remove a player from a user's queue by player ID
    */
-  async removeFromQueueByPlayer(draftId: number, rosterId: number, playerId: number): Promise<void> {
+  async removeFromQueueByPlayer(
+    draftId: number,
+    rosterId: number,
+    playerId: number
+  ): Promise<void> {
     return this.draftRepo.removeFromQueueByPlayer(draftId, rosterId, playerId);
   }
 

@@ -13,7 +13,10 @@ import matchupRoutes from '../matchups/matchups.routes';
 import tradesRoutes from '../trades/trades.routes';
 import { createWaiversRoutes } from '../waivers/waivers.routes';
 import playoffRoutes from '../playoffs/playoff.routes';
-import { createLeagueInvitationRoutes, createUserSearchRoutes } from '../invitations/invitations.routes';
+import {
+  createLeagueInvitationRoutes,
+  createUserSearchRoutes,
+} from '../invitations/invitations.routes';
 import { WaiversController } from '../waivers/waivers.controller';
 import { WaiversService } from '../waivers/waivers.service';
 import { AuthorizationService } from '../auth/authorization.service';
@@ -37,10 +40,17 @@ const rosterService = container.resolve<RosterPlayerService>(KEYS.ROSTER_PLAYER_
 const lineupService = container.resolve<LineupService>(KEYS.LINEUP_SERVICE);
 const matchupService = container.resolve<MatchupService>(KEYS.MATCHUP_SERVICE);
 const scoringService = container.resolve<ScoringService>(KEYS.SCORING_SERVICE);
-const scheduleGeneratorService = container.resolve<ScheduleGeneratorService>(KEYS.SCHEDULE_GENERATOR_SERVICE);
+const scheduleGeneratorService = container.resolve<ScheduleGeneratorService>(
+  KEYS.SCHEDULE_GENERATOR_SERVICE
+);
 const standingsService = container.resolve<StandingsService>(KEYS.STANDINGS_SERVICE);
 const rostersController = new RostersController(rosterService, lineupService);
-const matchupsController = new MatchupsController(matchupService, scoringService, scheduleGeneratorService, standingsService);
+const matchupsController = new MatchupsController(
+  matchupService,
+  scoringService,
+  scheduleGeneratorService,
+  standingsService
+);
 
 // Resolve waivers dependencies
 const waiversService = container.resolve<WaiversService>(KEYS.WAIVERS_SERVICE);

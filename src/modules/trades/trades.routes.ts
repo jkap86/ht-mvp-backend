@@ -60,7 +60,11 @@ router.post('/:tradeId/cancel', tradesController.cancelTrade);
  * Counter a trade with a new offer
  * Body: { offering_player_ids[], requesting_player_ids[], message? }
  */
-router.post('/:tradeId/counter', validateRequest(counterTradeSchema), tradesController.counterTrade);
+router.post(
+  '/:tradeId/counter',
+  validateRequest(counterTradeSchema),
+  tradesController.counterTrade
+);
 
 /**
  * POST /api/leagues/:leagueId/trades/:tradeId/vote

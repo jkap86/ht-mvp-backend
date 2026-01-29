@@ -3,19 +3,17 @@ import { DraftOrderService } from '../../../modules/drafts/draft-order.service';
 import { DraftRepository } from '../../../modules/drafts/drafts.repository';
 import { LeagueRepository, RosterRepository } from '../../../modules/leagues/leagues.repository';
 import { Draft, DraftOrderEntry } from '../../../modules/drafts/drafts.model';
-import {
-  ForbiddenException,
-  ValidationException,
-} from '../../../utils/exceptions';
+import { ForbiddenException, ValidationException } from '../../../utils/exceptions';
 
 // Mock Pool
-const createMockPool = (): jest.Mocked<Pool> => ({
-  connect: jest.fn().mockResolvedValue({
-    query: jest.fn().mockResolvedValue({ rows: [] }),
-    release: jest.fn(),
-  } as unknown as PoolClient),
-  query: jest.fn(),
-} as unknown as jest.Mocked<Pool>);
+const createMockPool = (): jest.Mocked<Pool> =>
+  ({
+    connect: jest.fn().mockResolvedValue({
+      query: jest.fn().mockResolvedValue({ rows: [] }),
+      release: jest.fn(),
+    } as unknown as PoolClient),
+    query: jest.fn(),
+  }) as unknown as jest.Mocked<Pool>;
 
 // Mock data
 const mockDraft: Draft = {
@@ -39,9 +37,30 @@ const mockDraft: Draft = {
 };
 
 const mockDraftOrder: DraftOrderEntry[] = [
-  { id: 1, draftId: 1, rosterId: 1, draftPosition: 1, username: 'user1', isAutodraftEnabled: false },
-  { id: 2, draftId: 1, rosterId: 2, draftPosition: 2, username: 'user2', isAutodraftEnabled: false },
-  { id: 3, draftId: 1, rosterId: 3, draftPosition: 3, username: 'user3', isAutodraftEnabled: false },
+  {
+    id: 1,
+    draftId: 1,
+    rosterId: 1,
+    draftPosition: 1,
+    username: 'user1',
+    isAutodraftEnabled: false,
+  },
+  {
+    id: 2,
+    draftId: 1,
+    rosterId: 2,
+    draftPosition: 2,
+    username: 'user2',
+    isAutodraftEnabled: false,
+  },
+  {
+    id: 3,
+    draftId: 1,
+    rosterId: 3,
+    draftPosition: 3,
+    username: 'user3',
+    isAutodraftEnabled: false,
+  },
 ];
 
 const mockRosters = [
@@ -51,26 +70,29 @@ const mockRosters = [
 ];
 
 // Mock repositories
-const createMockDraftRepo = (): jest.Mocked<DraftRepository> => ({
-  findById: jest.fn(),
-  getDraftOrder: jest.fn(),
-  createDraftOrder: jest.fn(),
-  clearDraftOrder: jest.fn(),
-  updateDraftOrderAtomic: jest.fn(),
-  setOrderConfirmed: jest.fn(),
-} as unknown as jest.Mocked<DraftRepository>);
+const createMockDraftRepo = (): jest.Mocked<DraftRepository> =>
+  ({
+    findById: jest.fn(),
+    getDraftOrder: jest.fn(),
+    createDraftOrder: jest.fn(),
+    clearDraftOrder: jest.fn(),
+    updateDraftOrderAtomic: jest.fn(),
+    setOrderConfirmed: jest.fn(),
+  }) as unknown as jest.Mocked<DraftRepository>;
 
-const createMockLeagueRepo = (): jest.Mocked<LeagueRepository> => ({
-  isUserMember: jest.fn(),
-  isCommissioner: jest.fn(),
-  findById: jest.fn(),
-} as unknown as jest.Mocked<LeagueRepository>);
+const createMockLeagueRepo = (): jest.Mocked<LeagueRepository> =>
+  ({
+    isUserMember: jest.fn(),
+    isCommissioner: jest.fn(),
+    findById: jest.fn(),
+  }) as unknown as jest.Mocked<LeagueRepository>;
 
-const createMockRosterRepo = (): jest.Mocked<RosterRepository> => ({
-  findByLeagueId: jest.fn(),
-  getRosterCount: jest.fn(),
-  createEmptyRoster: jest.fn(),
-} as unknown as jest.Mocked<RosterRepository>);
+const createMockRosterRepo = (): jest.Mocked<RosterRepository> =>
+  ({
+    findByLeagueId: jest.fn(),
+    getRosterCount: jest.fn(),
+    createEmptyRoster: jest.fn(),
+  }) as unknown as jest.Mocked<RosterRepository>;
 
 describe('DraftOrderService', () => {
   let draftOrderService: DraftOrderService;
@@ -84,7 +106,12 @@ describe('DraftOrderService', () => {
     mockDraftRepo = createMockDraftRepo();
     mockLeagueRepo = createMockLeagueRepo();
     mockRosterRepo = createMockRosterRepo();
-    draftOrderService = new DraftOrderService(mockPool, mockDraftRepo, mockLeagueRepo, mockRosterRepo);
+    draftOrderService = new DraftOrderService(
+      mockPool,
+      mockDraftRepo,
+      mockLeagueRepo,
+      mockRosterRepo
+    );
   });
 
   describe('getDraftOrder', () => {
@@ -102,12 +129,12 @@ describe('DraftOrderService', () => {
     it('should throw ForbiddenException when user is not a member', async () => {
       mockLeagueRepo.isUserMember.mockResolvedValue(false);
 
-      await expect(
-        draftOrderService.getDraftOrder(1, 1, 'user-123')
-      ).rejects.toThrow(ForbiddenException);
-      await expect(
-        draftOrderService.getDraftOrder(1, 1, 'user-123')
-      ).rejects.toThrow('not a member');
+      await expect(draftOrderService.getDraftOrder(1, 1, 'user-123')).rejects.toThrow(
+        ForbiddenException
+      );
+      await expect(draftOrderService.getDraftOrder(1, 1, 'user-123')).rejects.toThrow(
+        'not a member'
+      );
     });
   });
 
@@ -130,24 +157,24 @@ describe('DraftOrderService', () => {
     it('should throw ForbiddenException when user is not commissioner', async () => {
       mockLeagueRepo.isCommissioner.mockResolvedValue(false);
 
-      await expect(
-        draftOrderService.randomizeDraftOrder(1, 1, 'user-123')
-      ).rejects.toThrow(ForbiddenException);
-      await expect(
-        draftOrderService.randomizeDraftOrder(1, 1, 'user-123')
-      ).rejects.toThrow('commissioner');
+      await expect(draftOrderService.randomizeDraftOrder(1, 1, 'user-123')).rejects.toThrow(
+        ForbiddenException
+      );
+      await expect(draftOrderService.randomizeDraftOrder(1, 1, 'user-123')).rejects.toThrow(
+        'commissioner'
+      );
     });
 
     it('should throw ValidationException when draft already started', async () => {
       mockLeagueRepo.isCommissioner.mockResolvedValue(true);
       mockDraftRepo.findById.mockResolvedValue({ ...mockDraft, status: 'in_progress' });
 
-      await expect(
-        draftOrderService.randomizeDraftOrder(1, 1, 'user-123')
-      ).rejects.toThrow(ValidationException);
-      await expect(
-        draftOrderService.randomizeDraftOrder(1, 1, 'user-123')
-      ).rejects.toThrow('before draft starts');
+      await expect(draftOrderService.randomizeDraftOrder(1, 1, 'user-123')).rejects.toThrow(
+        ValidationException
+      );
+      await expect(draftOrderService.randomizeDraftOrder(1, 1, 'user-123')).rejects.toThrow(
+        'before draft starts'
+      );
     });
   });
 

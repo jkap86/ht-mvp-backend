@@ -23,7 +23,10 @@ export class DraftRepository {
    * Get all drafts for a league AND verify user membership in a single query.
    * Returns null if the user is not a member (avoids race condition with separate isUserMember check).
    */
-  async findByLeagueIdWithMembershipCheck(leagueId: number, userId: string): Promise<Draft[] | null> {
+  async findByLeagueIdWithMembershipCheck(
+    leagueId: number,
+    userId: string
+  ): Promise<Draft[] | null> {
     const result = await this.db.query(
       `WITH membership_check AS (
          SELECT EXISTS(SELECT 1 FROM rosters WHERE league_id = $1 AND user_id = $2) as is_member
@@ -152,7 +155,11 @@ export class DraftRepository {
   }
 
   // Draft Order
-  async getDraftOrder(draftId: number, limit?: number, offset?: number): Promise<DraftOrderEntry[]> {
+  async getDraftOrder(
+    draftId: number,
+    limit?: number,
+    offset?: number
+  ): Promise<DraftOrderEntry[]> {
     let query = `SELECT dord.*, u.username, r.user_id
        FROM draft_order dord
        LEFT JOIN rosters r ON dord.roster_id = r.id
@@ -160,7 +167,7 @@ export class DraftRepository {
        WHERE dord.draft_id = $1
        ORDER BY dord.draft_position`;
 
-    const params: (number)[] = [draftId];
+    const params: number[] = [draftId];
 
     if (limit !== undefined) {
       params.push(limit);
@@ -173,7 +180,7 @@ export class DraftRepository {
     }
 
     const result = await this.db.query(query, params);
-    return result.rows.map(row => ({
+    return result.rows.map((row) => ({
       id: row.id,
       draftId: row.draft_id,
       rosterId: row.roster_id,
@@ -196,7 +203,7 @@ export class DraftRepository {
       `SELECT is_autodraft_enabled FROM draft_order WHERE draft_id = $1 AND roster_id = $2`,
       [draftId, rosterId]
     );
-    return result.rows.length > 0 ? result.rows[0].is_autodraft_enabled ?? false : false;
+    return result.rows.length > 0 ? (result.rows[0].is_autodraft_enabled ?? false) : false;
   }
 
   async createDraftOrder(draftId: number, rosterId: number, position: number): Promise<void> {
@@ -229,13 +236,15 @@ export class DraftRepository {
       // Insert new order using properly parameterized batch insert
       if (rosterIds.length > 0) {
         // Build parameterized placeholders: ($1, $2, $3), ($1, $4, $5), etc.
-        const values: (number)[] = [draftId];
-        const placeholders = rosterIds.map((rosterId, index) => {
-          const rosterParamIndex = values.length + 1;
-          const positionParamIndex = values.length + 2;
-          values.push(rosterId, index + 1);
-          return `($1, $${rosterParamIndex}, $${positionParamIndex})`;
-        }).join(', ');
+        const values: number[] = [draftId];
+        const placeholders = rosterIds
+          .map((rosterId, index) => {
+            const rosterParamIndex = values.length + 1;
+            const positionParamIndex = values.length + 2;
+            values.push(rosterId, index + 1);
+            return `($1, $${rosterParamIndex}, $${positionParamIndex})`;
+          })
+          .join(', ');
 
         await client.query(
           `INSERT INTO draft_order (draft_id, roster_id, draft_position) VALUES ${placeholders}`,
@@ -262,7 +271,7 @@ export class DraftRepository {
        WHERE dp.draft_id = $1
        ORDER BY dp.pick_number`;
 
-    const params: (number)[] = [draftId];
+    const params: number[] = [draftId];
 
     if (limit !== undefined) {
       params.push(limit);
@@ -275,7 +284,7 @@ export class DraftRepository {
     }
 
     const result = await this.db.query(query, params);
-    return result.rows.map(row => ({
+    return result.rows.map((row) => ({
       id: row.id,
       draftId: row.draft_id,
       pickNumber: row.pick_number,
@@ -384,10 +393,10 @@ export class DraftRepository {
       );
 
       // Remove player from all queues in this draft
-      await client.query(
-        'DELETE FROM draft_queue WHERE draft_id = $1 AND player_id = $2',
-        [draftId, playerId]
-      );
+      await client.query('DELETE FROM draft_queue WHERE draft_id = $1 AND player_id = $2', [
+        draftId,
+        playerId,
+      ]);
 
       await client.query('COMMIT');
 
@@ -484,7 +493,7 @@ export class DraftRepository {
       'SELECT player_id FROM draft_picks WHERE draft_id = $1 AND player_id IS NOT NULL',
       [draftId]
     );
-    return new Set(result.rows.map(row => row.player_id));
+    return new Set(result.rows.map((row) => row.player_id));
   }
 
   async findExpiredDrafts(): Promise<Draft[]> {
@@ -510,10 +519,7 @@ export class DraftRepository {
   }
 
   async markPickAsAutoPick(pickId: number): Promise<void> {
-    await this.db.query(
-      'UPDATE draft_picks SET is_auto_pick = true WHERE id = $1',
-      [pickId]
-    );
+    await this.db.query('UPDATE draft_picks SET is_auto_pick = true WHERE id = $1', [pickId]);
   }
 
   /**
@@ -555,10 +561,9 @@ export class DraftRepository {
       await client.query('SELECT pg_advisory_xact_lock($1)', [getDraftLockId(params.draftId)]);
 
       // 2. Re-read draft row FOR UPDATE and validate current state
-      const draftResult = await client.query(
-        'SELECT * FROM drafts WHERE id = $1 FOR UPDATE',
-        [params.draftId]
-      );
+      const draftResult = await client.query('SELECT * FROM drafts WHERE id = $1 FOR UPDATE', [
+        params.draftId,
+      ]);
       if (draftResult.rows.length === 0) {
         await client.query('ROLLBACK');
         throw new ConflictException('Draft not found');
@@ -639,10 +644,10 @@ export class DraftRepository {
       );
 
       // 9. Remove player from all queues in this draft
-      await client.query(
-        'DELETE FROM draft_queue WHERE draft_id = $1 AND player_id = $2',
-        [params.draftId, params.playerId]
-      );
+      await client.query('DELETE FROM draft_queue WHERE draft_id = $1 AND player_id = $2', [
+        params.draftId,
+        params.playerId,
+      ]);
 
       // 10. Update draft state atomically
       const updateClauses: string[] = [];
@@ -751,7 +756,7 @@ export class DraftRepository {
        ORDER BY dq.queue_position`,
       [draftId, rosterId]
     );
-    return result.rows.map(row => ({
+    return result.rows.map((row) => ({
       id: row.id,
       draftId: row.draft_id,
       rosterId: row.roster_id,
@@ -792,7 +797,11 @@ export class DraftRepository {
     await this.db.query('DELETE FROM draft_queue WHERE id = $1', [queueId]);
   }
 
-  async removeFromQueueByPlayer(draftId: number, rosterId: number, playerId: number): Promise<void> {
+  async removeFromQueueByPlayer(
+    draftId: number,
+    rosterId: number,
+    playerId: number
+  ): Promise<void> {
     await this.db.query(
       'DELETE FROM draft_queue WHERE draft_id = $1 AND roster_id = $2 AND player_id = $3',
       [draftId, rosterId, playerId]
@@ -800,10 +809,10 @@ export class DraftRepository {
   }
 
   async removePlayerFromAllQueues(draftId: number, playerId: number): Promise<void> {
-    await this.db.query(
-      'DELETE FROM draft_queue WHERE draft_id = $1 AND player_id = $2',
-      [draftId, playerId]
-    );
+    await this.db.query('DELETE FROM draft_queue WHERE draft_id = $1 AND player_id = $2', [
+      draftId,
+      playerId,
+    ]);
   }
 
   async reorderQueue(draftId: number, rosterId: number, playerIds: number[]): Promise<void> {
@@ -811,10 +820,10 @@ export class DraftRepository {
     try {
       await client.query('BEGIN');
       // Delete existing queue entries for this user
-      await client.query(
-        'DELETE FROM draft_queue WHERE draft_id = $1 AND roster_id = $2',
-        [draftId, rosterId]
-      );
+      await client.query('DELETE FROM draft_queue WHERE draft_id = $1 AND roster_id = $2', [
+        draftId,
+        rosterId,
+      ]);
       // Insert in new order
       for (let i = 0; i < playerIds.length; i++) {
         await client.query(

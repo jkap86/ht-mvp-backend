@@ -1,12 +1,11 @@
 import { Pool } from 'pg';
 import { TradesRepository, TradeItemsRepository, TradeVotesRepository } from './trades.repository';
-import { RosterPlayersRepository, RosterTransactionsRepository } from '../rosters/rosters.repository';
-import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import {
-  TradeWithDetails,
-  ProposeTradeRequest,
-  CounterTradeRequest,
-} from './trades.model';
+  RosterPlayersRepository,
+  RosterTransactionsRepository,
+} from '../rosters/rosters.repository';
+import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
+import { TradeWithDetails, ProposeTradeRequest, CounterTradeRequest } from './trades.model';
 
 // Import use-cases
 import {
@@ -207,11 +206,7 @@ export class TradesService {
    * Invalidate pending trades containing a dropped player
    */
   async invalidateTradesWithPlayer(leagueId: number, playerId: number): Promise<void> {
-    return invalidateTradesWithPlayerUseCase(
-      { tradesRepo: this.tradesRepo },
-      leagueId,
-      playerId
-    );
+    return invalidateTradesWithPlayerUseCase({ tradesRepo: this.tradesRepo }, leagueId, playerId);
   }
 
   /**

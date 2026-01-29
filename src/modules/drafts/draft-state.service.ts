@@ -3,11 +3,7 @@ import { draftToResponse } from './drafts.model';
 import { LeagueRepository } from '../leagues/leagues.repository';
 import { RosterPlayersRepository } from '../rosters/rosters.repository';
 import { DraftEngineFactory } from '../../engines';
-import {
-  NotFoundException,
-  ForbiddenException,
-  ValidationException,
-} from '../../utils/exceptions';
+import { NotFoundException, ForbiddenException, ValidationException } from '../../utils/exceptions';
 import { tryGetSocketService } from '../../socket';
 import { populateRostersFromDraft } from './draft-completion.utils';
 
@@ -39,10 +35,12 @@ export class DraftStateService {
     }
 
     // Validate positions are unique and contiguous from 1 to N
-    const positions = draftOrder.map(o => o.draftPosition).sort((a, b) => a - b);
+    const positions = draftOrder.map((o) => o.draftPosition).sort((a, b) => a - b);
     const expectedPositions = Array.from({ length: draftOrder.length }, (_, i) => i + 1);
     if (positions.join(',') !== expectedPositions.join(',')) {
-      throw new ValidationException('Draft order positions must be unique and contiguous from 1 to N');
+      throw new ValidationException(
+        'Draft order positions must be unique and contiguous from 1 to N'
+      );
     }
 
     // Ensure commissioner has explicitly confirmed the draft order
@@ -50,7 +48,7 @@ export class DraftStateService {
       throw new ValidationException('Draft order must be confirmed before starting');
     }
 
-    const firstPicker = draftOrder.find(o => o.draftPosition === 1);
+    const firstPicker = draftOrder.find((o) => o.draftPosition === 1);
 
     // Check if this is a fast auction draft
     const isFastAuction = draft.draftType === 'auction' && draft.settings?.auctionMode === 'fast';

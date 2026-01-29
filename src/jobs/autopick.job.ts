@@ -67,7 +67,12 @@ async function processAutopicks(): Promise<void> {
       }
 
       const durationMs = Date.now() - tickStart;
-      logger.info('autopick tick complete', { jobName: 'autopick', draftsProcessed, picksAutomated, durationMs });
+      logger.info('autopick tick complete', {
+        jobName: 'autopick',
+        draftsProcessed,
+        picksAutomated,
+        durationMs,
+      });
     } finally {
       // Always release advisory lock
       await client.query('SELECT pg_advisory_unlock($1)', [AUTOPICK_LOCK_ID]);

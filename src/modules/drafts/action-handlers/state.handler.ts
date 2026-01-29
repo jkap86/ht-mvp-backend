@@ -10,11 +10,7 @@ export class StateActionHandler implements ActionHandler {
 
   constructor(private readonly draftService: DraftService) {}
 
-  async handle(
-    ctx: ActionContext,
-    action: string,
-    _params: Record<string, any>
-  ): Promise<any> {
+  async handle(ctx: ActionContext, action: string, _params: Record<string, any>): Promise<any> {
     switch (action) {
       case 'start': {
         const result = await this.draftService.startDraft(ctx.draftId, ctx.userId);

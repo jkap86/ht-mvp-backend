@@ -1,13 +1,6 @@
-import { Pool, PoolClient } from 'pg';
-import { TradesRepository, TradeItemsRepository } from '../trades.repository';
-import { RosterPlayersRepository } from '../../rosters/rosters.repository';
-import { LeagueRepository, RosterRepository } from '../../leagues/leagues.repository';
+import { Pool } from 'pg';
 import { tryGetSocketService } from '../../../socket';
-import {
-  TradeWithDetails,
-  CounterTradeRequest,
-  tradeWithDetailsToResponse,
-} from '../trades.model';
+import { TradeWithDetails, CounterTradeRequest, tradeWithDetailsToResponse } from '../trades.model';
 import {
   NotFoundException,
   ForbiddenException,
@@ -48,12 +41,16 @@ export async function counterTrade(
 
   try {
     await client.query('BEGIN');
-    await client.query('SELECT pg_advisory_xact_lock($1)', [getTradeLockId(originalTrade.leagueId)]);
+    await client.query('SELECT pg_advisory_xact_lock($1)', [
+      getTradeLockId(originalTrade.leagueId),
+    ]);
 
     // Re-verify status after acquiring lock (another transaction may have changed it)
     const currentTrade = await ctx.tradesRepo.findById(tradeId, client);
     if (!currentTrade || currentTrade.status !== 'pending') {
-      throw new ValidationException(`Cannot counter trade with status: ${currentTrade?.status || 'unknown'}`);
+      throw new ValidationException(
+        `Cannot counter trade with status: ${currentTrade?.status || 'unknown'}`
+      );
     }
 
     // Mark original as countered within the transaction (conditional)
@@ -76,7 +73,7 @@ export async function counterTrade(
         requestingPickAssetIds: request.requestingPickAssetIds,
         message: request.message,
       },
-      false  // Don't manage transaction - we're already in one
+      false // Don't manage transaction - we're already in one
     );
 
     await client.query('COMMIT');
@@ -92,7 +89,11 @@ export async function counterTrade(
   return newTrade;
 }
 
-function emitTradeCounteredEvent(leagueId: number, originalTradeId: number, newTrade: TradeWithDetails): void {
+function emitTradeCounteredEvent(
+  leagueId: number,
+  originalTradeId: number,
+  newTrade: TradeWithDetails
+): void {
   const socket = tryGetSocketService();
   socket?.emitTradeCountered(leagueId, {
     originalTradeId,

@@ -9,7 +9,7 @@ const NUM_USERS = 12;
  * In development, uses a consistent seed for convenience.
  * In other environments, generates truly random passwords.
  */
-function generateTestPassword(index: number): string {
+function generateTestPassword(_index: number): string {
   // Use environment variable if provided (for CI/testing consistency)
   if (process.env.TEST_USER_PASSWORD) {
     return process.env.TEST_USER_PASSWORD;
@@ -37,10 +37,7 @@ async function seedTestUsers() {
 
     try {
       // Check if user already exists
-      const existing = await pool.query(
-        'SELECT id FROM users WHERE username = $1',
-        [username]
-      );
+      const existing = await pool.query('SELECT id FROM users WHERE username = $1', [username]);
 
       if (existing.rows.length > 0) {
         console.log(`  ⏭️  ${username} already exists, skipping`);
@@ -69,7 +66,9 @@ async function seedTestUsers() {
   if (process.env.TEST_USER_PASSWORD) {
     console.log(`All test users have password from TEST_USER_PASSWORD env var`);
   } else {
-    console.log('Passwords were randomly generated. Set TEST_USER_PASSWORD env var for consistent passwords.');
+    console.log(
+      'Passwords were randomly generated. Set TEST_USER_PASSWORD env var for consistent passwords.'
+    );
   }
 }
 

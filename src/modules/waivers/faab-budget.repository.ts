@@ -1,9 +1,5 @@
 import { Pool, PoolClient } from 'pg';
-import {
-  FaabBudget,
-  FaabBudgetWithDetails,
-  faabBudgetFromDatabase,
-} from './waivers.model';
+import { FaabBudget, FaabBudgetWithDetails, faabBudgetFromDatabase } from './waivers.model';
 
 /**
  * Repository for FAAB budget management
@@ -24,10 +20,10 @@ export class FaabBudgetRepository {
     const conn = client || this.db;
 
     // Delete existing budgets for this league/season
-    await conn.query(
-      'DELETE FROM faab_budgets WHERE league_id = $1 AND season = $2',
-      [leagueId, season]
-    );
+    await conn.query('DELETE FROM faab_budgets WHERE league_id = $1 AND season = $2', [
+      leagueId,
+      season,
+    ]);
 
     // Insert new budgets
     for (const rosterId of rosterIds) {
@@ -55,7 +51,7 @@ export class FaabBudgetRepository {
       [leagueId, season]
     );
 
-    return result.rows.map(row => ({
+    return result.rows.map((row) => ({
       ...faabBudgetFromDatabase(row),
       teamName: row.team_name || `Team ${row.roster_id}`,
       username: row.username || 'Unknown',
@@ -65,7 +61,11 @@ export class FaabBudgetRepository {
   /**
    * Get single roster's budget
    */
-  async getByRoster(rosterId: number, season: number, client?: PoolClient): Promise<FaabBudget | null> {
+  async getByRoster(
+    rosterId: number,
+    season: number,
+    client?: PoolClient
+  ): Promise<FaabBudget | null> {
     const conn = client || this.db;
     const result = await conn.query(
       'SELECT * FROM faab_budgets WHERE roster_id = $1 AND season = $2',

@@ -127,7 +127,9 @@ export class AuthService {
       }
 
       // Validate that this refresh token matches the stored one AND is not expired
-      const { token: storedToken, expiresAt } = await this.userRepository.getRefreshTokenWithExpiry(user.userId);
+      const { token: storedToken, expiresAt } = await this.userRepository.getRefreshTokenWithExpiry(
+        user.userId
+      );
       if (storedToken !== refreshToken) {
         throw new InvalidCredentialsException('Invalid refresh token');
       }
@@ -149,7 +151,7 @@ export class AuthService {
         token: newAccessToken,
         refreshToken: newRefreshToken,
       };
-    } catch (error) {
+    } catch (_error) {
       throw new InvalidCredentialsException('Invalid refresh token');
     }
   }
@@ -161,13 +163,15 @@ export class AuthService {
   async searchUsers(
     query: string,
     currentUserId: string
-  ): Promise<Array<{
-    userId: string;
-    username: string;
-    email: string;
-    createdAt: Date;
-    updatedAt: Date;
-  }>> {
+  ): Promise<
+    Array<{
+      userId: string;
+      username: string;
+      email: string;
+      createdAt: Date;
+      updatedAt: Date;
+    }>
+  > {
     const users = await this.userRepository.searchByUsername(query, currentUserId);
     return users.map((user) => user.toSafeObject());
   }

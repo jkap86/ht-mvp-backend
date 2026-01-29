@@ -1,5 +1,10 @@
 export { proposeTrade, ProposeTradeContext } from './propose-trade.use-case';
-export { acceptTrade, executeTrade, AcceptTradeContext, PickTradedEvent } from './accept-trade.use-case';
+export {
+  acceptTrade,
+  executeTrade,
+  AcceptTradeContext,
+  PickTradedEvent,
+} from './accept-trade.use-case';
 export { rejectTrade, RejectTradeContext } from './reject-trade.use-case';
 export { cancelTrade, CancelTradeContext } from './cancel-trade.use-case';
 export { counterTrade, CounterTradeContext } from './counter-trade.use-case';

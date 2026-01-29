@@ -1,5 +1,5 @@
 import { ChatRepository } from './chat.repository';
-import { ChatMessageWithUser, messageToResponse } from './chat.model';
+import { messageToResponse } from './chat.model';
 import { LeagueRepository } from '../leagues/leagues.repository';
 import { ForbiddenException, ValidationException } from '../../utils/exceptions';
 import { tryGetSocketService } from '../../socket';
@@ -36,7 +36,12 @@ export class ChatService {
     return response;
   }
 
-  async getMessages(leagueId: number, userId: string, limit?: number, before?: number): Promise<any[]> {
+  async getMessages(
+    leagueId: number,
+    userId: string,
+    limit?: number,
+    before?: number
+  ): Promise<any[]> {
     // Verify user is member
     const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
     if (!isMember) {

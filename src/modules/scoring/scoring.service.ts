@@ -2,17 +2,9 @@ import { Pool } from 'pg';
 import { PlayerStatsRepository } from './scoring.repository';
 import { LineupsRepository } from '../lineups/lineups.repository';
 import { LeagueRepository } from '../leagues/leagues.repository';
-import {
-  PlayerStats,
-  ScoringRules,
-  DEFAULT_SCORING_RULES,
-  ScoringType,
-} from './scoring.model';
+import { PlayerStats, ScoringRules, DEFAULT_SCORING_RULES, ScoringType } from './scoring.model';
 import { LineupSlots } from '../lineups/lineups.model';
-import {
-  NotFoundException,
-  ForbiddenException,
-} from '../../utils/exceptions';
+import { NotFoundException, ForbiddenException } from '../../utils/exceptions';
 import { calculatePlayerPoints as calculatePlayerPointsPure } from './scoring-calculator';
 
 export class ScoringService {
@@ -83,7 +75,7 @@ export class ScoringService {
 
     // Get stats for all starters
     const stats = await this.statsRepo.findByPlayersAndWeek(starterIds, season, week);
-    const statsMap = new Map(stats.map(s => [s.playerId, s]));
+    const statsMap = new Map(stats.map((s) => [s.playerId, s]));
 
     // Calculate points for each player
     const playerPoints = new Map<number, number>();
@@ -150,7 +142,7 @@ export class ScoringService {
     playerId: number,
     season: number,
     week: number,
-    userId: string
+    _userId: string
   ): Promise<PlayerStats | null> {
     return this.statsRepo.findByPlayerAndWeek(playerId, season, week);
   }
@@ -161,7 +153,7 @@ export class ScoringService {
   async getPlayerSeasonStats(
     playerId: number,
     season: number,
-    userId: string
+    _userId: string
   ): Promise<PlayerStats[]> {
     return this.statsRepo.findByPlayerAndSeason(playerId, season);
   }

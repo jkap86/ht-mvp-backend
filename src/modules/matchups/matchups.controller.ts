@@ -4,7 +4,11 @@ import { MatchupService } from './matchups.service';
 import { ScoringService } from '../scoring/scoring.service';
 import { ScheduleGeneratorService } from './schedule-generator.service';
 import { StandingsService } from './standings.service';
-import { matchupDetailsToResponse, matchupWithLineupsToResponse, standingToResponse } from './matchups.model';
+import {
+  matchupDetailsToResponse,
+  matchupWithLineupsToResponse,
+  standingToResponse,
+} from './matchups.model';
 import { requireUserId, requireLeagueId } from '../../utils/controller-helpers';
 import { parseIntParam } from '../../utils/params';
 import { ValidationException } from '../../utils/exceptions';

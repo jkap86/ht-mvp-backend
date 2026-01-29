@@ -44,16 +44,18 @@ const corsOptions: cors.CorsOptions = {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization'],
 };
 
 // Middleware
-app.use(helmet({
-  // Disable contentSecurityPolicy for API server (no HTML served)
-  contentSecurityPolicy: false,
-  // Enable all other security headers
-  crossOriginEmbedderPolicy: false, // Allow embedding from mobile apps
-}));
+app.use(
+  helmet({
+    // Disable contentSecurityPolicy for API server (no HTML served)
+    contentSecurityPolicy: false,
+    // Enable all other security headers
+    crossOriginEmbedderPolicy: false, // Allow embedding from mobile apps
+  })
+);
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '10kb' })); // Limit payload size to prevent DoS
 app.use(requestTimingMiddleware);

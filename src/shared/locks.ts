@@ -253,88 +253,56 @@ export class LockHelper {
   /**
    * Acquire multiple locks in consistent order.
    */
-  async withLocks<T>(
-    client: PoolClient,
-    locks: LockSpec[],
-    fn: () => Promise<T>
-  ): Promise<T> {
+  async withLocks<T>(client: PoolClient, locks: LockSpec[], fn: () => Promise<T>): Promise<T> {
     return withLocks(client, locks, fn);
   }
 
   /**
    * Lock a league.
    */
-  async lockLeague<T>(
-    client: PoolClient,
-    leagueId: number,
-    fn: () => Promise<T>
-  ): Promise<T> {
+  async lockLeague<T>(client: PoolClient, leagueId: number, fn: () => Promise<T>): Promise<T> {
     return lockLeague(client, leagueId, fn);
   }
 
   /**
    * Lock a roster.
    */
-  async lockRoster<T>(
-    client: PoolClient,
-    rosterId: number,
-    fn: () => Promise<T>
-  ): Promise<T> {
+  async lockRoster<T>(client: PoolClient, rosterId: number, fn: () => Promise<T>): Promise<T> {
     return lockRoster(client, rosterId, fn);
   }
 
   /**
    * Lock multiple rosters.
    */
-  async lockRosters<T>(
-    client: PoolClient,
-    rosterIds: number[],
-    fn: () => Promise<T>
-  ): Promise<T> {
+  async lockRosters<T>(client: PoolClient, rosterIds: number[], fn: () => Promise<T>): Promise<T> {
     return lockRosters(client, rosterIds, fn);
   }
 
   /**
    * Lock trade operations for a league.
    */
-  async lockTrade<T>(
-    client: PoolClient,
-    leagueId: number,
-    fn: () => Promise<T>
-  ): Promise<T> {
+  async lockTrade<T>(client: PoolClient, leagueId: number, fn: () => Promise<T>): Promise<T> {
     return lockTrade(client, leagueId, fn);
   }
 
   /**
    * Lock waiver operations for a league.
    */
-  async lockWaiver<T>(
-    client: PoolClient,
-    leagueId: number,
-    fn: () => Promise<T>
-  ): Promise<T> {
+  async lockWaiver<T>(client: PoolClient, leagueId: number, fn: () => Promise<T>): Promise<T> {
     return lockWaiver(client, leagueId, fn);
   }
 
   /**
    * Lock an auction lot.
    */
-  async lockAuction<T>(
-    client: PoolClient,
-    lotId: number,
-    fn: () => Promise<T>
-  ): Promise<T> {
+  async lockAuction<T>(client: PoolClient, lotId: number, fn: () => Promise<T>): Promise<T> {
     return lockAuction(client, lotId, fn);
   }
 
   /**
    * Lock a lineup.
    */
-  async lockLineup<T>(
-    client: PoolClient,
-    lineupId: number,
-    fn: () => Promise<T>
-  ): Promise<T> {
+  async lockLineup<T>(client: PoolClient, lineupId: number, fn: () => Promise<T>): Promise<T> {
     return lockLineup(client, lineupId, fn);
   }
 }

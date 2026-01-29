@@ -1,6 +1,6 @@
 import { PlayerRepository } from './players.repository';
 import { SleeperApiClient } from './sleeper.client';
-import { Player, playerToResponse } from './players.model';
+import { playerToResponse } from './players.model';
 import { NotFoundException } from '../../utils/exceptions';
 
 export class PlayerService {
@@ -37,8 +37,8 @@ export class PlayerService {
     const relevantPositions = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'];
 
     const playersToSync = playerIds
-      .map(id => players[id])
-      .filter(player => {
+      .map((id) => players[id])
+      .filter((player) => {
         // Must have a relevant position
         if (!player.position || !relevantPositions.includes(player.position)) {
           return false;

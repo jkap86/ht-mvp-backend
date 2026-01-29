@@ -1,10 +1,5 @@
-import { Pool, PoolClient } from 'pg';
-import {
-  Matchup,
-  MatchupDetails,
-  Standing,
-  matchupFromDatabase,
-} from './matchups.model';
+import { Pool } from 'pg';
+import { Matchup, MatchupDetails, Standing, matchupFromDatabase } from './matchups.model';
 
 export class MatchupsRepository {
   constructor(private readonly db: Pool) {}
@@ -13,10 +8,7 @@ export class MatchupsRepository {
    * Get matchup by ID
    */
   async findById(matchupId: number): Promise<Matchup | null> {
-    const result = await this.db.query(
-      'SELECT * FROM matchups WHERE id = $1',
-      [matchupId]
-    );
+    const result = await this.db.query('SELECT * FROM matchups WHERE id = $1', [matchupId]);
 
     if (result.rows.length === 0) return null;
     return matchupFromDatabase(result.rows[0]);
@@ -148,10 +140,7 @@ export class MatchupsRepository {
   /**
    * Get all finalized matchups for a roster in a season
    */
-  async getFinalizedByRoster(
-    rosterId: number,
-    season: number
-  ): Promise<Matchup[]> {
+  async getFinalizedByRoster(rosterId: number, season: number): Promise<Matchup[]> {
     const result = await this.db.query(
       `SELECT * FROM matchups
        WHERE (roster1_id = $1 OR roster2_id = $1)
@@ -167,10 +156,7 @@ export class MatchupsRepository {
   /**
    * Get all finalized matchups for a league in a season
    */
-  async getFinalizedByLeague(
-    leagueId: number,
-    season: number
-  ): Promise<Matchup[]> {
+  async getFinalizedByLeague(leagueId: number, season: number): Promise<Matchup[]> {
     const result = await this.db.query(
       `SELECT * FROM matchups
        WHERE league_id = $1
@@ -261,10 +247,10 @@ export class MatchupsRepository {
    * Delete all matchups for a league (for regenerating schedule)
    */
   async deleteByLeague(leagueId: number, season: number): Promise<void> {
-    await this.db.query(
-      'DELETE FROM matchups WHERE league_id = $1 AND season = $2',
-      [leagueId, season]
-    );
+    await this.db.query('DELETE FROM matchups WHERE league_id = $1 AND season = $2', [
+      leagueId,
+      season,
+    ]);
   }
 
   /**

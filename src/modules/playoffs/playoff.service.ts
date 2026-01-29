@@ -4,7 +4,6 @@ import { MatchupsRepository } from '../matchups/matchups.repository';
 import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import {
   PlayoffBracketView,
-  PlayoffSeed,
   PlayoffMatchup,
   PlayoffRound,
   PlayoffTeamInfo,
@@ -115,7 +114,7 @@ export class PlayoffService {
 
       // Generate round 1 matchups
       const bracketConfig = generateBracketConfig(config.playoffTeams, config.startWeek);
-      const seedMap = new Map(seeds.map(s => [s.seed, s]));
+      const seedMap = new Map(seeds.map((s) => [s.seed, s]));
 
       for (const matchup of bracketConfig) {
         const seed1 = seedMap.get(matchup.seed1);
@@ -155,10 +154,7 @@ export class PlayoffService {
   /**
    * Get playoff bracket view for a league
    */
-  async getPlayoffBracket(
-    leagueId: number,
-    userId: string
-  ): Promise<PlayoffBracketView | null> {
+  async getPlayoffBracket(leagueId: number, userId: string): Promise<PlayoffBracketView | null> {
     // Validate membership
     const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
     if (!isMember) {
@@ -210,11 +206,7 @@ export class PlayoffService {
     }
 
     // Get finalized matchups for this week
-    const matchups = await this.playoffRepo.getFinalizedMatchupsForWeek(
-      leagueId,
-      season,
-      week
-    );
+    const matchups = await this.playoffRepo.getFinalizedMatchupsForWeek(leagueId, season, week);
 
     if (matchups.length === 0) {
       throw new ValidationException('No finalized playoff matchups found for this week');
@@ -233,9 +225,10 @@ export class PlayoffService {
       if (currentRound === bracket.totalRounds) {
         // Find championship winner
         const championship = matchups[0];
-        const winnerId = championship.roster1_points > championship.roster2_points
-          ? championship.roster1_id
-          : championship.roster2_id;
+        const winnerId =
+          championship.roster1_points > championship.roster2_points
+            ? championship.roster1_id
+            : championship.roster2_id;
 
         await this.playoffRepo.setChampion(bracket.id, winnerId, client);
         logger.info(`League ${leagueId} championship won by roster ${winnerId}`);
@@ -290,18 +283,15 @@ export class PlayoffService {
     client: any
   ): Promise<void> {
     const seeds = await this.playoffRepo.getSeeds(bracket.id);
-    const seedMap = new Map(seeds.map(s => [s.rosterId, s]));
 
     // Get winners from previous matchups
     const winners: Array<{ rosterId: number; seed: number; bracketPosition: number }> = [];
 
     for (const matchup of previousMatchups) {
-      const winnerId = matchup.roster1_points > matchup.roster2_points
-        ? matchup.roster1_id
-        : matchup.roster2_id;
-      const winnerSeed = winnerId === matchup.roster1_id
-        ? matchup.playoff_seed1
-        : matchup.playoff_seed2;
+      const winnerId =
+        matchup.roster1_points > matchup.roster2_points ? matchup.roster1_id : matchup.roster2_id;
+      const winnerSeed =
+        winnerId === matchup.roster1_id ? matchup.playoff_seed1 : matchup.playoff_seed2;
 
       winners.push({
         rosterId: winnerId,
@@ -313,34 +303,46 @@ export class PlayoffService {
     // Handle 6-team format with byes
     if (bracket.playoffTeams === 6 && nextRound === 2) {
       // Add bye teams (seeds 1 and 2)
-      const byeTeams = seeds.filter(s => s.hasBye);
+      const byeTeams = seeds.filter((s) => s.hasBye);
 
       // Sort winners by bracket position
       winners.sort((a, b) => a.bracketPosition - b.bracketPosition);
 
       // Semifinal 1: #1 seed vs winner of 4v5 (bracket position 2)
-      const winner4v5 = winners.find(w => w.bracketPosition === 2);
+      const winner4v5 = winners.find((w) => w.bracketPosition === 2);
       // Semifinal 2: #2 seed vs winner of 3v6 (bracket position 1)
-      const winner3v6 = winners.find(w => w.bracketPosition === 1);
+      const winner3v6 = winners.find((w) => w.bracketPosition === 1);
 
       if (byeTeams.length >= 2 && winner4v5 && winner3v6) {
-        const seed1 = byeTeams.find(s => s.seed === 1);
-        const seed2 = byeTeams.find(s => s.seed === 2);
+        const seed1 = byeTeams.find((s) => s.seed === 1);
+        const seed2 = byeTeams.find((s) => s.seed === 2);
 
         if (seed1 && seed2) {
           // Semifinal 1: #1 vs lower seed winner
           await this.playoffRepo.createPlayoffMatchup(
-            leagueId, season, nextWeek,
-            seed1.rosterId, winner4v5.rosterId,
-            nextRound, 1, winner4v5.seed, 3,
+            leagueId,
+            season,
+            nextWeek,
+            seed1.rosterId,
+            winner4v5.rosterId,
+            nextRound,
+            1,
+            winner4v5.seed,
+            3,
             client
           );
 
           // Semifinal 2: #2 vs higher seed winner
           await this.playoffRepo.createPlayoffMatchup(
-            leagueId, season, nextWeek,
-            seed2.rosterId, winner3v6.rosterId,
-            nextRound, 2, winner3v6.seed, 4,
+            leagueId,
+            season,
+            nextWeek,
+            seed2.rosterId,
+            winner3v6.rosterId,
+            nextRound,
+            2,
+            winner3v6.seed,
+            4,
             client
           );
         }
@@ -356,9 +358,14 @@ export class PlayoffService {
           const team2 = winners[i + 1];
 
           await this.playoffRepo.createPlayoffMatchup(
-            leagueId, season, nextWeek,
-            team1.rosterId, team2.rosterId,
-            nextRound, team1.seed, team2.seed,
+            leagueId,
+            season,
+            nextWeek,
+            team1.rosterId,
+            team2.rosterId,
+            nextRound,
+            team1.seed,
+            team2.seed,
             Math.floor(i / 2) + 1,
             client
           );
@@ -377,13 +384,10 @@ export class PlayoffService {
     }
 
     const seeds = await this.playoffRepo.getSeeds(bracketId);
-    const matchupsRaw = await this.playoffRepo.getPlayoffMatchups(
-      bracket.leagueId,
-      bracket.season
-    );
+    const matchupsRaw = await this.playoffRepo.getPlayoffMatchups(bracket.leagueId, bracket.season);
 
     // Build seed lookup
-    const seedByRoster = new Map(seeds.map(s => [s.rosterId, s]));
+    const seedByRoster = new Map(seeds.map((s) => [s.rosterId, s]));
 
     // Group matchups by round
     const matchupsByRound = new Map<number, PlayoffMatchup[]>();
@@ -392,25 +396,29 @@ export class PlayoffService {
       const seed1 = seedByRoster.get(m.roster1_id);
       const seed2 = seedByRoster.get(m.roster2_id);
 
-      const team1: PlayoffTeamInfo | null = seed1 ? {
-        rosterId: m.roster1_id,
-        seed: seed1.seed,
-        teamName: m.roster1_team_name || seed1.teamName || `Team ${seed1.seed}`,
-        points: m.roster1_points ? parseFloat(m.roster1_points) : null,
-        record: seed1.regularSeasonRecord,
-      } : null;
+      const team1: PlayoffTeamInfo | null = seed1
+        ? {
+            rosterId: m.roster1_id,
+            seed: seed1.seed,
+            teamName: m.roster1_team_name || seed1.teamName || `Team ${seed1.seed}`,
+            points: m.roster1_points ? parseFloat(m.roster1_points) : null,
+            record: seed1.regularSeasonRecord,
+          }
+        : null;
 
-      const team2: PlayoffTeamInfo | null = seed2 ? {
-        rosterId: m.roster2_id,
-        seed: seed2.seed,
-        teamName: m.roster2_team_name || seed2.teamName || `Team ${seed2.seed}`,
-        points: m.roster2_points ? parseFloat(m.roster2_points) : null,
-        record: seed2.regularSeasonRecord,
-      } : null;
+      const team2: PlayoffTeamInfo | null = seed2
+        ? {
+            rosterId: m.roster2_id,
+            seed: seed2.seed,
+            teamName: m.roster2_team_name || seed2.teamName || `Team ${seed2.seed}`,
+            points: m.roster2_points ? parseFloat(m.roster2_points) : null,
+            record: seed2.regularSeasonRecord,
+          }
+        : null;
 
       let winner: PlayoffTeamInfo | null = null;
       if (m.is_final && team1 && team2) {
-        winner = (m.roster1_points > m.roster2_points) ? team1 : team2;
+        winner = m.roster1_points > m.roster2_points ? team1 : team2;
       }
 
       const playoffMatchup: PlayoffMatchup = {

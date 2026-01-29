@@ -8,7 +8,7 @@ beforeEach(() => {
 // Mock bcrypt for faster tests
 jest.mock('bcrypt', () => ({
   hash: jest.fn().mockResolvedValue('hashed_password'),
-  compare: jest.fn().mockImplementation((password, hash) => {
+  compare: jest.fn().mockImplementation((password, _hash) => {
     // Return true if password is 'correct_password', false otherwise
     return Promise.resolve(password === 'correct_password');
   }),

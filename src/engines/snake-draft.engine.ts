@@ -30,10 +30,8 @@ export class SnakeDraftEngine extends BaseDraftEngine {
 
     // Snake draft: reverse order in even rounds
     const isReversed = round % 2 === 0;
-    const position = isReversed
-      ? totalRosters - pickInRound + 1
-      : pickInRound;
+    const position = isReversed ? totalRosters - pickInRound + 1 : pickInRound;
 
-    return draftOrder.find(o => o.draftPosition === position);
+    return draftOrder.find((o) => o.draftPosition === position);
   }
 }

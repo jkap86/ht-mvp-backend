@@ -10,11 +10,7 @@ export class PickActionHandler implements ActionHandler {
 
   constructor(private readonly draftService: DraftService) {}
 
-  async handle(
-    ctx: ActionContext,
-    action: string,
-    params: Record<string, any>
-  ): Promise<any> {
+  async handle(ctx: ActionContext, action: string, params: Record<string, any>): Promise<any> {
     if (action === 'pick') {
       const result = await this.draftService.makePick(
         ctx.leagueId,

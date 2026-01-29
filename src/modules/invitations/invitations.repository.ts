@@ -29,10 +29,7 @@ export class InvitationsRepository {
   }
 
   async findById(id: number): Promise<LeagueInvitation | null> {
-    const result = await this.db.query(
-      'SELECT * FROM league_invitations WHERE id = $1',
-      [id]
-    );
+    const result = await this.db.query('SELECT * FROM league_invitations WHERE id = $1', [id]);
 
     if (result.rows.length === 0) return null;
     return invitationFromDatabase(result.rows[0]);
@@ -102,7 +99,7 @@ export class InvitationsRepository {
       [leagueId]
     );
 
-    return result.rows.map(row => ({
+    return result.rows.map((row) => ({
       ...invitationWithDetailsFromDatabase(row),
       invitedUsername: row.invited_username,
     }));
@@ -139,10 +136,7 @@ export class InvitationsRepository {
   }
 
   async delete(id: number): Promise<boolean> {
-    const result = await this.db.query(
-      'DELETE FROM league_invitations WHERE id = $1',
-      [id]
-    );
+    const result = await this.db.query('DELETE FROM league_invitations WHERE id = $1', [id]);
     return result.rowCount !== null && result.rowCount > 0;
   }
 
@@ -183,7 +177,7 @@ export class InvitationsRepository {
       [leagueId, searchQuery, limit]
     );
 
-    return result.rows.map(row => ({
+    return result.rows.map((row) => ({
       id: row.id,
       username: row.username,
       hasPendingInvite: row.has_pending_invite,

@@ -43,11 +43,7 @@ export class ActionDispatcher {
    * Dispatch an action to the appropriate handler
    * @throws ValidationException if no handler found for the action
    */
-  async dispatch(
-    ctx: ActionContext,
-    action: string,
-    params: Record<string, any>
-  ): Promise<any> {
+  async dispatch(ctx: ActionContext, action: string, params: Record<string, any>): Promise<any> {
     const handler = this.handlers.find((h) => h.actions.includes(action));
     if (!handler) {
       throw new ValidationException(`Unknown action: ${action}`);

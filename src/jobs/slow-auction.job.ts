@@ -41,7 +41,7 @@ async function processExpiredLots(): Promise<void> {
           lotsSettled++;
           logger.info(
             `Lot ${result.lot.id} settled: player ${result.lot.playerId} ` +
-            `won by roster ${result.winner.rosterId} for $${result.winner.amount}`
+              `won by roster ${result.winner.rosterId} for $${result.winner.amount}`
           );
         } else {
           lotsPassed++;
@@ -71,7 +71,9 @@ async function processExpiredLots(): Promise<void> {
 
         // Advance nominator for fast auctions
         try {
-          const fastAuctionService = container.resolve<FastAuctionService>(KEYS.FAST_AUCTION_SERVICE);
+          const fastAuctionService = container.resolve<FastAuctionService>(
+            KEYS.FAST_AUCTION_SERVICE
+          );
           await fastAuctionService.advanceNominator(result.lot.draftId);
         } catch (error) {
           logger.error('Failed to advance nominator', {
@@ -83,7 +85,12 @@ async function processExpiredLots(): Promise<void> {
       }
 
       const durationMs = Date.now() - tickStart;
-      logger.info('slow-auction tick complete', { jobName: 'slow-auction', lotsSettled, lotsPassed, durationMs });
+      logger.info('slow-auction tick complete', {
+        jobName: 'slow-auction',
+        lotsSettled,
+        lotsPassed,
+        durationMs,
+      });
     } finally {
       // Always release advisory lock
       await client.query('SELECT pg_advisory_unlock($1)', [SLOW_AUCTION_LOCK_ID]);

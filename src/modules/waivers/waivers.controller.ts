@@ -158,7 +158,11 @@ export class WaiversController {
    * Initialize waiver system for league (commissioner only)
    * POST /leagues/:leagueId/waivers/initialize
    */
-  initializeWaivers = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  initializeWaivers = async (
+    req: AuthRequest,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> => {
     try {
       const leagueId = requireLeagueId(req);
       const userId = requireUserId(req);

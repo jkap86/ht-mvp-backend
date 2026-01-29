@@ -2,11 +2,7 @@ import { LeagueRepository, RosterRepository, CreateLeagueParams } from './league
 import { RosterService } from './roster.service';
 import { League } from './leagues.model';
 import { DraftService } from '../drafts/drafts.service';
-import {
-  NotFoundException,
-  ForbiddenException,
-  ValidationException,
-} from '../../utils/exceptions';
+import { NotFoundException, ForbiddenException, ValidationException } from '../../utils/exceptions';
 
 export class LeagueService {
   constructor(
@@ -18,7 +14,7 @@ export class LeagueService {
 
   async getUserLeagues(userId: string, limit?: number, offset?: number): Promise<any[]> {
     const leagues = await this.leagueRepo.findByUserId(userId, limit, offset);
-    return leagues.map(l => l.toResponse());
+    return leagues.map((l) => l.toResponse());
   }
 
   async getLeagueById(leagueId: number, userId: string): Promise<any> {
@@ -107,7 +103,7 @@ export class LeagueService {
     }
 
     // Join the league
-    const result = await this.rosterService.joinLeague(league.id, userId);
+    await this.rosterService.joinLeague(league.id, userId);
 
     // Return the league with user's roster info
     const updatedLeague = await this.leagueRepo.findByIdWithUserRoster(league.id, userId);
@@ -131,7 +127,7 @@ export class LeagueService {
     }
 
     // Join the league
-    const result = await this.rosterService.joinLeague(league.id, userId);
+    await this.rosterService.joinLeague(league.id, userId);
 
     // Return the league with user's roster info
     const updatedLeague = await this.leagueRepo.findByIdWithUserRoster(league.id, userId);
@@ -162,7 +158,10 @@ export class LeagueService {
 
     // Validate season status
     if (league.seasonStatus !== 'offseason' && league.seasonStatus !== 'pre_season') {
-      throw new ValidationException('League can only be reset during pre-season or offseason. Current status: ' + league.seasonStatus);
+      throw new ValidationException(
+        'League can only be reset during pre-season or offseason. Current status: ' +
+          league.seasonStatus
+      );
     }
 
     // Validate confirmation name

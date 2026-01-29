@@ -4,12 +4,13 @@ import { AuctionLotRepository } from '../../../modules/drafts/auction/auction-lo
 import { DraftRepository } from '../../../modules/drafts/drafts.repository';
 import { LeagueRepository, RosterRepository } from '../../../modules/leagues/leagues.repository';
 import { PlayerRepository } from '../../../modules/players/players.repository';
-import { AuctionLot, AuctionProxyBid, SlowAuctionSettings } from '../../../modules/drafts/auction/auction.models';
-import { Draft } from '../../../modules/drafts/drafts.model';
 import {
-  NotFoundException,
-  ValidationException,
-} from '../../../utils/exceptions';
+  AuctionLot,
+  AuctionProxyBid,
+  SlowAuctionSettings,
+} from '../../../modules/drafts/auction/auction.models';
+import { Draft } from '../../../modules/drafts/drafts.model';
+import { NotFoundException, ValidationException } from '../../../utils/exceptions';
 
 // Mock data
 const mockDraft: Draft = {
@@ -89,44 +90,50 @@ const mockSettings: SlowAuctionSettings = {
 };
 
 // Mock repositories
-const createMockLotRepo = (): jest.Mocked<AuctionLotRepository> => ({
-  createLot: jest.fn(),
-  findLotById: jest.fn(),
-  findActiveLotsByDraft: jest.fn(),
-  findLotByDraftAndPlayer: jest.fn(),
-  countActiveLotsForRoster: jest.fn(),
-  updateLot: jest.fn(),
-  settleLot: jest.fn(),
-  passLot: jest.fn(),
-  findExpiredLots: jest.fn(),
-  upsertProxyBid: jest.fn(),
-  getAllProxyBidsForLot: jest.fn(),
-  getProxyBid: jest.fn(),
-  recordBidHistory: jest.fn(),
-  getBidHistoryForLot: jest.fn(),
-  getRosterBudgetData: jest.fn(),
-} as unknown as jest.Mocked<AuctionLotRepository>);
+const createMockLotRepo = (): jest.Mocked<AuctionLotRepository> =>
+  ({
+    createLot: jest.fn(),
+    findLotById: jest.fn(),
+    findActiveLotsByDraft: jest.fn(),
+    findLotByDraftAndPlayer: jest.fn(),
+    countActiveLotsForRoster: jest.fn(),
+    updateLot: jest.fn(),
+    settleLot: jest.fn(),
+    passLot: jest.fn(),
+    findExpiredLots: jest.fn(),
+    upsertProxyBid: jest.fn(),
+    getAllProxyBidsForLot: jest.fn(),
+    getProxyBid: jest.fn(),
+    recordBidHistory: jest.fn(),
+    getBidHistoryForLot: jest.fn(),
+    getRosterBudgetData: jest.fn(),
+  }) as unknown as jest.Mocked<AuctionLotRepository>;
 
-const createMockDraftRepo = (): jest.Mocked<DraftRepository> => ({
-  findById: jest.fn(),
-  isPlayerDrafted: jest.fn(),
-} as unknown as jest.Mocked<DraftRepository>);
+const createMockDraftRepo = (): jest.Mocked<DraftRepository> =>
+  ({
+    findById: jest.fn(),
+    isPlayerDrafted: jest.fn(),
+  }) as unknown as jest.Mocked<DraftRepository>;
 
-const createMockLeagueRepo = (): jest.Mocked<LeagueRepository> => ({
-  findById: jest.fn(),
-} as unknown as jest.Mocked<LeagueRepository>);
+const createMockLeagueRepo = (): jest.Mocked<LeagueRepository> =>
+  ({
+    findById: jest.fn(),
+  }) as unknown as jest.Mocked<LeagueRepository>;
 
-const createMockRosterRepo = (): jest.Mocked<RosterRepository> => ({
-  findByLeagueId: jest.fn(),
-} as unknown as jest.Mocked<RosterRepository>);
+const createMockRosterRepo = (): jest.Mocked<RosterRepository> =>
+  ({
+    findByLeagueId: jest.fn(),
+  }) as unknown as jest.Mocked<RosterRepository>;
 
-const createMockPlayerRepo = (): jest.Mocked<PlayerRepository> => ({
-  findById: jest.fn(),
-} as unknown as jest.Mocked<PlayerRepository>);
+const createMockPlayerRepo = (): jest.Mocked<PlayerRepository> =>
+  ({
+    findById: jest.fn(),
+  }) as unknown as jest.Mocked<PlayerRepository>;
 
-const createMockPool = (): jest.Mocked<Pool> => ({
-  connect: jest.fn(),
-} as unknown as jest.Mocked<Pool>);
+const createMockPool = (): jest.Mocked<Pool> =>
+  ({
+    connect: jest.fn(),
+  }) as unknown as jest.Mocked<Pool>;
 
 describe('SlowAuctionService', () => {
   let service: SlowAuctionService;
@@ -205,10 +212,13 @@ describe('SlowAuctionService', () => {
 
       const result = await service.resolvePrice(mockLot, mockSettings);
 
-      expect(mockLotRepo.updateLot).toHaveBeenCalledWith(1, expect.objectContaining({
-        currentBidderRosterId: 2,
-        currentBid: 1,
-      }));
+      expect(mockLotRepo.updateLot).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({
+          currentBidderRosterId: 2,
+          currentBid: 1,
+        })
+      );
       expect(result.updatedLot.currentBidderRosterId).toBe(2);
       expect(result.updatedLot.currentBid).toBe(1);
     });
@@ -228,10 +238,13 @@ describe('SlowAuctionService', () => {
 
       const result = await service.resolvePrice(mockLot, mockSettings);
 
-      expect(mockLotRepo.updateLot).toHaveBeenCalledWith(1, expect.objectContaining({
-        currentBidderRosterId: 2,
-        currentBid: 31,
-      }));
+      expect(mockLotRepo.updateLot).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({
+          currentBidderRosterId: 2,
+          currentBid: 31,
+        })
+      );
       expect(result.updatedLot.currentBid).toBe(31);
     });
 
@@ -248,11 +261,14 @@ describe('SlowAuctionService', () => {
         bidCount: 1,
       });
 
-      const result = await service.resolvePrice(mockLot, mockSettings);
+      await service.resolvePrice(mockLot, mockSettings);
 
-      expect(mockLotRepo.updateLot).toHaveBeenCalledWith(1, expect.objectContaining({
-        currentBid: 30,
-      }));
+      expect(mockLotRepo.updateLot).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({
+          currentBid: 30,
+        })
+      );
     });
 
     it('should reset timer when leader changes', async () => {
@@ -276,9 +292,12 @@ describe('SlowAuctionService', () => {
       const result = await service.resolvePrice(lotWithLeader, mockSettings);
 
       // Should have updated bidDeadline
-      expect(mockLotRepo.updateLot).toHaveBeenCalledWith(1, expect.objectContaining({
-        bidDeadline: expect.any(Date),
-      }));
+      expect(mockLotRepo.updateLot).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({
+          bidDeadline: expect.any(Date),
+        })
+      );
 
       // Should notify previous leader
       expect(result.outbidNotifications).toHaveLength(1);
@@ -297,10 +316,13 @@ describe('SlowAuctionService', () => {
         { id: 2, lotId: 1, rosterId: 3, maxBid: 30, createdAt: new Date(), updatedAt: new Date() },
       ];
       mockLotRepo.getAllProxyBidsForLot.mockResolvedValue(proxyBids);
-      mockLotRepo.updateLot.mockImplementation(async (id, updates) => ({
-        ...lotWithLeader,
-        ...updates,
-      } as AuctionLot));
+      mockLotRepo.updateLot.mockImplementation(
+        async (id, updates) =>
+          ({
+            ...lotWithLeader,
+            ...updates,
+          }) as AuctionLot
+      );
 
       await service.resolvePrice(lotWithLeader, mockSettings);
 
@@ -463,8 +485,30 @@ describe('SlowAuctionService', () => {
       mockDraftRepo.findById.mockResolvedValue(mockDraft);
       mockLeagueRepo.findById.mockResolvedValue(mockLeague);
       mockRosterRepo.findByLeagueId.mockResolvedValue([
-        { id: 1, leagueId: 1, userId: 'user1', rosterId: 1, settings: {}, starters: [], bench: [], createdAt: new Date(), updatedAt: new Date(), username: 'User1' } as any,
-        { id: 2, leagueId: 1, userId: 'user2', rosterId: 2, settings: {}, starters: [], bench: [], createdAt: new Date(), updatedAt: new Date(), username: 'User2' } as any,
+        {
+          id: 1,
+          leagueId: 1,
+          userId: 'user1',
+          rosterId: 1,
+          settings: {},
+          starters: [],
+          bench: [],
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          username: 'User1',
+        } as any,
+        {
+          id: 2,
+          leagueId: 1,
+          userId: 'user2',
+          rosterId: 2,
+          settings: {},
+          starters: [],
+          bench: [],
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          username: 'User2',
+        } as any,
       ]);
       mockLotRepo.getRosterBudgetData
         .mockResolvedValueOnce({ spent: 50, wonCount: 5, leadingCommitment: 20 })

@@ -15,7 +15,10 @@ const envSchema = z.object({
 
   // Server
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-  PORT: z.string().default('5000').transform((val) => parseInt(val, 10)),
+  PORT: z
+    .string()
+    .default('5000')
+    .transform((val) => parseInt(val, 10)),
 
   // Frontend (for CORS) - used by both Express and Socket.IO
   FRONTEND_URL: z.string().url().optional(),
@@ -23,7 +26,10 @@ const envSchema = z.object({
   // Background Jobs
   // Set to "true" to enable background jobs (autopick, player sync)
   // In multi-instance deployments, only one instance should run jobs
-  RUN_JOBS: z.string().default('true').transform((val) => val === 'true'),
+  RUN_JOBS: z
+    .string()
+    .default('true')
+    .transform((val) => val === 'true'),
 
   // Logging
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),

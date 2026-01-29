@@ -5,9 +5,7 @@ import { requireUserId, requireLeagueId, requireDraftId } from '../../utils/cont
 import { ValidationException } from '../../utils/exceptions';
 
 export class DraftQueueController {
-  constructor(
-    private readonly queueService: DraftQueueService
-  ) {}
+  constructor(private readonly queueService: DraftQueueService) {}
 
   /**
    * GET /api/leagues/:leagueId/drafts/:draftId/queue
