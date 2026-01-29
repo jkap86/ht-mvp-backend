@@ -9,6 +9,7 @@ import {
   ValidationException,
 } from '../../utils/exceptions';
 import { tryGetSocketService } from '../../socket';
+import { populateRostersFromDraft } from './draft-completion.utils';
 
 export class DraftStateService {
   constructor(
@@ -186,7 +187,15 @@ export class DraftStateService {
     }
 
     // Populate rosters with drafted players before marking complete
-    await this.populateRostersFromDraft(draftId, draft.leagueId);
+    await populateRostersFromDraft(
+      {
+        draftRepo: this.draftRepo,
+        leagueRepo: this.leagueRepo,
+        rosterPlayersRepo: this.rosterPlayersRepo,
+      },
+      draftId,
+      draft.leagueId
+    );
 
     const updatedDraft = await this.draftRepo.update(draftId, {
       status: 'completed',
@@ -201,27 +210,6 @@ export class DraftStateService {
     socket?.emitDraftCompleted(draftId, response);
 
     return response;
-  }
-
-  private async populateRostersFromDraft(draftId: number, leagueId: number): Promise<void> {
-    const picks = await this.draftRepo.getDraftPicks(draftId);
-    const league = await this.leagueRepo.findById(leagueId);
-    if (!league) return;
-
-    const season = parseInt(league.season, 10);
-
-    for (const pick of picks) {
-      // Skip picks without a player (shouldn't happen for completed picks)
-      if (pick.playerId === null) continue;
-
-      await this.rosterPlayersRepo.addDraftedPlayer(
-        pick.rosterId,
-        pick.playerId,
-        leagueId,
-        season,
-        0 // week 0 for draft
-      );
-    }
   }
 
   async deleteDraft(leagueId: number, draftId: number, userId: string): Promise<void> {

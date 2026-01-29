@@ -5,7 +5,7 @@ import { LeagueRepository } from '../../leagues/leagues.repository';
 import { tryGetSocketService } from '../../../socket';
 import { Trade } from '../trades.model';
 import { getTradeLockId } from '../../../utils/locks';
-import { executeTrade, AcceptTradeContext } from './accept-trade.use-case';
+import { executeTrade, AcceptTradeContext, PickTradedEvent } from './accept-trade.use-case';
 
 const DEFAULT_VETO_COUNT = 4;
 
@@ -103,6 +103,10 @@ export async function processReviewCompleteTrades(
     const vetoThreshold = league?.settings?.trade_veto_count || DEFAULT_VETO_COUNT;
 
     const client = await ctx.db.connect();
+    // Collect events to emit AFTER commit
+    let pendingEvent: 'vetoed' | 'completed' | null = null;
+    let pickTradedEvents: PickTradedEvent[] = [];
+
     try {
       await client.query('BEGIN');
       await client.query('SELECT pg_advisory_xact_lock($1)', [getTradeLockId(trade.leagueId)]);
@@ -116,7 +120,7 @@ export async function processReviewCompleteTrades(
           await client.query('ROLLBACK');
           continue;
         }
-        emitTradeVetoedEvent(trade.leagueId, trade.id);
+        pendingEvent = 'vetoed';
       } else {
         // Check status before executing (trade might have been vetoed concurrently)
         const lockedTrade = await ctx.tradesRepo.findById(trade.id);
@@ -124,17 +128,26 @@ export async function processReviewCompleteTrades(
           await client.query('ROLLBACK');
           continue;
         }
-        await executeTrade(ctx, trade, client);
+        pickTradedEvents = await executeTrade(ctx, trade, client);
         const updated = await ctx.tradesRepo.updateStatus(trade.id, 'completed', client, 'in_review');
         if (!updated) {
           // Trade status changed concurrently, skip
           await client.query('ROLLBACK');
           continue;
         }
-        emitTradeCompletedEvent(trade.leagueId, trade.id);
+        pendingEvent = 'completed';
       }
 
       await client.query('COMMIT');
+
+      // Emit events AFTER successful commit
+      if (pendingEvent === 'vetoed') {
+        emitTradeVetoedEvent(trade.leagueId, trade.id);
+      } else if (pendingEvent === 'completed') {
+        emitTradeCompletedEvent(trade.leagueId, trade.id);
+        emitPickTradedEvents(pickTradedEvents);
+      }
+
       processed++;
     } catch (error) {
       await client.query('ROLLBACK');
@@ -168,4 +181,19 @@ function emitTradeVetoedEvent(leagueId: number, tradeId: number): void {
 function emitTradeCompletedEvent(leagueId: number, tradeId: number): void {
   const socket = tryGetSocketService();
   socket?.emitTradeCompleted(leagueId, { tradeId });
+}
+
+function emitPickTradedEvents(events: PickTradedEvent[]): void {
+  if (events.length === 0) return;
+  const socket = tryGetSocketService();
+  for (const event of events) {
+    socket?.emitPickTraded(event.leagueId, {
+      pickAssetId: event.pickAssetId,
+      season: event.season,
+      round: event.round,
+      previousOwnerRosterId: event.previousOwnerRosterId,
+      newOwnerRosterId: event.newOwnerRosterId,
+      tradeId: event.tradeId,
+    });
+  }
 }

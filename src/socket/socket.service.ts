@@ -50,11 +50,11 @@ export class SocketService {
     });
 
     // Configure Redis adapter for horizontal scaling
-    if (process.env.REDIS_HOST) {
+    if (env.REDIS_HOST) {
       const pubClient = getRedisClient();
       const subClient = pubClient.duplicate();
       this.io.adapter(createAdapter(pubClient, subClient));
-      console.log('Socket.io using Redis adapter for horizontal scaling');
+      logger.info('Socket.io using Redis adapter for horizontal scaling');
     }
 
     this.setupMiddleware();

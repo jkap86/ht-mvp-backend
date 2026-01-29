@@ -79,6 +79,7 @@ const createMockDraftRepo = (): jest.Mocked<DraftRepository> => ({
   createDraftPickWithCleanup: jest.fn(),
   isPlayerDrafted: jest.fn(),
   removePlayerFromAllQueues: jest.fn(),
+  makePickAndAdvanceTx: jest.fn(),
 } as unknown as jest.Mocked<DraftRepository>);
 
 const createMockLeagueRepo = (): jest.Mocked<LeagueRepository> => ({
@@ -176,20 +177,28 @@ describe('DraftPickService', () => {
   });
 
   describe('makePick', () => {
-    it('should create pick and advance to next on success', async () => {
+    it('should create pick and advance to next on success using atomic transaction', async () => {
       mockLeagueRepo.isUserMember.mockResolvedValue(true);
       mockDraftRepo.findById.mockResolvedValue(mockDraft);
       mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster);
       mockDraftRepo.getDraftOrder.mockResolvedValue(mockDraftOrder);
-      mockDraftRepo.isPlayerDrafted.mockResolvedValue(false);
-      mockDraftRepo.createDraftPickWithCleanup.mockResolvedValue(mockPick);
-      mockDraftRepo.update.mockResolvedValue({ ...mockDraft, currentPick: 2 });
+      const updatedDraft = { ...mockDraft, currentPick: 2, currentRound: 1, currentRosterId: 2 };
+      mockDraftRepo.makePickAndAdvanceTx.mockResolvedValue({ pick: mockPick, draft: updatedDraft });
 
       const result = await draftPickService.makePick(1, 1, 'user-123', 100);
 
       expect(result).toEqual(mockPick);
-      expect(mockDraftRepo.createDraftPickWithCleanup).toHaveBeenCalled();
-      expect(mockDraftRepo.update).toHaveBeenCalled();
+      // Verify atomic method was called with correct parameters
+      expect(mockDraftRepo.makePickAndAdvanceTx).toHaveBeenCalledWith(
+        expect.objectContaining({
+          draftId: 1,
+          expectedPickNumber: 1,
+          round: 1,
+          pickInRound: 1,
+          rosterId: 1,
+          playerId: 100,
+        })
+      );
     });
 
     it('should throw ForbiddenException when user not a league member', async () => {
@@ -272,8 +281,8 @@ describe('DraftPickService', () => {
       mockDraftRepo.findById.mockResolvedValue(mockDraft);
       mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster);
       mockDraftRepo.getDraftOrder.mockResolvedValue(mockDraftOrder);
-      // The check is now inside the repository transaction
-      mockDraftRepo.createDraftPickWithCleanup.mockRejectedValue(
+      // The check is now inside the atomic repository transaction
+      mockDraftRepo.makePickAndAdvanceTx.mockRejectedValue(
         new ConflictException('Player has already been drafted')
       );
 
@@ -295,23 +304,91 @@ describe('DraftPickService', () => {
         currentRound: 15,
         currentRosterId: 3, // roster at position 3
       };
+      const completedDraft = { ...lastPickDraft, status: 'completed' as const, completedAt: new Date() };
       // User's roster must be the one at position 3
       const lastPickRoster = { ...mockRoster, id: 3 };
       mockDraftRepo.findById.mockResolvedValue(lastPickDraft);
       mockRosterRepo.findByLeagueAndUser.mockResolvedValue(lastPickRoster);
       mockDraftRepo.getDraftOrder.mockResolvedValue(mockDraftOrder);
-      mockDraftRepo.isPlayerDrafted.mockResolvedValue(false);
-      mockDraftRepo.createDraftPickWithCleanup.mockResolvedValue(mockPick);
-      mockDraftRepo.update.mockResolvedValue({ ...lastPickDraft, status: 'completed' });
+      mockDraftRepo.makePickAndAdvanceTx.mockResolvedValue({
+        pick: mockPick,
+        draft: completedDraft,
+      });
+      mockDraftRepo.getDraftPicks.mockResolvedValue([mockPick]);
+      mockLeagueRepo.findById.mockResolvedValue({ id: 1, season: '2024' } as any);
 
       await draftPickService.makePick(1, 1, 'user-123', 100);
 
-      // Should update with completed status
-      expect(mockDraftRepo.update).toHaveBeenCalledWith(
-        1,
+      // Should call atomic method with completed status in nextPickState
+      expect(mockDraftRepo.makePickAndAdvanceTx).toHaveBeenCalledWith(
         expect.objectContaining({
-          status: 'completed',
-          completedAt: expect.any(Date),
+          nextPickState: expect.objectContaining({
+            status: 'completed',
+          }),
+        })
+      );
+    });
+  });
+
+  describe('makePick - race condition handling', () => {
+    it('should throw ConflictException when pick number already taken (concurrent pick)', async () => {
+      mockLeagueRepo.isUserMember.mockResolvedValue(true);
+      mockDraftRepo.findById.mockResolvedValue(mockDraft);
+      mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster);
+      mockDraftRepo.getDraftOrder.mockResolvedValue(mockDraftOrder);
+      // Simulate race condition: atomic transaction fails because another request
+      // already made the pick (current_pick no longer matches expected)
+      mockDraftRepo.makePickAndAdvanceTx.mockRejectedValue(
+        new ConflictException('Pick already made for this position')
+      );
+
+      await expect(
+        draftPickService.makePick(1, 1, 'user-123', 100)
+      ).rejects.toThrow(ConflictException);
+      await expect(
+        draftPickService.makePick(1, 1, 'user-123', 100)
+      ).rejects.toThrow('Pick already made');
+    });
+
+    it('should call makePickAndAdvanceTx with expectedPickNumber for atomicity', async () => {
+      mockLeagueRepo.isUserMember.mockResolvedValue(true);
+      const draftAtPick5 = { ...mockDraft, currentPick: 5, currentRound: 2, currentRosterId: 2 };
+      mockDraftRepo.findById.mockResolvedValue(draftAtPick5);
+      // User 2's roster is id: 2
+      const roster2 = { ...mockRoster, id: 2 };
+      mockRosterRepo.findByLeagueAndUser.mockResolvedValue(roster2);
+      mockDraftRepo.getDraftOrder.mockResolvedValue(mockDraftOrder);
+      const updatedDraft = { ...draftAtPick5, currentPick: 6 };
+      mockDraftRepo.makePickAndAdvanceTx.mockResolvedValue({
+        pick: { ...mockPick, pickNumber: 5 },
+        draft: updatedDraft,
+      });
+
+      await draftPickService.makePick(1, 1, 'user-123', 100);
+
+      // Verify the expectedPickNumber is passed to prevent race conditions
+      expect(mockDraftRepo.makePickAndAdvanceTx).toHaveBeenCalledWith(
+        expect.objectContaining({
+          expectedPickNumber: 5,
+        })
+      );
+    });
+
+    it('should handle idempotent retries with same idempotencyKey', async () => {
+      mockLeagueRepo.isUserMember.mockResolvedValue(true);
+      mockDraftRepo.findById.mockResolvedValue(mockDraft);
+      mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster);
+      mockDraftRepo.getDraftOrder.mockResolvedValue(mockDraftOrder);
+      const updatedDraft = { ...mockDraft, currentPick: 2 };
+      mockDraftRepo.makePickAndAdvanceTx.mockResolvedValue({ pick: mockPick, draft: updatedDraft });
+
+      const idempotencyKey = 'unique-request-123';
+      await draftPickService.makePick(1, 1, 'user-123', 100, idempotencyKey);
+
+      // Verify idempotencyKey is passed through to the atomic method
+      expect(mockDraftRepo.makePickAndAdvanceTx).toHaveBeenCalledWith(
+        expect.objectContaining({
+          idempotencyKey: 'unique-request-123',
         })
       );
     });

@@ -517,6 +517,197 @@ export class DraftRepository {
   }
 
   /**
+   * Atomically make a pick and advance the draft state in a single transaction.
+   * This prevents race conditions where pick is inserted but draft state doesn't advance.
+   *
+   * @param params.draftId - The draft ID
+   * @param params.expectedPickNumber - The pick number we expect to be making (validates no race condition)
+   * @param params.round - The round number
+   * @param params.pickInRound - The pick position within the round
+   * @param params.rosterId - The roster making the pick
+   * @param params.playerId - The player being picked
+   * @param params.nextPickState - Pre-computed next pick state (currentPick, currentRound, currentRosterId, pickDeadline, status)
+   * @param params.idempotencyKey - Optional idempotency key for safe retries
+   * @returns The created pick and updated draft
+   */
+  async makePickAndAdvanceTx(params: {
+    draftId: number;
+    expectedPickNumber: number;
+    round: number;
+    pickInRound: number;
+    rosterId: number;
+    playerId: number;
+    nextPickState: {
+      currentPick: number | null;
+      currentRound: number | null;
+      currentRosterId: number | null;
+      pickDeadline: Date | null;
+      status?: 'in_progress' | 'completed';
+      completedAt?: Date | null;
+    };
+    idempotencyKey?: string;
+  }): Promise<{ pick: DraftPick; draft: Draft }> {
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+
+      // 1. Acquire advisory lock on draft to prevent concurrent picks
+      await client.query('SELECT pg_advisory_xact_lock($1)', [getDraftLockId(params.draftId)]);
+
+      // 2. Re-read draft row FOR UPDATE and validate current state
+      const draftResult = await client.query(
+        'SELECT * FROM drafts WHERE id = $1 FOR UPDATE',
+        [params.draftId]
+      );
+      if (draftResult.rows.length === 0) {
+        await client.query('ROLLBACK');
+        throw new ConflictException('Draft not found');
+      }
+      const currentDraft = draftFromDatabase(draftResult.rows[0]);
+
+      // 3. Validate draft is in correct state
+      if (currentDraft.status !== 'in_progress') {
+        await client.query('ROLLBACK');
+        throw new ConflictException('Draft is not in progress');
+      }
+
+      // 4. Critical: Validate expected pick number matches current state
+      if (currentDraft.currentPick !== params.expectedPickNumber) {
+        await client.query('ROLLBACK');
+        throw new ConflictException(
+          `Pick already made. Expected pick ${params.expectedPickNumber}, but draft is at pick ${currentDraft.currentPick}`
+        );
+      }
+
+      // 5. Validate it's the correct roster's turn
+      if (currentDraft.currentRosterId !== params.rosterId) {
+        await client.query('ROLLBACK');
+        throw new ConflictException('It is not your turn to pick');
+      }
+
+      // 6. Check idempotency - return existing pick if found
+      if (params.idempotencyKey) {
+        const existing = await client.query(
+          `SELECT * FROM draft_picks
+           WHERE draft_id = $1 AND roster_id = $2 AND idempotency_key = $3`,
+          [params.draftId, params.rosterId, params.idempotencyKey]
+        );
+        if (existing.rows.length > 0) {
+          await client.query('COMMIT');
+          const row = existing.rows[0];
+          return {
+            pick: {
+              id: row.id,
+              draftId: row.draft_id,
+              pickNumber: row.pick_number,
+              round: row.round,
+              pickInRound: row.pick_in_round,
+              rosterId: row.roster_id,
+              playerId: row.player_id,
+              isAutoPick: row.is_auto_pick,
+              pickedAt: row.picked_at,
+            },
+            draft: currentDraft,
+          };
+        }
+      }
+
+      // 7. Validate player not already drafted
+      const alreadyDrafted = await client.query(
+        'SELECT 1 FROM draft_picks WHERE draft_id = $1 AND player_id = $2',
+        [params.draftId, params.playerId]
+      );
+      if (alreadyDrafted.rows.length > 0) {
+        await client.query('ROLLBACK');
+        throw new ConflictException('Player has already been drafted');
+      }
+
+      // 8. Insert the pick
+      const pickResult = await client.query(
+        `INSERT INTO draft_picks (draft_id, pick_number, round, pick_in_round, roster_id, player_id, idempotency_key)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING *`,
+        [
+          params.draftId,
+          params.expectedPickNumber,
+          params.round,
+          params.pickInRound,
+          params.rosterId,
+          params.playerId,
+          params.idempotencyKey || null,
+        ]
+      );
+
+      // 9. Remove player from all queues in this draft
+      await client.query(
+        'DELETE FROM draft_queue WHERE draft_id = $1 AND player_id = $2',
+        [params.draftId, params.playerId]
+      );
+
+      // 10. Update draft state atomically
+      const updateClauses: string[] = [];
+      const updateValues: any[] = [];
+      let paramIndex = 1;
+
+      if (params.nextPickState.status) {
+        updateClauses.push(`status = $${paramIndex++}`);
+        updateValues.push(params.nextPickState.status);
+      }
+      if (params.nextPickState.currentPick !== undefined) {
+        updateClauses.push(`current_pick = $${paramIndex++}`);
+        updateValues.push(params.nextPickState.currentPick);
+      }
+      if (params.nextPickState.currentRound !== undefined) {
+        updateClauses.push(`current_round = $${paramIndex++}`);
+        updateValues.push(params.nextPickState.currentRound);
+      }
+      if (params.nextPickState.currentRosterId !== undefined) {
+        updateClauses.push(`current_roster_id = $${paramIndex++}`);
+        updateValues.push(params.nextPickState.currentRosterId);
+      }
+      if (params.nextPickState.pickDeadline !== undefined) {
+        updateClauses.push(`pick_deadline = $${paramIndex++}`);
+        updateValues.push(params.nextPickState.pickDeadline);
+      }
+      if (params.nextPickState.completedAt !== undefined) {
+        updateClauses.push(`completed_at = $${paramIndex++}`);
+        updateValues.push(params.nextPickState.completedAt);
+      }
+
+      updateValues.push(params.draftId);
+      const updatedDraftResult = await client.query(
+        `UPDATE drafts SET ${updateClauses.join(', ')}, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $${paramIndex}
+         RETURNING *`,
+        updateValues
+      );
+
+      await client.query('COMMIT');
+
+      const row = pickResult.rows[0];
+      return {
+        pick: {
+          id: row.id,
+          draftId: row.draft_id,
+          pickNumber: row.pick_number,
+          round: row.round,
+          pickInRound: row.pick_in_round,
+          rosterId: row.roster_id,
+          playerId: row.player_id,
+          isAutoPick: row.is_auto_pick,
+          pickedAt: row.picked_at,
+        },
+        draft: draftFromDatabase(updatedDraftResult.rows[0]),
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
    * Check if a pick already exists for the given draft and pick number.
    * Used to detect race conditions where a pick was made but draft state wasn't updated.
    */

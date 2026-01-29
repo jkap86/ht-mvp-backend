@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { AppException } from '../utils/exceptions';
 import { metrics } from '../services/metrics.service';
 import { logger } from '../config/logger.config';
+import { env } from '../config/env.config';
 
 export const errorHandler = (
   err: Error | AppException,
@@ -30,12 +31,22 @@ export const errorHandler = (
   }
 
   // Handle unexpected errors
-  logger.error('Unexpected error', {
+  // SECURITY: Only log full stack traces in development to prevent
+  // information leakage through log aggregation services
+  const logPayload: Record<string, unknown> = {
     error: err.message,
-    stack: err.stack,
     path: req.path,
     method: req.method,
-  });
+  };
+
+  if (env.NODE_ENV !== 'production') {
+    logPayload.stack = err.stack;
+  } else {
+    // In production, log only the first line of stack (error type + location)
+    logPayload.errorType = err.constructor.name;
+  }
+
+  logger.error('Unexpected error', logPayload);
 
   return res.status(500).json({
     error: {

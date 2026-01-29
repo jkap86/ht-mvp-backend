@@ -11,6 +11,7 @@ import {
   resolvePriceWithClient,
   OutbidNotification,
 } from './auction-price-resolver';
+import { getAuctionRosterLockId } from '../../../utils/locks';
 
 export interface NominationResult {
   lot: AuctionLot;
@@ -225,7 +226,8 @@ export class SlowAuctionService {
       await client.query('BEGIN');
 
       // 0. Acquire roster-level lock to prevent cross-lot race conditions
-      await client.query('SELECT pg_advisory_xact_lock(hashtext($1), $2)', ['auction_roster', rosterId]);
+      // Use centralized lock ID for consistency with fast auction
+      await client.query('SELECT pg_advisory_xact_lock($1)', [getAuctionRosterLockId(rosterId)]);
 
       // 1. Lock the lot row and validate it exists and is active
       const lotResult = await client.query(
@@ -427,7 +429,8 @@ export class SlowAuctionService {
 
       if (lot.currentBidderRosterId) {
         // Lock winner's roster to prevent concurrent settlements
-        await client.query('SELECT pg_advisory_xact_lock(hashtext($1), $2)', ['auction_roster', lot.currentBidderRosterId]);
+        // Use centralized lock ID for consistency with fast auction
+        await client.query('SELECT pg_advisory_xact_lock($1)', [getAuctionRosterLockId(lot.currentBidderRosterId)]);
 
         // Re-validate budget and slots at settlement time
         const draft = await this.draftRepo.findById(lot.draftId);

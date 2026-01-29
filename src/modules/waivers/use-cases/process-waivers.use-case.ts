@@ -49,6 +49,9 @@ export async function processLeagueClaims(
   let processed = 0;
   let successful = 0;
 
+  // Collect events to emit AFTER commit to prevent UI desync on rollback
+  const pendingEvents: Array<() => void | Promise<void>> = [];
+
   try {
     await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock($1)', [getWaiverLockId(leagueId)]);
@@ -89,14 +92,16 @@ export async function processLeagueClaims(
           await ctx.claimsRepo.updateStatus(claim.id, 'successful', undefined, client);
           successful++;
 
-          // Emit success to user
-          emitClaimSuccessful(ctx, claim);
+          // Queue success emit for after commit
+          const claimCopy = { ...claim };
+          pendingEvents.push(() => emitClaimSuccessful(ctx, claimCopy));
         } else {
           const reason = winner ? 'Outbid by another team' : 'Could not process claim';
           await ctx.claimsRepo.updateStatus(claim.id, 'failed', reason, client);
 
-          // Emit failure to user
-          emitClaimFailed(ctx, claim, reason);
+          // Queue failure emit for after commit
+          const claimCopy = { ...claim };
+          pendingEvents.push(() => emitClaimFailed(ctx, claimCopy, reason));
         }
       }
 
@@ -106,16 +111,28 @@ export async function processLeagueClaims(
 
         // Invalidate pending trades involving the claimed player
         if (ctx.tradesRepo) {
-          await invalidateTradesForPlayer(ctx, leagueId, playerId, client);
+          const invalidatedTrades = await invalidateTradesForPlayer(ctx, leagueId, playerId, client);
+          // Queue trade invalidation emits for after commit
+          for (const trade of invalidatedTrades) {
+            pendingEvents.push(() => emitTradeInvalidated(trade.leagueId, trade.id));
+          }
           // Also invalidate trades involving the dropped player if any
           if (winner.dropPlayerId) {
-            await invalidateTradesForPlayer(ctx, leagueId, winner.dropPlayerId, client);
+            const droppedPlayerTrades = await invalidateTradesForPlayer(ctx, leagueId, winner.dropPlayerId, client);
+            for (const trade of droppedPlayerTrades) {
+              pendingEvents.push(() => emitTradeInvalidated(trade.leagueId, trade.id));
+            }
           }
         }
       }
     }
 
     await client.query('COMMIT');
+
+    // Now emit all queued events AFTER successful commit
+    for (const emit of pendingEvents) {
+      await emit();
+    }
 
     // Emit priorities updated if any successful claims in standard mode
     if (successful > 0 && settings.waiverType === 'standard') {
@@ -260,33 +277,47 @@ async function executeClaim(
 
 /**
  * Invalidate pending trades involving a player (called after roster changes)
+ * Returns the list of invalidated trades for deferred socket emission
  */
 async function invalidateTradesForPlayer(
   ctx: ProcessWaiversContext,
   leagueId: number,
   playerId: number,
   client: PoolClient
-): Promise<void> {
-  if (!ctx.tradesRepo) return;
+): Promise<Array<{ id: number; leagueId: number }>> {
+  if (!ctx.tradesRepo) return [];
 
   // Find pending trades involving this player
   const pendingTrades = await ctx.tradesRepo.findPendingByPlayer(leagueId, playerId);
+  const invalidatedTrades: Array<{ id: number; leagueId: number }> = [];
 
   for (const trade of pendingTrades) {
     // Conditional update - only expire if still in pending/accepted/in_review status
-    await client.query(
+    const result = await client.query(
       `UPDATE trades SET status = 'expired', updated_at = NOW()
-       WHERE id = $1 AND status IN ('pending', 'accepted', 'in_review')`,
+       WHERE id = $1 AND status IN ('pending', 'accepted', 'in_review')
+       RETURNING id`,
       [trade.id]
     );
 
-    // Emit socket event
-    const socket = tryGetSocketService();
-    socket?.emitTradeInvalidated(trade.leagueId, {
-      tradeId: trade.id,
-      reason: 'A player involved in this trade is no longer available',
-    });
+    // Only add to list if actually updated (was still in eligible status)
+    if (result.rowCount && result.rowCount > 0) {
+      invalidatedTrades.push({ id: trade.id, leagueId: trade.leagueId });
+    }
   }
+
+  return invalidatedTrades;
+}
+
+/**
+ * Emit trade invalidated event (called after commit)
+ */
+function emitTradeInvalidated(leagueId: number, tradeId: number): void {
+  const socket = tryGetSocketService();
+  socket?.emitTradeInvalidated(leagueId, {
+    tradeId,
+    reason: 'A player involved in this trade is no longer available',
+  });
 }
 
 async function emitClaimSuccessful(ctx: ProcessWaiversContext, claim: WaiverClaim): Promise<void> {

@@ -10,9 +10,25 @@ export function getDatabaseConfig(): PoolConfig {
     statement_timeout: 5000,
   };
 
-  // Heroku Postgres requires SSL with self-signed certs
+  // SSL configuration for production
+  // SECURITY NOTE: rejectUnauthorized: false is required for Heroku Postgres
+  // because Heroku uses self-signed certificates that change periodically.
+  // For non-Heroku deployments, set DATABASE_SSL_REJECT_UNAUTHORIZED=true
+  // and provide proper CA certificates.
   if (env.NODE_ENV === 'production') {
-    config.ssl = { rejectUnauthorized: false };
+    const rejectUnauthorized = process.env.DATABASE_SSL_REJECT_UNAUTHORIZED === 'true';
+    config.ssl = {
+      rejectUnauthorized,
+      // If using proper certificates, you can add:
+      // ca: process.env.DATABASE_SSL_CA,
+    };
+
+    if (!rejectUnauthorized) {
+      console.warn(
+        '[SECURITY] Database SSL certificate validation is disabled. ' +
+        'Set DATABASE_SSL_REJECT_UNAUTHORIZED=true for non-Heroku deployments.'
+      );
+    }
   }
 
   return config;

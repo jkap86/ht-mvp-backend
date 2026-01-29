@@ -12,6 +12,7 @@ import {
 } from '../../utils/exceptions';
 import { tryGetSocketService } from '../../socket';
 import { DraftEngineFactory, IDraftEngine } from '../../engines';
+import { populateRostersFromDraft } from './draft-completion.utils';
 
 export class DraftPickService {
   constructor(
@@ -93,19 +94,34 @@ export class DraftPickService {
     const totalRosters = draftOrder.length;
     const pickInRound = engine.getPickInRound(draft.currentPick, totalRosters);
 
-    // Make the pick atomically with advisory lock (handles race condition check inside transaction)
-    const pick = await this.draftRepo.createDraftPickWithCleanup(
-      draftId,
-      draft.currentPick,
-      draft.currentRound,
-      pickInRound,
-      userRoster.id,
-      playerId,
-      idempotencyKey
-    );
+    // Pre-compute the next pick state BEFORE the atomic transaction
+    const nextPickState = this.computeNextPickState(draft, draftOrder, engine, pickAssets);
 
-    // Advance to next pick
-    const nextPickInfo = await this.advanceToNextPick(draft, draftOrder, engine, pickAssets);
+    // Make the pick AND advance draft state atomically in a single transaction
+    // This prevents race conditions where pick inserts but draft state doesn't advance
+    const { pick, draft: updatedDraft } = await this.draftRepo.makePickAndAdvanceTx({
+      draftId,
+      expectedPickNumber: draft.currentPick,
+      round: draft.currentRound,
+      pickInRound,
+      rosterId: userRoster.id,
+      playerId,
+      nextPickState,
+      idempotencyKey,
+    });
+
+    // If draft completed, populate rosters AFTER the atomic transaction
+    if (nextPickState.status === 'completed') {
+      await populateRostersFromDraft(
+        {
+          draftRepo: this.draftRepo,
+          leagueRepo: this.leagueRepo,
+          rosterPlayersRepo: this.rosterPlayersRepo,
+        },
+        draftId,
+        leagueId
+      );
+    }
 
     // Enrich pick with player info for socket event
     const player = await this.playerRepo.findById(playerId);
@@ -117,47 +133,65 @@ export class DraftPickService {
       player_team: player?.team,
     };
 
-    // Emit socket events
+    // Emit socket events AFTER transaction commits
     const socket = tryGetSocketService();
     socket?.emitDraftPick(draftId, enrichedPick);
 
     // Notify all users in draft that this player was removed from queues
     socket?.emitQueueUpdated(draftId, { playerId, action: 'removed' });
 
-    if (nextPickInfo) {
-      socket?.emitNextPick(draftId, nextPickInfo);
+    if (nextPickState.status !== 'completed') {
+      socket?.emitNextPick(draftId, {
+        currentPick: nextPickState.currentPick,
+        currentRound: nextPickState.currentRound,
+        currentRosterId: nextPickState.currentRosterId,
+        originalRosterId: nextPickState.originalRosterId,
+        isTraded: nextPickState.isTraded,
+        pickDeadline: nextPickState.pickDeadline,
+      });
     } else {
       // Draft completed
-      const completedDraft = await this.draftRepo.findById(draftId);
-      if (completedDraft) {
-        socket?.emitDraftCompleted(draftId, draftToResponse(completedDraft));
-      }
+      socket?.emitDraftCompleted(draftId, draftToResponse(updatedDraft));
     }
 
     return pick;
   }
 
-  private async advanceToNextPick(
+  /**
+   * Pre-compute the next pick state without making any DB changes.
+   * This is used by the atomic makePickAndAdvanceTx to update draft state.
+   */
+  private computeNextPickState(
     draft: Draft,
     draftOrder: DraftOrderEntry[],
     engine: IDraftEngine,
     pickAssets: import('./draft-pick-asset.model').DraftPickAsset[] = []
-  ): Promise<any | null> {
+  ): {
+    currentPick: number | null;
+    currentRound: number | null;
+    currentRosterId: number | null;
+    originalRosterId: number | null;
+    isTraded: boolean;
+    pickDeadline: Date | null;
+    status?: 'in_progress' | 'completed';
+    completedAt?: Date | null;
+  } {
     const totalRosters = draftOrder.length;
     const totalPicks = totalRosters * draft.rounds;
     const nextPick = draft.currentPick + 1;
 
     if (nextPick > totalPicks) {
-      // Draft complete - populate rosters with drafted players first
-      await this.populateRostersFromDraft(draft.id, draft.leagueId);
-
-      await this.draftRepo.update(draft.id, {
+      // Draft complete
+      return {
+        currentPick: null,
+        currentRound: null,
+        currentRosterId: null,
+        originalRosterId: null,
+        isTraded: false,
+        pickDeadline: null,
         status: 'completed',
         completedAt: new Date(),
-        currentRosterId: null,
-        pickDeadline: null,
-      });
-      return null;
+      };
     }
 
     const nextRound = engine.getRound(nextPick, totalRosters);
@@ -176,13 +210,6 @@ export class DraftPickService {
 
     const pickDeadline = engine.calculatePickDeadline(draft);
 
-    await this.draftRepo.update(draft.id, {
-      currentPick: nextPick,
-      currentRound: nextRound,
-      currentRosterId: nextPickerRosterId,
-      pickDeadline,
-    });
-
     return {
       currentPick: nextPick,
       currentRound: nextRound,
@@ -190,27 +217,8 @@ export class DraftPickService {
       originalRosterId: actualPicker?.originalRosterId ?? originalPicker?.rosterId ?? null,
       isTraded: actualPicker?.isTraded ?? false,
       pickDeadline,
+      status: 'in_progress',
     };
   }
 
-  private async populateRostersFromDraft(draftId: number, leagueId: number): Promise<void> {
-    const picks = await this.draftRepo.getDraftPicks(draftId);
-    const league = await this.leagueRepo.findById(leagueId);
-    if (!league) return;
-
-    const season = parseInt(league.season, 10);
-
-    for (const pick of picks) {
-      // Skip picks without a player (shouldn't happen for completed picks)
-      if (pick.playerId === null) continue;
-
-      await this.rosterPlayersRepo.addDraftedPlayer(
-        pick.rosterId,
-        pick.playerId,
-        leagueId,
-        season,
-        0 // week 0 for draft
-      );
-    }
-  }
 }

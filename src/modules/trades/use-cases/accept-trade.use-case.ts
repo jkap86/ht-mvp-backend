@@ -113,6 +113,7 @@ export async function acceptTrade(
     const votingEnabled = league.settings?.trade_voting_enabled === true;
 
     let updatedTrade: Trade | null;
+    let pickTradedEvents: PickTradedEvent[] = [];
 
     if (reviewEnabled || votingEnabled) {
       // Set review period (conditional - only if still pending)
@@ -125,8 +126,8 @@ export async function acceptTrade(
         throw new ValidationException('Trade status changed during processing');
       }
     } else {
-      // Execute immediately
-      await executeTrade(ctx, currentTrade, client);
+      // Execute immediately - returns events to emit after commit
+      pickTradedEvents = await executeTrade(ctx, currentTrade, client);
       updatedTrade = await ctx.tradesRepo.updateStatus(tradeId, 'completed', client, 'pending');
       if (!updatedTrade) {
         throw new ValidationException('Trade status changed during processing');
@@ -138,8 +139,9 @@ export async function acceptTrade(
     const tradeWithDetails = await ctx.tradesRepo.findByIdWithDetails(tradeId, roster.id);
     if (!tradeWithDetails) throw new Error('Failed to get trade details');
 
-    // Emit socket event
+    // Emit socket events AFTER commit
     emitTradeAcceptedEvent(trade.leagueId, trade.id, updatedTrade);
+    emitPickTradedEvents(pickTradedEvents);
 
     return tradeWithDetails;
   } catch (error) {
@@ -150,15 +152,28 @@ export async function acceptTrade(
   }
 }
 
+/** Pick traded event data for deferred emission after commit */
+export interface PickTradedEvent {
+  leagueId: number;
+  pickAssetId: number;
+  season: number;
+  round: number;
+  previousOwnerRosterId: number;
+  newOwnerRosterId: number;
+  tradeId: number;
+}
+
 /**
  * Execute trade (move players and transfer pick ownership)
+ * Returns list of pick traded events to emit AFTER commit
  */
 export async function executeTrade(
   ctx: AcceptTradeContext,
   trade: Trade,
   client: PoolClient
-): Promise<void> {
+): Promise<PickTradedEvent[]> {
   const items = await ctx.tradeItemsRepo.findByTrade(trade.id);
+  const pickTradedEvents: PickTradedEvent[] = [];
 
   // Separate player and pick items
   const playerItems = items.filter((item) => item.itemType === 'player' && item.playerId);
@@ -220,9 +235,8 @@ export async function executeTrade(
     );
   }
 
-  // Execute pick ownership transfers
+  // Execute pick ownership transfers (collect events for after commit)
   if (ctx.pickAssetRepo) {
-    const socket = tryGetSocketService();
     for (const item of pickItems) {
       await ctx.pickAssetRepo.transferOwnership(
         item.draftPickAssetId!,
@@ -230,8 +244,9 @@ export async function executeTrade(
         client
       );
 
-      // Emit pick traded event for real-time UI updates
-      socket?.emitPickTraded(trade.leagueId, {
+      // Collect event for deferred emission after commit
+      pickTradedEvents.push({
+        leagueId: trade.leagueId,
         pickAssetId: item.draftPickAssetId!,
         season: item.pickSeason!,
         round: item.pickRound!,
@@ -241,6 +256,8 @@ export async function executeTrade(
       });
     }
   }
+
+  return pickTradedEvents;
 }
 
 function emitTradeAcceptedEvent(leagueId: number, tradeId: number, updatedTrade: Trade): void {
@@ -251,6 +268,21 @@ function emitTradeAcceptedEvent(leagueId: number, tradeId: number, updatedTrade:
     socket?.emitTradeAccepted(leagueId, {
       tradeId,
       reviewEndsAt: updatedTrade.reviewEndsAt,
+    });
+  }
+}
+
+function emitPickTradedEvents(events: PickTradedEvent[]): void {
+  if (events.length === 0) return;
+  const socket = tryGetSocketService();
+  for (const event of events) {
+    socket?.emitPickTraded(event.leagueId, {
+      pickAssetId: event.pickAssetId,
+      season: event.season,
+      round: event.round,
+      previousOwnerRosterId: event.previousOwnerRosterId,
+      newOwnerRosterId: event.newOwnerRosterId,
+      tradeId: event.tradeId,
     });
   }
 }
