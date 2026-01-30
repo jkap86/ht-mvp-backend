@@ -165,6 +165,18 @@ function bootstrap(): void {
       )
   );
 
+  // Register SCHEDULE_GENERATOR_SERVICE before DRAFT_STATE_SERVICE (which depends on it)
+  container.register(
+    KEYS.SCHEDULE_GENERATOR_SERVICE,
+    () =>
+      new ScheduleGeneratorService(
+        container.resolve(KEYS.POOL),
+        container.resolve(KEYS.MATCHUPS_REPO),
+        container.resolve(KEYS.ROSTER_REPO),
+        container.resolve(KEYS.LEAGUE_REPO)
+      )
+  );
+
   container.register(
     KEYS.DRAFT_STATE_SERVICE,
     () =>
@@ -172,7 +184,8 @@ function bootstrap(): void {
         container.resolve(KEYS.DRAFT_REPO),
         container.resolve(KEYS.LEAGUE_REPO),
         container.resolve(KEYS.DRAFT_ENGINE_FACTORY),
-        container.resolve(KEYS.ROSTER_PLAYERS_REPO)
+        container.resolve(KEYS.ROSTER_PLAYERS_REPO),
+        container.resolve(KEYS.SCHEDULE_GENERATOR_SERVICE)
       )
   );
 
@@ -316,17 +329,6 @@ function bootstrap(): void {
         container.resolve(KEYS.SLEEPER_CLIENT),
         container.resolve(KEYS.PLAYER_STATS_REPO),
         container.resolve(KEYS.PLAYER_REPO)
-      )
-  );
-
-  container.register(
-    KEYS.SCHEDULE_GENERATOR_SERVICE,
-    () =>
-      new ScheduleGeneratorService(
-        container.resolve(KEYS.POOL),
-        container.resolve(KEYS.MATCHUPS_REPO),
-        container.resolve(KEYS.ROSTER_REPO),
-        container.resolve(KEYS.LEAGUE_REPO)
       )
   );
 

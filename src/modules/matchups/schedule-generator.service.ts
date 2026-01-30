@@ -81,6 +81,48 @@ export class ScheduleGeneratorService {
   }
 
   /**
+   * Generate schedule without commissioner check (for system/automated use)
+   * Used when draft completes via autopick
+   */
+  async generateScheduleSystem(leagueId: number, weeks: number): Promise<void> {
+    const league = await this.leagueRepo.findById(leagueId);
+    if (!league) {
+      throw new NotFoundException('League not found');
+    }
+
+    const rosters = await this.rosterRepo.findByLeagueId(leagueId);
+    if (rosters.length < 2) {
+      throw new ValidationException('Need at least 2 teams to generate schedule');
+    }
+
+    const season = parseInt(league.season, 10);
+
+    // Delete existing schedule for this season
+    await this.matchupsRepo.deleteByLeague(leagueId, season);
+
+    // Generate round-robin matchups
+    const rosterIds = rosters.map((r) => r.id);
+    const matchups = this.generateRoundRobinMatchups(rosterIds, weeks);
+
+    // Create matchups in database
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+
+      for (const { week, roster1Id, roster2Id } of matchups) {
+        await this.matchupsRepo.create(leagueId, season, week, roster1Id, roster2Id, false, client);
+      }
+
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
    * Generate round-robin matchups for given rosters
    */
   generateRoundRobinMatchups(rosterIds: number[], weeks: number): GeneratedMatchup[] {

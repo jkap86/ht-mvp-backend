@@ -6,13 +6,15 @@ import { DraftEngineFactory } from '../../engines';
 import { NotFoundException, ForbiddenException, ValidationException } from '../../utils/exceptions';
 import { tryGetSocketService } from '../../socket';
 import { populateRostersFromDraft } from './draft-completion.utils';
+import { ScheduleGeneratorService } from '../matchups/schedule-generator.service';
 
 export class DraftStateService {
   constructor(
     private readonly draftRepo: DraftRepository,
     private readonly leagueRepo: LeagueRepository,
     private readonly engineFactory: DraftEngineFactory,
-    private readonly rosterPlayersRepo: RosterPlayersRepository
+    private readonly rosterPlayersRepo: RosterPlayersRepository,
+    private readonly scheduleGeneratorService?: ScheduleGeneratorService
   ) {}
 
   async startDraft(draftId: number, userId: string): Promise<any> {
@@ -204,6 +206,16 @@ export class DraftStateService {
 
     // Update league status to regular_season now that draft is complete
     await this.leagueRepo.update(draft.leagueId, { status: 'regular_season' });
+
+    // Auto-generate season schedule (14 weeks regular season)
+    if (this.scheduleGeneratorService) {
+      try {
+        await this.scheduleGeneratorService.generateScheduleSystem(draft.leagueId, 14);
+      } catch (error) {
+        // Log but don't fail draft completion if schedule generation fails
+        console.error('Failed to auto-generate schedule:', error);
+      }
+    }
 
     const response = draftToResponse(updatedDraft);
 

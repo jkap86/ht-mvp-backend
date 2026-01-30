@@ -13,6 +13,8 @@ import { LeagueRepository, RosterRepository } from '../modules/leagues/leagues.r
 import { tryGetSocketService } from '../socket';
 import { logger } from '../config/env.config';
 import { populateRostersFromDraft } from '../modules/drafts/draft-completion.utils';
+import { container, KEYS } from '../container';
+import { ScheduleGeneratorService } from '../modules/matchups/schedule-generator.service';
 
 /**
  * Abstract base class for draft engines.
@@ -402,6 +404,17 @@ export abstract class BaseDraftEngine implements IDraftEngine {
 
       // Update league status to regular_season now that draft is complete
       await this.leagueRepo.update(draft.leagueId, { status: 'regular_season' });
+
+      // Auto-generate season schedule (14 weeks regular season)
+      try {
+        const scheduleGeneratorService = container.resolve<ScheduleGeneratorService>(
+          KEYS.SCHEDULE_GENERATOR_SERVICE
+        );
+        await scheduleGeneratorService.generateScheduleSystem(draft.leagueId, 14);
+        logger.info(`Generated schedule for league ${draft.leagueId} after draft ${draft.id} completion`);
+      } catch (error) {
+        logger.error('Failed to auto-generate schedule after autopick completion:', error);
+      }
 
       return null;
     }
