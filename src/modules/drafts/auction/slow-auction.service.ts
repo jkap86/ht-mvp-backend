@@ -52,6 +52,8 @@ export class SlowAuctionService {
     return {
       bidWindowSeconds: draft.settings?.bidWindowSeconds ?? 43200,
       maxActiveNominationsPerTeam: draft.settings?.maxActiveNominationsPerTeam ?? 2,
+      maxActiveNominationsGlobal: draft.settings?.maxActiveNominationsGlobal ?? 25,
+      dailyNominationLimit: draft.settings?.dailyNominationLimit ?? undefined,
       minBid: draft.settings?.minBid ?? 1,
       minIncrement: draft.settings?.minIncrement ?? 1,
       auctionMode: draft.settings?.auctionMode ?? 'slow',
@@ -171,6 +173,42 @@ export class SlowAuctionService {
     return totalBudget - budgetData.spent - reservedForMinBids - budgetData.leadingCommitment;
   }
 
+  // Get nomination stats for a roster (used for UI display)
+  async getNominationStats(
+    draftId: number,
+    rosterId: number
+  ): Promise<{
+    dailyNominationsUsed: number;
+    dailyNominationLimit: number | null;
+    dailyNominationsRemaining: number | null;
+    totalActiveLots: number;
+    globalActiveLimit: number;
+    globalCapReached: boolean;
+  }> {
+    const draft = await this.draftRepo.findById(draftId);
+    if (!draft) throw new NotFoundException('Draft not found');
+
+    const settings = this.getSettings(draft);
+    const today = new Date().toISOString().split('T')[0];
+
+    // Get counts
+    const dailyCount = settings.dailyNominationLimit
+      ? await this.lotRepo.countDailyNominationsForRoster(draftId, rosterId, today)
+      : 0;
+    const totalActive = await this.lotRepo.countAllActiveLots(draftId);
+
+    return {
+      dailyNominationsUsed: dailyCount,
+      dailyNominationLimit: settings.dailyNominationLimit ?? null,
+      dailyNominationsRemaining: settings.dailyNominationLimit
+        ? Math.max(0, settings.dailyNominationLimit - dailyCount)
+        : null,
+      totalActiveLots: totalActive,
+      globalActiveLimit: settings.maxActiveNominationsGlobal ?? 25,
+      globalCapReached: totalActive >= (settings.maxActiveNominationsGlobal ?? 25),
+    };
+  }
+
   // NOMINATE: Create a new lot for a player
   async nominate(draftId: number, rosterId: number, playerId: number): Promise<NominationResult> {
     // 1. Validate draft exists, is auction, and in_progress
@@ -203,13 +241,34 @@ export class SlowAuctionService {
       throw new ValidationException('Your roster is full');
     }
 
-    // 5. Check nomination limit
+    // 5. Check per-team nomination limit
     const settings = this.getSettings(draft);
     const activeCount = await this.lotRepo.countActiveLotsForRoster(draftId, rosterId);
     if (activeCount >= settings.maxActiveNominationsPerTeam) {
       throw new ValidationException(
-        `Maximum of ${settings.maxActiveNominationsPerTeam} active nominations allowed`
+        `Maximum of ${settings.maxActiveNominationsPerTeam} active nominations allowed per team`
       );
+    }
+
+    // 5b. Check global nomination cap (league-wide limit)
+    if (settings.maxActiveNominationsGlobal) {
+      const totalActive = await this.lotRepo.countAllActiveLots(draftId);
+      if (totalActive >= settings.maxActiveNominationsGlobal) {
+        throw new ValidationException(
+          `Maximum of ${settings.maxActiveNominationsGlobal} active auctions allowed league-wide`
+        );
+      }
+    }
+
+    // 5c. Check daily nomination limit (if configured)
+    if (settings.dailyNominationLimit) {
+      const today = new Date().toISOString().split('T')[0];
+      const todayCount = await this.lotRepo.countDailyNominationsForRoster(draftId, rosterId, today);
+      if (todayCount >= settings.dailyNominationLimit) {
+        throw new ValidationException(
+          `Daily nomination limit of ${settings.dailyNominationLimit} reached. Try again tomorrow.`
+        );
+      }
     }
 
     // 6. Check player not already nominated (active or won lot)

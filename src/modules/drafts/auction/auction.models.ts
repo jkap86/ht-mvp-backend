@@ -35,6 +35,8 @@ export interface AuctionBidHistory {
 export interface SlowAuctionSettings {
   bidWindowSeconds: number;
   maxActiveNominationsPerTeam: number;
+  maxActiveNominationsGlobal?: number;
+  dailyNominationLimit?: number;
   minBid: number;
   minIncrement: number;
   auctionMode?: 'slow' | 'fast';

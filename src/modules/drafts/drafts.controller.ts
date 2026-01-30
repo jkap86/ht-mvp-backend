@@ -310,6 +310,12 @@ export class DraftController {
       // Get budgets
       const budgets = await this.slowAuctionService.getAllBudgets(draftId);
 
+      // Get nomination stats for slow auctions
+      const nominationStats =
+        auctionMode === 'slow'
+          ? await this.slowAuctionService.getNominationStats(draftId, roster.id)
+          : null;
+
       // Build response with snake_case conversion
       const state = {
         auction_mode: auctionMode,
@@ -321,12 +327,25 @@ export class DraftController {
           auction_mode: auctionSettings.auctionMode,
           bid_window_seconds: auctionSettings.bidWindowSeconds,
           max_active_nominations_per_team: auctionSettings.maxActiveNominationsPerTeam,
+          max_active_nominations_global: draft.settings?.maxActiveNominationsGlobal ?? 25,
+          daily_nomination_limit: draft.settings?.dailyNominationLimit ?? null,
           nomination_seconds: auctionSettings.nominationSeconds,
           reset_on_bid_seconds: auctionSettings.resetOnBidSeconds,
           min_bid: auctionSettings.minBid,
           min_increment: auctionSettings.minIncrement,
         },
         budgets: budgets.map(budgetToResponse),
+        // Nomination stats for slow auctions
+        nomination_stats: nominationStats
+          ? {
+              daily_nominations_used: nominationStats.dailyNominationsUsed,
+              daily_nomination_limit: nominationStats.dailyNominationLimit,
+              daily_nominations_remaining: nominationStats.dailyNominationsRemaining,
+              total_active_lots: nominationStats.totalActiveLots,
+              global_active_limit: nominationStats.globalActiveLimit,
+              global_cap_reached: nominationStats.globalCapReached,
+            }
+          : null,
       };
 
       res.status(200).json(state);

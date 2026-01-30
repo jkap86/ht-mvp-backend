@@ -9,6 +9,8 @@ export interface AuctionSettings {
   auctionMode: 'slow' | 'fast';
   bidWindowSeconds: number;
   maxActiveNominationsPerTeam: number;
+  maxActiveNominationsGlobal?: number;
+  dailyNominationLimit?: number;
   nominationSeconds: number;
   resetOnBidSeconds: number;
   minBid: number;
@@ -20,6 +22,8 @@ export const DEFAULT_AUCTION_SETTINGS: AuctionSettings = {
   auctionMode: 'slow',
   bidWindowSeconds: 43200, // 12 hours
   maxActiveNominationsPerTeam: 2,
+  maxActiveNominationsGlobal: 25,
+  dailyNominationLimit: undefined, // unlimited by default
   nominationSeconds: 45,
   resetOnBidSeconds: 10,
   minBid: 1,

@@ -14,6 +14,8 @@ export const auctionSettingsSchema = z.object({
   // Slow auction settings
   bid_window_seconds: z.number().int().min(3600).max(172800).default(43200),
   max_active_nominations_per_team: z.number().int().min(1).max(10).default(2),
+  max_active_nominations_global: z.number().int().min(1).max(100).default(25),
+  daily_nomination_limit: z.number().int().min(1).max(10).nullable().default(null),
   // Fast auction settings
   nomination_seconds: z.number().int().min(15).max(120).default(45),
   reset_on_bid_seconds: z.number().int().min(5).max(30).default(10),
@@ -130,6 +132,8 @@ export const DRAFT_CONFIG_CONSTRAINTS = {
   pickTimeSeconds: { min: 30, max: 600 },
   bidWindowSeconds: { min: 3600, max: 172800 },
   maxActiveNominationsPerTeam: { min: 1, max: 10 },
+  maxActiveNominationsGlobal: { min: 1, max: 100 },
+  dailyNominationLimit: { min: 1, max: 10 },
   budget: { min: 1, max: 10000 },
   // Fast auction constraints
   nominationSeconds: { min: 15, max: 120 },

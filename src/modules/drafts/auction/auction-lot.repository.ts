@@ -25,13 +25,16 @@ export class AuctionLotRepository {
     playerId: number,
     nominatorRosterId: number,
     bidDeadline: Date,
-    startingBid: number
+    startingBid: number,
+    nominationDate?: string
   ): Promise<AuctionLot> {
+    // Use provided date or default to today (UTC)
+    const nomDate = nominationDate || new Date().toISOString().split('T')[0];
     const result = await this.db.query(
-      `INSERT INTO auction_lots (draft_id, player_id, nominator_roster_id, bid_deadline, current_bid, status)
-       VALUES ($1, $2, $3, $4, $5, 'active')
+      `INSERT INTO auction_lots (draft_id, player_id, nominator_roster_id, bid_deadline, current_bid, status, nomination_date)
+       VALUES ($1, $2, $3, $4, $5, 'active', $6)
        RETURNING *`,
-      [draftId, playerId, nominatorRosterId, bidDeadline, startingBid]
+      [draftId, playerId, nominatorRosterId, bidDeadline, startingBid, nomDate]
     );
     return auctionLotFromDatabase(result.rows[0]);
   }
@@ -94,6 +97,34 @@ export class AuctionLotRepository {
       `SELECT COUNT(*) as count FROM auction_lots
        WHERE draft_id = $1 AND nominator_roster_id = $2 AND status = 'active'`,
       [draftId, rosterId]
+    );
+    return parseInt(result.rows[0].count, 10);
+  }
+
+  /**
+   * Count all active lots for a draft (league-wide cap)
+   */
+  async countAllActiveLots(draftId: number): Promise<number> {
+    const result = await this.db.query(
+      `SELECT COUNT(*) as count FROM auction_lots
+       WHERE draft_id = $1 AND status = 'active'`,
+      [draftId]
+    );
+    return parseInt(result.rows[0].count, 10);
+  }
+
+  /**
+   * Count daily nominations for a roster (for daily limit enforcement)
+   */
+  async countDailyNominationsForRoster(
+    draftId: number,
+    rosterId: number,
+    date: string
+  ): Promise<number> {
+    const result = await this.db.query(
+      `SELECT COUNT(*) as count FROM auction_lots
+       WHERE draft_id = $1 AND nominator_roster_id = $2 AND nomination_date = $3`,
+      [draftId, rosterId, date]
     );
     return parseInt(result.rows[0].count, 10);
   }
