@@ -12,7 +12,7 @@ import {
 } from '../../utils/controller-helpers';
 import { ValidationException } from '../../utils/exceptions';
 import { ActionDispatcher } from './action-handlers';
-import { auctionLotToResponse } from './auction/auction.models';
+import { auctionLotToResponse, auctionBidHistoryToResponse } from './auction/auction.models';
 
 /**
  * Convert budget to snake_case for API response
@@ -245,6 +245,33 @@ export class DraftController {
       const userProxyBid = await this.slowAuctionService.getUserProxyBid(lotId, roster.id);
 
       res.status(200).json({ lot: lot ? auctionLotToResponse(lot) : null, userProxyBid });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getLotBidHistory = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const userId = requireUserId(req);
+      const leagueId = requireLeagueId(req);
+      const draftId = requireDraftId(req);
+      const lotId = parseInt(req.params.lotId as string, 10);
+
+      if (isNaN(lotId)) {
+        throw new ValidationException('Invalid lot ID');
+      }
+
+      if (!this.authService) {
+        throw new ValidationException('Authorization service not available');
+      }
+      await this.authService.ensureLeagueMember(leagueId, userId);
+
+      if (!this.slowAuctionService) {
+        throw new ValidationException('Auction service not available');
+      }
+
+      const history = await this.slowAuctionService.getBidHistoryWithUsernames(draftId, lotId);
+      res.status(200).json({ history: history.map(auctionBidHistoryToResponse) });
     } catch (error) {
       next(error);
     }

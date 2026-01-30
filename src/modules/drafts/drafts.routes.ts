@@ -131,6 +131,9 @@ router.get('/:draftId/auction/lots', draftController.getAuctionLots);
 // GET /api/leagues/:leagueId/drafts/:draftId/auction/lots/:lotId
 router.get('/:draftId/auction/lots/:lotId', draftController.getAuctionLot);
 
+// GET /api/leagues/:leagueId/drafts/:draftId/auction/lots/:lotId/history
+router.get('/:draftId/auction/lots/:lotId/history', draftController.getLotBidHistory);
+
 // GET /api/leagues/:leagueId/drafts/:draftId/auction/budgets
 router.get('/:draftId/auction/budgets', draftController.getAuctionBudgets);
 

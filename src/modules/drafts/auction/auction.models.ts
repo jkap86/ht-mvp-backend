@@ -121,3 +121,21 @@ export function auctionBidHistoryFromDatabase(row: any): AuctionBidHistory {
     createdAt: row.created_at,
   };
 }
+
+/**
+ * Helper to convert AuctionBidHistory to API response (snake_case)
+ * Accepts optional username for display
+ */
+export function auctionBidHistoryToResponse(
+  entry: AuctionBidHistory & { username?: string }
+): Record<string, any> {
+  return {
+    id: entry.id,
+    lot_id: entry.lotId,
+    roster_id: entry.rosterId,
+    username: entry.username ?? null,
+    bid_amount: entry.bidAmount,
+    is_proxy: entry.isProxy,
+    created_at: entry.createdAt,
+  };
+}

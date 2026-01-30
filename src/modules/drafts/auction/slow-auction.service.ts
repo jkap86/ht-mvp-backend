@@ -629,4 +629,35 @@ export class SlowAuctionService {
 
     return results;
   }
+
+  // Get bid history for a lot with usernames
+  async getBidHistoryWithUsernames(
+    draftId: number,
+    lotId: number
+  ): Promise<Array<{ id: number; lotId: number; rosterId: number; bidAmount: number; isProxy: boolean; createdAt: Date; username?: string }>> {
+    // Get the lot to verify it belongs to this draft
+    const lot = await this.lotRepo.findLotById(lotId);
+    if (!lot || lot.draftId !== draftId) {
+      throw new NotFoundException('Lot not found');
+    }
+
+    // Get draft to access league
+    const draft = await this.draftRepo.findById(draftId);
+    if (!draft) {
+      throw new NotFoundException('Draft not found');
+    }
+
+    // Get bid history
+    const history = await this.lotRepo.getBidHistoryForLot(lotId);
+
+    // Get rosters for username lookup
+    const rosters = await this.rosterRepo.findByLeagueId(draft.leagueId);
+    const rosterMap = new Map(rosters.map((r) => [r.id, (r as any).username || `Team ${r.id}`]));
+
+    // Combine history with usernames
+    return history.map((entry) => ({
+      ...entry,
+      username: rosterMap.get(entry.rosterId),
+    }));
+  }
 }

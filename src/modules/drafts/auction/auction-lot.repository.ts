@@ -31,8 +31,8 @@ export class AuctionLotRepository {
     // Use provided date or default to today (UTC)
     const nomDate = nominationDate || new Date().toISOString().split('T')[0];
     const result = await this.db.query(
-      `INSERT INTO auction_lots (draft_id, player_id, nominator_roster_id, bid_deadline, current_bid, status, nomination_date)
-       VALUES ($1, $2, $3, $4, $5, 'active', $6)
+      `INSERT INTO auction_lots (draft_id, player_id, nominator_roster_id, bid_deadline, current_bid, current_bidder_roster_id, status, nomination_date)
+       VALUES ($1, $2, $3, $4, $5, $3, 'active', $6)
        RETURNING *`,
       [draftId, playerId, nominatorRosterId, bidDeadline, startingBid, nomDate]
     );
