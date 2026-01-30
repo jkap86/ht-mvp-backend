@@ -228,7 +228,7 @@ export class AuctionLotRepository {
     const result = await this.db.query(
       `SELECT * FROM auction_proxy_bids
        WHERE lot_id = $1
-       ORDER BY max_bid DESC, updated_at ASC`,
+       ORDER BY max_bid DESC, created_at ASC`,
       [lotId]
     );
     return result.rows.map(auctionProxyBidFromDatabase);

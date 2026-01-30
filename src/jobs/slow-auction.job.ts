@@ -8,7 +8,7 @@ import { logger } from '../config/logger.config';
 let intervalId: NodeJS.Timeout | null = null;
 
 const SETTLEMENT_INTERVAL_MS = 30000; // 30 seconds
-const SLOW_AUCTION_LOCK_ID = 999998;
+const SLOW_AUCTION_LOCK_ID = 999999004;
 
 async function processExpiredLots(): Promise<void> {
   const pool = container.resolve<Pool>(KEYS.POOL);

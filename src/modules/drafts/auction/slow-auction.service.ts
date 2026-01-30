@@ -14,6 +14,7 @@ import { ValidationException, NotFoundException } from '../../../utils/exception
 import { getRosterBudgetDataWithClient } from './auction-budget-calculator';
 import { resolvePriceWithClient, OutbidNotification } from './auction-price-resolver';
 import { getAuctionRosterLockId } from '../../../utils/locks';
+import { getLockId, LockDomain } from '../../../shared/locks';
 
 export interface NominationResult {
   lot: AuctionLot;
@@ -495,6 +496,11 @@ export class SlowAuctionService {
           [lotId, lot.currentBidderRosterId, lot.currentBid]
         );
         const settledLot = auctionLotFromDatabase(settleResult.rows[0]);
+
+        // Acquire draft-level lock to prevent concurrent pick_number conflicts
+        await client.query('SELECT pg_advisory_xact_lock($1)', [
+          getLockId(LockDomain.LEAGUE, lot.draftId),
+        ]);
 
         // Create draft pick entry
         // For auctions, pick_in_round and round are less meaningful, so we use 1 for round

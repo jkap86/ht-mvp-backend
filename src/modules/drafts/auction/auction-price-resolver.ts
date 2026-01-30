@@ -57,7 +57,7 @@ export async function resolvePriceWithClient(
   const proxyBidsResult = await client.query(
     `SELECT * FROM auction_proxy_bids
      WHERE lot_id = $1
-     ORDER BY max_bid DESC, updated_at ASC`,
+     ORDER BY max_bid DESC, created_at ASC`,
     [lot.id]
   );
   const proxyBids: AuctionProxyBid[] = proxyBidsResult.rows.map((row) => ({

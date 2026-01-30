@@ -108,11 +108,15 @@ export class AuctionActionHandler implements ActionHandler {
     const socket = tryGetSocketService();
     socket?.emitAuctionLotUpdated(draftId, { lot: auctionLotToResponse(result.lot) });
 
-    // Notify outbid users
+    // Notify outbid users with frontend-expected payload format
     for (const notif of result.outbidNotifications) {
       const outbidRoster = await this.rosterRepo.findById(notif.rosterId);
       if (outbidRoster?.userId) {
-        socket?.emitAuctionOutbid(outbidRoster.userId, notif);
+        socket?.emitAuctionOutbid(outbidRoster.userId, {
+          lot_id: notif.lotId,
+          player_id: result.lot.playerId,
+          new_bid: notif.newLeadingBid,
+        });
       }
     }
 
