@@ -69,6 +69,14 @@ const mockRosters = [
   { id: 3, leagueId: 1, userId: 'user-3', teamName: 'Team 3', isCommissioner: false },
 ];
 
+const mockLeague = {
+  id: 1,
+  name: 'Test League',
+  totalRosters: 3,
+  season: '2024',
+  mode: 'redraft',
+};
+
 // Mock repositories
 const createMockDraftRepo = (): jest.Mocked<DraftRepository> =>
   ({
@@ -142,6 +150,7 @@ describe('DraftOrderService', () => {
     it('should randomize order when user is commissioner', async () => {
       mockLeagueRepo.isCommissioner.mockResolvedValue(true);
       mockDraftRepo.findById.mockResolvedValue(mockDraft);
+      mockLeagueRepo.findById.mockResolvedValue(mockLeague as any);
       mockRosterRepo.findByLeagueId.mockResolvedValue(mockRosters as any);
       mockDraftRepo.updateDraftOrderAtomic.mockResolvedValue(undefined);
       mockDraftRepo.setOrderConfirmed.mockResolvedValue(undefined);
@@ -180,11 +189,32 @@ describe('DraftOrderService', () => {
 
   describe('createInitialOrder', () => {
     it('should create order for all rosters', async () => {
+      mockLeagueRepo.findById.mockResolvedValue(mockLeague as any);
       mockRosterRepo.findByLeagueId.mockResolvedValue(mockRosters as any);
       mockDraftRepo.updateDraftOrderAtomic.mockResolvedValue(undefined);
 
       await draftOrderService.createInitialOrder(1, 1);
 
+      expect(mockDraftRepo.updateDraftOrderAtomic).toHaveBeenCalledWith(1, [1, 2, 3]);
+    });
+
+    it('should create empty rosters when league is not full', async () => {
+      const partialRosters = [mockRosters[0], mockRosters[1]]; // Only 2 of 3 rosters exist
+      const leagueWith3Slots = { ...mockLeague, totalRosters: 3 };
+
+      mockLeagueRepo.findById.mockResolvedValue(leagueWith3Slots as any);
+      // First call returns partial rosters, second call returns all after empty roster creation
+      mockRosterRepo.findByLeagueId
+        .mockResolvedValueOnce(partialRosters as any)
+        .mockResolvedValueOnce(mockRosters as any);
+      mockRosterRepo.getRosterCount.mockResolvedValue(2);
+      mockRosterRepo.createEmptyRoster.mockResolvedValue(undefined as any);
+      mockDraftRepo.updateDraftOrderAtomic.mockResolvedValue(undefined);
+
+      await draftOrderService.createInitialOrder(1, 1);
+
+      // Should have created one empty roster
+      expect(mockRosterRepo.createEmptyRoster).toHaveBeenCalledWith(1, 3, expect.anything());
       expect(mockDraftRepo.updateDraftOrderAtomic).toHaveBeenCalledWith(1, [1, 2, 3]);
     });
   });

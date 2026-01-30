@@ -64,6 +64,13 @@ const mockPlayer = {
   status: 'Active',
   injuryStatus: null,
   jerseyNumber: 26,
+  cfbdId: null,
+  college: null,
+  height: null,
+  weight: null,
+  homeCity: null,
+  homeState: null,
+  playerType: 'nfl' as const,
   createdAt: new Date(),
   updatedAt: new Date(),
 };

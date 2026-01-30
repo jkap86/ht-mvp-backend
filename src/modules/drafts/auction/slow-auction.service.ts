@@ -13,8 +13,7 @@ import { PlayerRepository } from '../../players/players.repository';
 import { ValidationException, NotFoundException } from '../../../utils/exceptions';
 import { getRosterBudgetDataWithClient } from './auction-budget-calculator';
 import { resolvePriceWithClient, OutbidNotification } from './auction-price-resolver';
-import { getAuctionRosterLockId } from '../../../utils/locks';
-import { getLockId, LockDomain } from '../../../shared/locks';
+import { getAuctionRosterLockId, getDraftLockId } from '../../../utils/locks';
 
 export interface NominationResult {
   lot: AuctionLot;
@@ -278,16 +277,25 @@ export class SlowAuctionService {
     }
 
     // 7. Create lot with deadline
+    // Wrap in try/catch to handle race condition with unique constraint
     const bidDeadline = new Date(Date.now() + settings.bidWindowSeconds * 1000);
-    const lot = await this.lotRepo.createLot(
-      draftId,
-      playerId,
-      rosterId,
-      bidDeadline,
-      settings.minBid
-    );
-
-    return { lot, message: 'Player nominated successfully' };
+    try {
+      const lot = await this.lotRepo.createLot(
+        draftId,
+        playerId,
+        rosterId,
+        bidDeadline,
+        settings.minBid
+      );
+      return { lot, message: 'Player nominated successfully' };
+    } catch (error: any) {
+      // Handle unique constraint violation from partial index on (draft_id, player_id)
+      // This happens if two users try to nominate the same player concurrently
+      if (error.code === '23505') {
+        throw new ValidationException('Player has already been nominated in this draft');
+      }
+      throw error;
+    }
   }
 
   // SET_MAX_BID: Set or update proxy bid on a lot (transaction-safe)
@@ -391,6 +399,14 @@ export class SlowAuctionService {
         updatedAt: proxyBidResult.rows[0].updated_at,
       };
 
+      // 5b. Always record bid history on every proxy submission
+      // This ensures users see their bid activity even if it doesn't change the visible price
+      await client.query(
+        `INSERT INTO auction_bid_history (lot_id, roster_id, bid_amount, is_proxy)
+         VALUES ($1, $2, $3, $4)`,
+        [lotId, rosterId, maxBid, true]
+      );
+
       // 6. Resolve price within transaction (don't pass deadline - we'll handle timer reset)
       const result = await resolvePriceWithClient(client, lot, settings);
 
@@ -484,6 +500,8 @@ export class SlowAuctionService {
   }
 
   // Settle an expired lot (transaction-safe with draft pick creation)
+  // Now includes fallback logic: if the highest bidder can't afford,
+  // try the next highest bidder until one can afford, or pass the lot.
   async settleLot(lotId: number): Promise<SettlementResult> {
     const client = await this.pool.connect();
     try {
@@ -504,76 +522,114 @@ export class SlowAuctionService {
         throw new ValidationException('Lot is not active');
       }
 
-      if (lot.currentBidderRosterId) {
-        // Lock winner's roster to prevent concurrent settlements
-        // Use centralized lock ID for consistency with fast auction
+      // Get all proxy bids for fallback logic, ordered by max_bid DESC
+      const proxyBidsResult = await client.query(
+        `SELECT * FROM auction_proxy_bids
+         WHERE lot_id = $1
+         ORDER BY max_bid DESC, created_at ASC`,
+        [lotId]
+      );
+      const proxyBids = proxyBidsResult.rows;
+
+      // If no bids, pass the lot
+      if (proxyBids.length === 0) {
+        const passResult = await client.query(
+          `UPDATE auction_lots
+           SET status = 'passed', updated_at = CURRENT_TIMESTAMP
+           WHERE id = $1
+           RETURNING *`,
+          [lotId]
+        );
+        const passedLot = auctionLotFromDatabase(passResult.rows[0]);
+        await client.query('COMMIT');
+        return { lot: passedLot, winner: null, passed: true };
+      }
+
+      // Load draft and league data once
+      const draft = await this.draftRepo.findById(lot.draftId);
+      if (!draft) {
+        await client.query('ROLLBACK');
+        throw new NotFoundException('Draft not found');
+      }
+      const league = await this.leagueRepo.findById(draft.leagueId);
+      if (!league) {
+        await client.query('ROLLBACK');
+        throw new NotFoundException('League not found');
+      }
+
+      const totalBudget = league.leagueSettings?.auctionBudget ?? 200;
+      const rosterSlots = league.leagueSettings?.rosterSlots ?? 15;
+      const settings = this.getSettings(draft);
+
+      // Try each bidder in order until one can afford
+      for (let i = 0; i < proxyBids.length; i++) {
+        const candidateRosterId = proxyBids[i].roster_id;
+        const candidateMaxBid = proxyBids[i].max_bid;
+
+        // Calculate second-price auction price for this candidate
+        let price: number;
+        if (i === proxyBids.length - 1) {
+          // Last bidder (or only bidder) - price is minBid
+          price = settings.minBid;
+        } else {
+          // Price is next highest bid + increment, capped at candidate's max
+          const nextHighestBid = proxyBids[i + 1].max_bid;
+          price = Math.min(candidateMaxBid, nextHighestBid + settings.minIncrement);
+        }
+
+        // Lock candidate's roster
         await client.query('SELECT pg_advisory_xact_lock($1)', [
-          getAuctionRosterLockId(lot.currentBidderRosterId),
+          getAuctionRosterLockId(candidateRosterId),
         ]);
 
-        // Re-validate budget and slots at settlement time
-        const draft = await this.draftRepo.findById(lot.draftId);
-        if (!draft) {
-          await client.query('ROLLBACK');
-          throw new NotFoundException('Draft not found');
-        }
-        const league = await this.leagueRepo.findById(draft.leagueId);
-        if (!league) {
-          await client.query('ROLLBACK');
-          throw new NotFoundException('League not found');
-        }
-
-        const totalBudget = league.leagueSettings?.auctionBudget ?? 200;
-        const rosterSlots = league.leagueSettings?.rosterSlots ?? 15;
-        const settings = this.getSettings(draft);
-        const budgetData = await getRosterBudgetDataWithClient(
-          client,
-          lot.draftId,
-          lot.currentBidderRosterId
-        );
+        // Validate budget and slots
+        const budgetData = await getRosterBudgetDataWithClient(client, lot.draftId, candidateRosterId);
 
         // Check roster not full
         if (budgetData.wonCount >= rosterSlots) {
-          await client.query('ROLLBACK');
-          throw new ValidationException('Winner roster is full - lot cannot settle');
+          console.warn(
+            `Lot ${lotId}: Bidder ${candidateRosterId} roster is full (${budgetData.wonCount}/${rosterSlots}), trying next bidder`
+          );
+          continue;
         }
 
-        // Check budget: spent + this winning bid + reserve for remaining slots <= total
+        // Check budget: spent + price + reserve for remaining slots <= total
         const remainingAfterWin = rosterSlots - budgetData.wonCount - 1;
         const requiredReserve = remainingAfterWin * settings.minBid;
-        if (budgetData.spent + lot.currentBid + requiredReserve > totalBudget) {
-          await client.query('ROLLBACK');
-          throw new ValidationException('Winner cannot afford this lot after other settlements');
+        if (budgetData.spent + price + requiredReserve > totalBudget) {
+          console.warn(
+            `Lot ${lotId}: Bidder ${candidateRosterId} cannot afford $${price} (spent: $${budgetData.spent}, reserve: $${requiredReserve}), trying next bidder`
+          );
+          continue;
         }
 
-        // Mark lot won
+        // This bidder can afford - settle to them
         const settleResult = await client.query(
           `UPDATE auction_lots
-           SET status = 'won', winning_roster_id = $2, winning_bid = $3, updated_at = CURRENT_TIMESTAMP
+           SET status = 'won', winning_roster_id = $2, winning_bid = $3,
+               current_bidder_roster_id = $2, current_bid = $3, updated_at = CURRENT_TIMESTAMP
            WHERE id = $1
            RETURNING *`,
-          [lotId, lot.currentBidderRosterId, lot.currentBid]
+          [lotId, candidateRosterId, price]
         );
         const settledLot = auctionLotFromDatabase(settleResult.rows[0]);
 
         // Acquire draft-level lock to prevent concurrent pick_number conflicts
         await client.query('SELECT pg_advisory_xact_lock($1)', [
-          getLockId(LockDomain.LEAGUE, lot.draftId),
+          getDraftLockId(lot.draftId),
         ]);
 
         // Create draft pick entry
-        // For auctions, pick_in_round and round are less meaningful, so we use 1 for round
-        // and calculate pick_number as the next sequential pick
         await client.query(
           `INSERT INTO draft_picks (draft_id, roster_id, player_id, pick_number, round, pick_in_round)
            VALUES ($1, $2, $3,
              (SELECT COALESCE(MAX(pick_number), 0) + 1 FROM draft_picks WHERE draft_id = $1),
              1,
              (SELECT COALESCE(MAX(pick_number), 0) + 1 FROM draft_picks WHERE draft_id = $1))`,
-          [lot.draftId, lot.currentBidderRosterId, lot.playerId]
+          [lot.draftId, candidateRosterId, lot.playerId]
         );
 
-        // Also remove the player from all draft queues in this draft
+        // Remove the player from all draft queues
         await client.query('DELETE FROM draft_queue WHERE draft_id = $1 AND player_id = $2', [
           lot.draftId,
           lot.playerId,
@@ -583,28 +639,24 @@ export class SlowAuctionService {
 
         return {
           lot: settledLot,
-          winner: { rosterId: lot.currentBidderRosterId, amount: lot.currentBid },
+          winner: { rosterId: candidateRosterId, amount: price },
           passed: false,
         };
-      } else {
-        // Mark passed
-        const passResult = await client.query(
-          `UPDATE auction_lots
-           SET status = 'passed', updated_at = CURRENT_TIMESTAMP
-           WHERE id = $1
-           RETURNING *`,
-          [lotId]
-        );
-        const passedLot = auctionLotFromDatabase(passResult.rows[0]);
-
-        await client.query('COMMIT');
-
-        return {
-          lot: passedLot,
-          winner: null,
-          passed: true,
-        };
       }
+
+      // No bidder could afford - pass the lot
+      console.warn(`Lot ${lotId}: No bidder could afford the lot, marking as passed`);
+      const passResult = await client.query(
+        `UPDATE auction_lots
+         SET status = 'passed', updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1
+         RETURNING *`,
+        [lotId]
+      );
+      const passedLot = auctionLotFromDatabase(passResult.rows[0]);
+      await client.query('COMMIT');
+
+      return { lot: passedLot, winner: null, passed: true };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;

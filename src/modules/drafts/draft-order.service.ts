@@ -124,12 +124,49 @@ export class DraftOrderService {
   }
 
   async createInitialOrder(draftId: number, leagueId: number): Promise<void> {
-    const rosters = await this.rosterRepo.findByLeagueId(leagueId);
-    if (rosters.length === 0) {
+    // Get league to know total roster count
+    const league = await this.leagueRepo.findById(leagueId);
+    if (!league) {
       return;
     }
-    // Use batch insert instead of N separate queries
-    const rosterIds = rosters.map((r) => r.id);
+
+    // Get existing rosters
+    const existingRosters = await this.rosterRepo.findByLeagueId(leagueId);
+    const existingCount = existingRosters.length;
+    const targetCount = league.totalRosters;
+
+    // Create empty rosters for unfilled slots (in a transaction)
+    if (existingCount < targetCount) {
+      const client = await this.db.connect();
+      try {
+        await client.query('BEGIN');
+        // Advisory lock to prevent concurrent roster creation
+        await client.query('SELECT pg_advisory_xact_lock($1)', [leagueId]);
+
+        // Re-check roster count inside transaction
+        const currentCount = await this.rosterRepo.getRosterCount(leagueId, client);
+
+        for (let i = currentCount + 1; i <= targetCount; i++) {
+          await this.rosterRepo.createEmptyRoster(leagueId, i, client);
+        }
+
+        await client.query('COMMIT');
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+
+    // Now get ALL rosters (including newly created empty ones)
+    const allRosters = await this.rosterRepo.findByLeagueId(leagueId);
+    if (allRosters.length === 0) {
+      return;
+    }
+
+    // Use batch insert
+    const rosterIds = allRosters.map((r) => r.id);
     await this.draftRepo.updateDraftOrderAtomic(draftId, rosterIds);
   }
 }

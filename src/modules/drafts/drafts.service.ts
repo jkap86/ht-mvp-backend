@@ -73,6 +73,8 @@ export class DraftService {
         auction_mode?: 'slow' | 'fast';
         bid_window_seconds?: number;
         max_active_nominations_per_team?: number;
+        max_active_nominations_global?: number;
+        daily_nomination_limit?: number;
         nomination_seconds?: number;
         reset_on_bid_seconds?: number;
         min_bid?: number;
@@ -361,6 +363,8 @@ export class DraftService {
         auction_mode?: 'slow' | 'fast';
         bid_window_seconds?: number;
         max_active_nominations_per_team?: number;
+        max_active_nominations_global?: number;
+        daily_nomination_limit?: number;
         nomination_seconds?: number;
         reset_on_bid_seconds?: number;
         min_bid?: number;
@@ -430,6 +434,14 @@ export class DraftService {
       }
       if (updates.auctionSettings.min_increment !== undefined) {
         mergedSettings.minIncrement = updates.auctionSettings.min_increment;
+      }
+      if (updates.auctionSettings.max_active_nominations_global !== undefined) {
+        mergedSettings.maxActiveNominationsGlobal =
+          updates.auctionSettings.max_active_nominations_global;
+      }
+      if (updates.auctionSettings.daily_nomination_limit !== undefined) {
+        mergedSettings.dailyNominationLimit =
+          updates.auctionSettings.daily_nomination_limit;
       }
     }
 
