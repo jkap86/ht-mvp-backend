@@ -17,6 +17,7 @@ import {
   ForbiddenException,
 } from '../../../utils/exceptions';
 import { getAuctionRosterLockId } from '../../../utils/locks';
+import { logger } from '../../../config/logger.config';
 import { Draft } from '../drafts.model';
 import { getRosterBudgetDataWithClient } from './auction-budget-calculator';
 import { resolvePriceWithClient } from './auction-price-resolver';
@@ -92,6 +93,7 @@ export class FastAuctionService {
    * Nominate a player in fast auction mode
    * - Only current nominator can nominate
    * - Only one active lot allowed at a time
+   * Uses advisory lock to prevent race conditions with concurrent nominations
    */
   async nominate(draftId: number, userId: string, playerId: number): Promise<NominationResult> {
     // Get draft and validate
@@ -120,64 +122,90 @@ export class FastAuctionService {
       throw new ForbiddenException('It is not your turn to nominate');
     }
 
-    // Check no active lot exists
-    const activeLots = await this.lotRepo.findActiveLotsByDraft(draftId);
-    if (activeLots.length > 0) {
-      throw new ValidationException('There is already an active lot - wait for it to complete');
+    // Use transaction with advisory lock to prevent race condition
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Acquire draft-level lock to prevent concurrent nominations
+      const FAST_AUCTION_NOMINATION_LOCK_BASE = 999999100;
+      await client.query('SELECT pg_advisory_xact_lock($1)', [
+        FAST_AUCTION_NOMINATION_LOCK_BASE + draftId,
+      ]);
+
+      // Check no active lot exists (inside lock)
+      const activeLotResult = await client.query(
+        "SELECT id FROM auction_lots WHERE draft_id = $1 AND status = 'active' LIMIT 1",
+        [draftId]
+      );
+      if (activeLotResult.rows.length > 0) {
+        throw new ValidationException('There is already an active lot - wait for it to complete');
+      }
+
+      // Validate player
+      const player = await this.playerRepo.findById(playerId);
+      if (!player) {
+        throw new NotFoundException('Player not found');
+      }
+
+      // Check player not already drafted
+      const isDrafted = await this.draftRepo.isPlayerDrafted(draftId, playerId);
+      if (isDrafted) {
+        throw new ValidationException('Player has already been drafted');
+      }
+
+      // Check player not already nominated (active or won lot)
+      const existingLot = await this.lotRepo.findLotByDraftAndPlayer(draftId, playerId);
+      if (existingLot) {
+        throw new ValidationException('Player has already been nominated in this draft');
+      }
+
+      // Validate budget and roster slots
+      const budgetInfo = await this.lotRepo.getRosterBudgetData(draftId, roster.id);
+      const league = await this.leagueRepo.findById(draft.leagueId);
+      if (!league) {
+        throw new NotFoundException('League not found');
+      }
+
+      const rosterSlots = league.leagueSettings?.rosterSlots ?? 15;
+
+      // Check roster has slots
+      if (budgetInfo.wonCount >= rosterSlots) {
+        throw new ValidationException('Your roster is full');
+      }
+
+      // Calculate bid deadline for fast auction
+      const bidDeadline = new Date(Date.now() + settings.nominationSeconds * 1000);
+
+      // Create the lot
+      const lot = await this.lotRepo.createLot(
+        draftId,
+        playerId,
+        roster.id,
+        bidDeadline,
+        settings.minBid
+      );
+
+      await client.query('COMMIT');
+
+      // Emit socket event - convert to snake_case for frontend consistency
+      // Include serverTime for client clock synchronization
+      const socket = tryGetSocketService();
+      socket?.emitAuctionLotCreated(draftId, {
+        lot: auctionLotToResponse(lot),
+        serverTime: Date.now(),
+      });
+
+      return {
+        lot,
+        message: `${player.fullName} nominated for $${settings.minBid}`,
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
-
-    // Validate player
-    const player = await this.playerRepo.findById(playerId);
-    if (!player) {
-      throw new NotFoundException('Player not found');
-    }
-
-    // Check player not already drafted
-    const isDrafted = await this.draftRepo.isPlayerDrafted(draftId, playerId);
-    if (isDrafted) {
-      throw new ValidationException('Player has already been drafted');
-    }
-
-    // Check player not already nominated (active or won lot)
-    const existingLot = await this.lotRepo.findLotByDraftAndPlayer(draftId, playerId);
-    if (existingLot) {
-      throw new ValidationException('Player has already been nominated in this draft');
-    }
-
-    // Validate budget and roster slots
-    const budgetInfo = await this.lotRepo.getRosterBudgetData(draftId, roster.id);
-    const league = await this.leagueRepo.findById(draft.leagueId);
-    if (!league) {
-      throw new NotFoundException('League not found');
-    }
-
-    const rosterSlots = league.leagueSettings?.rosterSlots ?? 15;
-
-    // Check roster has slots
-    if (budgetInfo.wonCount >= rosterSlots) {
-      throw new ValidationException('Your roster is full');
-    }
-
-    // Calculate bid deadline for fast auction
-    const bidDeadline = new Date(Date.now() + settings.nominationSeconds * 1000);
-
-    // Create the lot
-    const lot = await this.lotRepo.createLot(
-      draftId,
-      playerId,
-      roster.id,
-      bidDeadline,
-      settings.minBid
-    );
-
-    // Emit socket event - convert to snake_case for frontend consistency
-    const socket = tryGetSocketService();
-    socket?.emitAuctionLotCreated(draftId, { lot: auctionLotToResponse(lot) });
-
-    return {
-      lot,
-      message: `${player.fullName} nominated for $${settings.minBid}`,
-    };
   }
 
   /**
@@ -261,6 +289,15 @@ export class FastAuctionService {
         throw new ValidationException(`Maximum affordable bid is $${maxAffordable}`);
       }
 
+      // Worst-case budget validation: ensure user can fill remaining roster at minBid
+      const worstCaseSpend = maxBid + budgetInfo.spent + requiredReserve;
+      if (worstCaseSpend > totalBudget) {
+        const maxAllowed = totalBudget - budgetInfo.spent - requiredReserve;
+        throw new ValidationException(
+          `Bid would leave insufficient budget for remaining roster slots. Maximum: $${maxAllowed}`
+        );
+      }
+
       // Upsert proxy bid
       await client.query(
         `INSERT INTO auction_proxy_bids (lot_id, roster_id, max_bid)
@@ -290,13 +327,17 @@ export class FastAuctionService {
       await client.query('COMMIT');
 
       // Emit lot updated event - convert to snake_case for frontend consistency
+      // Include serverTime for client clock synchronization
       const socket = tryGetSocketService();
-      socket?.emitAuctionLotUpdated(draftId, { lot: auctionLotToResponse(finalLot) });
+      socket?.emitAuctionLotUpdated(draftId, {
+        lot: auctionLotToResponse(finalLot),
+        serverTime: Date.now(),
+      });
 
       // Get proxy bid for response
       const proxyBidResult = await this.lotRepo.getProxyBid(lotId, roster.id);
 
-      // Handle outbid notifications
+      // Handle outbid notifications with retry logic
       const userOutbidNotifications: Array<{ userId: string; lotId: number; playerId: number }> =
         [];
       for (const notification of result.outbidNotifications) {
@@ -307,11 +348,19 @@ export class FastAuctionService {
             lotId: notification.lotId,
             playerId: lot.playerId,
           });
-          socket?.emitAuctionOutbid(outbidRoster.userId, {
-            lotId: notification.lotId,
-            playerId: lot.playerId,
-            newPrice: finalLot.currentBid,
-          });
+          try {
+            socket?.emitAuctionOutbid(outbidRoster.userId, {
+              lotId: notification.lotId,
+              playerId: lot.playerId,
+              newPrice: finalLot.currentBid,
+            });
+          } catch (socketError) {
+            logger.warn('Failed to emit outbid notification', {
+              userId: outbidRoster.userId,
+              lotId: notification.lotId,
+              error: socketError,
+            });
+          }
         }
       }
 

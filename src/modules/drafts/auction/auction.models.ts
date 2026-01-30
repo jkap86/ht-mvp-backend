@@ -10,6 +10,7 @@ export interface AuctionLot {
   status: 'pending' | 'active' | 'won' | 'passed';
   winningRosterId: number | null;
   winningBid: number | null;
+  nominationDate?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -58,6 +59,7 @@ export function auctionLotFromDatabase(row: any): AuctionLot {
     status: row.status,
     winningRosterId: row.winning_roster_id,
     winningBid: row.winning_bid,
+    nominationDate: row.nomination_date,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

@@ -7,7 +7,7 @@ import { logger } from '../config/logger.config';
 
 let intervalId: NodeJS.Timeout | null = null;
 
-const SETTLEMENT_INTERVAL_MS = 30000; // 30 seconds
+const SETTLEMENT_INTERVAL_MS = 5000; // 5 seconds for faster settlement
 const SLOW_AUCTION_LOCK_ID = 999999004;
 
 async function processExpiredLots(): Promise<void> {
@@ -69,17 +69,38 @@ async function processExpiredLots(): Promise<void> {
           });
         }
 
-        // Advance nominator for fast auctions
-        try {
-          const fastAuctionService = container.resolve<FastAuctionService>(
-            KEYS.FAST_AUCTION_SERVICE
-          );
-          await fastAuctionService.advanceNominator(result.lot.draftId);
-        } catch (error) {
-          logger.error('Failed to advance nominator', {
+        // Advance nominator for fast auctions with retry logic
+        const fastAuctionService = container.resolve<FastAuctionService>(
+          KEYS.FAST_AUCTION_SERVICE
+        );
+        const MAX_ADVANCEMENT_RETRIES = 3;
+        let advancementSuccess = false;
+
+        for (let attempt = 1; attempt <= MAX_ADVANCEMENT_RETRIES; attempt++) {
+          try {
+            await fastAuctionService.advanceNominator(result.lot.draftId);
+            advancementSuccess = true;
+            break;
+          } catch (error) {
+            logger.warn('Nominator advancement attempt failed', {
+              jobName: 'slow-auction',
+              draftId: result.lot.draftId,
+              attempt,
+              maxAttempts: MAX_ADVANCEMENT_RETRIES,
+              error,
+            });
+            if (attempt < MAX_ADVANCEMENT_RETRIES) {
+              // Wait 100ms before retry
+              await new Promise((resolve) => setTimeout(resolve, 100));
+            }
+          }
+        }
+
+        if (!advancementSuccess) {
+          logger.error('All nominator advancement attempts failed', {
             jobName: 'slow-auction',
             draftId: result.lot.draftId,
-            error,
+            maxAttempts: MAX_ADVANCEMENT_RETRIES,
           });
         }
       }
