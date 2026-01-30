@@ -45,15 +45,19 @@ export class DraftStateService {
       );
     }
 
+    // Check auction mode
+    const isSlowAuction =
+      draft.draftType === 'auction' && draft.settings?.auctionMode !== 'fast';
+    const isFastAuction =
+      draft.draftType === 'auction' && draft.settings?.auctionMode === 'fast';
+
     // Ensure commissioner has explicitly confirmed the draft order
-    if (!draft.orderConfirmed) {
+    // (not required for slow auctions since nominations are open to all teams)
+    if (!draft.orderConfirmed && !isSlowAuction) {
       throw new ValidationException('Draft order must be confirmed before starting');
     }
 
     const firstPicker = draftOrder.find((o) => o.draftPosition === 1);
-
-    // Check if this is a fast auction draft
-    const isFastAuction = draft.draftType === 'auction' && draft.settings?.auctionMode === 'fast';
 
     // For fast auctions, no pick deadline until nomination; for others, set deadline
     let pickDeadline: Date | null = null;
