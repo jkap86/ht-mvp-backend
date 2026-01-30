@@ -1,4 +1,4 @@
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import { Matchup, MatchupDetails, Standing, matchupFromDatabase } from './matchups.model';
 
 export class MatchupsRepository {
