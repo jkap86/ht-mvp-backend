@@ -71,6 +71,23 @@ export class SlowAuctionService {
     return this.lotRepo.findActiveLotsByDraft(draftId);
   }
 
+  // Get active lots with user's max bids included
+  async getActiveLotsWithUserBids(
+    draftId: number,
+    rosterId: number
+  ): Promise<Array<AuctionLot & { myMaxBid?: number }>> {
+    const lots = await this.lotRepo.findActiveLotsByDraft(draftId);
+    if (lots.length === 0) return [];
+
+    const lotIds = lots.map((l) => l.id);
+    const userBids = await this.lotRepo.getProxyBidsForRoster(lotIds, rosterId);
+
+    return lots.map((lot) => ({
+      ...lot,
+      myMaxBid: userBids.get(lot.id),
+    }));
+  }
+
   // Get lots for a draft with optional status filter
   async getLotsByStatus(draftId: number, status?: string): Promise<AuctionLot[]> {
     return this.lotRepo.findLotsByDraft(draftId, status);

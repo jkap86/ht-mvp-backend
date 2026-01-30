@@ -247,6 +247,31 @@ export class AuctionLotRepository {
   }
 
   /**
+   * Get all proxy bids for a roster across multiple lots
+   * Returns a map of lotId -> maxBid
+   */
+  async getProxyBidsForRoster(
+    lotIds: number[],
+    rosterId: number
+  ): Promise<Map<number, number>> {
+    if (lotIds.length === 0) {
+      return new Map();
+    }
+
+    const result = await this.db.query(
+      `SELECT lot_id, max_bid FROM auction_proxy_bids
+       WHERE lot_id = ANY($1) AND roster_id = $2`,
+      [lotIds, rosterId]
+    );
+
+    const map = new Map<number, number>();
+    for (const row of result.rows) {
+      map.set(row.lot_id, row.max_bid);
+    }
+    return map;
+  }
+
+  /**
    * Record a bid in the history
    */
   async recordBidHistory(

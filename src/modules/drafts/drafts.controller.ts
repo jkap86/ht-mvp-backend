@@ -278,11 +278,11 @@ export class DraftController {
       const leagueId = requireLeagueId(req);
       const draftId = requireDraftId(req);
 
-      // Verify user is league member
+      // Verify user is league member and get their roster
       if (!this.authService) {
         throw new ValidationException('Authorization service not available');
       }
-      await this.authService.ensureLeagueMember(leagueId, userId);
+      const roster = await this.authService.ensureLeagueMember(leagueId, userId);
 
       // Get draft to determine auction mode
       const draft = await this.draftService.getDraftById(leagueId, draftId, userId);
@@ -300,11 +300,11 @@ export class DraftController {
         minIncrement: draft.settings?.minIncrement ?? 1,
       };
 
-      // Get active lot(s) - for fast auction, there's at most one
+      // Get active lot(s) with user's max bids included
       if (!this.slowAuctionService) {
         throw new ValidationException('Auction service not available');
       }
-      const lots = await this.slowAuctionService.getActiveLots(draftId);
+      const lots = await this.slowAuctionService.getActiveLotsWithUserBids(draftId, roster.id);
       const activeLot = lots.length > 0 ? auctionLotToResponse(lots[0]) : null;
 
       // Get budgets
@@ -314,7 +314,7 @@ export class DraftController {
       const state = {
         auction_mode: auctionMode,
         active_lot: activeLot,
-        active_lots: lots.map(auctionLotToResponse), // Include all for slow auction
+        active_lots: lots.map(auctionLotToResponse), // Includes my_max_bid for each lot
         current_nominator_roster_id: auctionMode === 'fast' ? draft.currentRosterId : null,
         nomination_number: auctionMode === 'fast' ? draft.currentPick : null,
         settings: {

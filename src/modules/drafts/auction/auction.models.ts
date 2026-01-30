@@ -63,9 +63,12 @@ export function auctionLotFromDatabase(row: any): AuctionLot {
 
 /**
  * Helper to convert AuctionLot (camelCase) to API response (snake_case)
+ * Accepts optional myMaxBid for user-specific lot data
  */
-export function auctionLotToResponse(lot: AuctionLot): Record<string, any> {
-  return {
+export function auctionLotToResponse(
+  lot: AuctionLot & { myMaxBid?: number }
+): Record<string, any> {
+  const response: Record<string, any> = {
     id: lot.id,
     draft_id: lot.draftId,
     player_id: lot.playerId,
@@ -80,6 +83,13 @@ export function auctionLotToResponse(lot: AuctionLot): Record<string, any> {
     created_at: lot.createdAt,
     updated_at: lot.updatedAt,
   };
+
+  // Include user's max bid if present
+  if (lot.myMaxBid !== undefined) {
+    response.my_max_bid = lot.myMaxBid;
+  }
+
+  return response;
 }
 
 /**
