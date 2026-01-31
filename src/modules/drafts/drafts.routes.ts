@@ -97,6 +97,9 @@ router.get('/:draftId/order', draftController.getDraftOrder);
 // POST /api/leagues/:leagueId/drafts/:draftId/randomize
 router.post('/:draftId/randomize', draftModifyLimiter, draftController.randomizeDraftOrder);
 
+// POST /api/leagues/:leagueId/drafts/:draftId/order/confirm
+router.post('/:draftId/order/confirm', draftModifyLimiter, draftController.confirmDraftOrder);
+
 // POST /api/leagues/:leagueId/drafts/:draftId/start
 router.post('/:draftId/start', draftModifyLimiter, draftController.startDraft);
 

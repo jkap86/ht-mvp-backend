@@ -37,6 +37,7 @@ import { DraftPickService } from './modules/drafts/draft-pick.service';
 import { DraftStateService } from './modules/drafts/draft-state.service';
 import { DraftQueueService } from './modules/drafts/draft-queue.service';
 import { AuctionLotRepository } from './modules/drafts/auction/auction-lot.repository';
+import { DraftPickAssetRepository } from './modules/drafts/draft-pick-asset.repository';
 import { SlowAuctionService } from './modules/drafts/auction/slow-auction.service';
 import { FastAuctionService } from './modules/drafts/auction/fast-auction.service';
 import { ChatService } from './modules/chat/chat.service';
@@ -236,6 +237,11 @@ function bootstrap(): void {
   container.register(
     KEYS.AUCTION_LOT_REPO,
     () => new AuctionLotRepository(container.resolve(KEYS.POOL))
+  );
+
+  container.register(
+    KEYS.PICK_ASSET_REPO,
+    () => new DraftPickAssetRepository(container.resolve(KEYS.POOL))
   );
 
   container.register(

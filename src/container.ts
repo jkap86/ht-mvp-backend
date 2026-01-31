@@ -81,6 +81,7 @@ export const KEYS = {
   DRAFT_STATE_SERVICE: 'draftStateService',
   DRAFT_QUEUE_SERVICE: 'draftQueueService',
   AUCTION_LOT_REPO: 'auctionLotRepo',
+  PICK_ASSET_REPO: 'pickAssetRepo',
   SLOW_AUCTION_SERVICE: 'slowAuctionService',
   FAST_AUCTION_SERVICE: 'fastAuctionService',
   CHAT_SERVICE: 'chatService',

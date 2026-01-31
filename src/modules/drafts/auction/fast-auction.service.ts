@@ -381,50 +381,165 @@ export class FastAuctionService {
 
   /**
    * Advance to the next nominator after a lot is settled
+   * Uses transaction with advisory lock to prevent race conditions
    */
   async advanceNominator(draftId: number): Promise<void> {
-    const draft = await this.draftRepo.findById(draftId);
-    if (!draft) {
-      throw new NotFoundException('Draft not found');
+    const FAST_AUCTION_NOMINATOR_LOCK_BASE = 999999200;
+    const client = await this.pool.connect();
+
+    try {
+      await client.query('BEGIN');
+
+      // Acquire draft-level lock to prevent concurrent nominator advancement
+      await client.query('SELECT pg_advisory_xact_lock($1)', [
+        FAST_AUCTION_NOMINATOR_LOCK_BASE + draftId,
+      ]);
+
+      // Re-read draft inside transaction with lock
+      const draftResult = await client.query(
+        'SELECT * FROM drafts WHERE id = $1 FOR UPDATE',
+        [draftId]
+      );
+      if (draftResult.rows.length === 0) {
+        await client.query('COMMIT');
+        throw new NotFoundException('Draft not found');
+      }
+
+      const draft = draftResult.rows[0];
+      const auctionMode = draft.settings?.auctionMode ?? 'slow';
+      if (auctionMode !== 'fast') {
+        await client.query('COMMIT');
+        return; // Not a fast auction, nothing to do
+      }
+
+      // Get draft order
+      const orderResult = await client.query(
+        'SELECT * FROM draft_order WHERE draft_id = $1 ORDER BY draft_position',
+        [draftId]
+      );
+      if (orderResult.rows.length === 0) {
+        await client.query('COMMIT');
+        return;
+      }
+
+      const order = orderResult.rows;
+      const nominationSeconds = draft.settings?.nominationSeconds ?? 60;
+
+      // Calculate next nominator
+      const nextPick = (draft.current_pick || 0) + 1;
+      const nextIndex = (nextPick - 1) % order.length;
+      const nextNominator = order[nextIndex];
+
+      // Calculate nomination deadline
+      const nominationDeadline = new Date(Date.now() + nominationSeconds * 1000);
+
+      // Update draft with new nominator and deadline
+      await client.query(
+        `UPDATE drafts
+         SET current_pick = $1, current_roster_id = $2, pick_deadline = $3, updated_at = NOW()
+         WHERE id = $4`,
+        [nextPick, nextNominator.roster_id, nominationDeadline, draftId]
+      );
+
+      await client.query('COMMIT');
+
+      // Emit nominator changed event with deadline (after commit)
+      const socket = tryGetSocketService();
+      socket?.emitAuctionNominatorChanged(draftId, {
+        nominatorRosterId: nextNominator.roster_id,
+        nominationNumber: nextPick,
+        nominationDeadline: nominationDeadline.toISOString(),
+      });
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
+  }
 
-    const settings = this.getSettings(draft);
-    if (settings.auctionMode !== 'fast') {
-      return; // Not a fast auction, nothing to do
+  /**
+   * Force advance to next nominator - used as fallback when normal advancement fails
+   * This is a simplified version that directly updates the database
+   */
+  async forceAdvanceNominator(draftId: number): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Get current draft state and order count
+      const draftResult = await client.query(
+        'SELECT current_pick, settings FROM drafts WHERE id = $1 FOR UPDATE',
+        [draftId]
+      );
+      if (draftResult.rows.length === 0) {
+        await client.query('COMMIT');
+        return;
+      }
+
+      const draft = draftResult.rows[0];
+      const nominationSeconds = draft.settings?.nominationSeconds ?? 60;
+
+      const orderCountResult = await client.query(
+        'SELECT COUNT(*) as count FROM draft_order WHERE draft_id = $1',
+        [draftId]
+      );
+      const orderCount = parseInt(orderCountResult.rows[0].count, 10);
+      if (orderCount === 0) {
+        await client.query('COMMIT');
+        return;
+      }
+
+      const nextPick = (draft.current_pick || 0) + 1;
+      const nextIndex = (nextPick - 1) % orderCount;
+      const nominationDeadline = new Date(Date.now() + nominationSeconds * 1000);
+
+      // Get the next nominator
+      const nextNominatorResult = await client.query(
+        `SELECT roster_id FROM draft_order
+         WHERE draft_id = $1
+         ORDER BY draft_position
+         LIMIT 1 OFFSET $2`,
+        [draftId, nextIndex]
+      );
+
+      if (nextNominatorResult.rows.length === 0) {
+        await client.query('COMMIT');
+        return;
+      }
+
+      const nextRosterId = nextNominatorResult.rows[0].roster_id;
+
+      // Update draft
+      await client.query(
+        `UPDATE drafts
+         SET current_pick = $1, current_roster_id = $2, pick_deadline = $3, updated_at = NOW()
+         WHERE id = $4`,
+        [nextPick, nextRosterId, nominationDeadline, draftId]
+      );
+
+      await client.query('COMMIT');
+
+      // Emit socket event
+      const socket = tryGetSocketService();
+      socket?.emitAuctionNominatorChanged(draftId, {
+        nominatorRosterId: nextRosterId,
+        nominationNumber: nextPick,
+        nominationDeadline: nominationDeadline.toISOString(),
+      });
+
+      logger.info('Force advanced nominator', {
+        draftId,
+        nextPick,
+        nextRosterId,
+      });
+    } catch (error) {
+      await client.query('ROLLBACK');
+      logger.error('Force advance nominator failed', { draftId, error });
+      throw error;
+    } finally {
+      client.release();
     }
-
-    // Get draft order
-    const order = await this.orderService.getDraftOrder(
-      draft.leagueId,
-      draftId,
-      draft.createdAt.toString()
-    );
-    if (order.length === 0) {
-      return;
-    }
-
-    // Calculate next nominator
-    const nextPick = (draft.currentPick || 0) + 1;
-    const nextIndex = (nextPick - 1) % order.length;
-    const nextNominator = order[nextIndex];
-
-    // Calculate nomination deadline
-    const nominationDeadline = new Date(Date.now() + settings.nominationSeconds * 1000);
-
-    // Update draft with new nominator and deadline
-    await this.draftRepo.update(draftId, {
-      currentPick: nextPick,
-      currentRosterId: nextNominator.rosterId,
-      pickDeadline: nominationDeadline,
-    });
-
-    // Emit nominator changed event with deadline
-    const socket = tryGetSocketService();
-    socket?.emitAuctionNominatorChanged(draftId, {
-      nominatorRosterId: nextNominator.rosterId,
-      nominationNumber: nextPick,
-      nominationDeadline: nominationDeadline.toISOString(),
-    });
   }
 
   /**

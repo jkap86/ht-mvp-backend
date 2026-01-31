@@ -99,11 +99,26 @@ async function processExpiredLots(): Promise<void> {
         }
 
         if (!advancementSuccess) {
-          logger.error('All nominator advancement attempts failed', {
+          logger.error('All nominator advancement attempts failed, trying force advance', {
             jobName: 'slow-auction',
             draftId: result.lot.draftId,
             maxAttempts: MAX_ADVANCEMENT_RETRIES,
           });
+
+          // Fallback: Use forceAdvanceNominator to skip to next nominator
+          try {
+            await fastAuctionService.forceAdvanceNominator(result.lot.draftId);
+            logger.info('Force advance nominator succeeded', {
+              jobName: 'slow-auction',
+              draftId: result.lot.draftId,
+            });
+          } catch (fallbackError) {
+            logger.error('Force advance nominator also failed - draft may be stuck', {
+              jobName: 'slow-auction',
+              draftId: result.lot.draftId,
+              error: fallbackError,
+            });
+          }
         }
       }
 

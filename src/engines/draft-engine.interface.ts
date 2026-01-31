@@ -108,7 +108,7 @@ export interface IDraftEngine {
    * accounting for traded picks.
    * Returns the current owner (may differ from original if pick was traded).
    */
-  getActualPickerForPickNumber?(
+  getActualPickerForPickNumber(
     draft: Draft,
     draftOrder: DraftOrderEntry[],
     pickAssets: DraftPickAsset[],

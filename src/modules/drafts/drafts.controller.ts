@@ -132,6 +132,19 @@ export class DraftController {
     }
   };
 
+  confirmDraftOrder = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const userId = requireUserId(req);
+      const leagueId = requireLeagueId(req);
+      const draftId = requireDraftId(req);
+
+      const order = await this.draftService.confirmDraftOrder(leagueId, draftId, userId);
+      res.status(200).json(order);
+    } catch (error) {
+      next(error);
+    }
+  };
+
   startDraft = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const userId = requireUserId(req);

@@ -263,6 +263,10 @@ export class DraftService {
     return this.orderService.randomizeDraftOrder(leagueId, draftId, userId);
   }
 
+  async confirmDraftOrder(leagueId: number, draftId: number, userId: string): Promise<any[]> {
+    return this.orderService.confirmDraftOrder(leagueId, draftId, userId);
+  }
+
   // Delegate to state service
   async startDraft(draftId: number, userId: string): Promise<any> {
     return this.stateService.startDraft(draftId, userId);

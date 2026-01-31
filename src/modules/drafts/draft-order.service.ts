@@ -123,6 +123,44 @@ export class DraftOrderService {
     return finalOrder;
   }
 
+  /**
+   * Confirm the draft order without randomizing.
+   * Commissioner can use this to confirm a manually arranged order.
+   */
+  async confirmDraftOrder(leagueId: number, draftId: number, userId: string): Promise<any[]> {
+    const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
+    if (!isCommissioner) {
+      throw new ForbiddenException('Only the commissioner can confirm draft order');
+    }
+
+    const draft = await this.draftRepo.findById(draftId);
+    if (!draft || draft.status !== 'not_started') {
+      throw new ValidationException('Can only confirm order before draft starts');
+    }
+
+    if (draft.orderConfirmed) {
+      throw new ValidationException('Draft order is already confirmed');
+    }
+
+    // Verify draft order exists and is valid
+    const draftOrder = await this.draftRepo.getDraftOrder(draftId);
+    if (draftOrder.length === 0) {
+      throw new ValidationException('Draft order not set');
+    }
+
+    // Mark order as confirmed
+    await this.draftRepo.setOrderConfirmed(draftId, true);
+
+    // Emit socket event to notify all users viewing the draft room
+    const socket = tryGetSocketService();
+    socket?.emitDraftSettingsUpdated(draftId, {
+      order_confirmed: true,
+      draft_order: draftOrder,
+    });
+
+    return draftOrder;
+  }
+
   async createInitialOrder(draftId: number, leagueId: number): Promise<void> {
     // Get league to know total roster count
     const league = await this.leagueRepo.findById(leagueId);

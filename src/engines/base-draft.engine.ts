@@ -15,6 +15,7 @@ import { logger } from '../config/env.config';
 import { populateRostersFromDraft } from '../modules/drafts/draft-completion.utils';
 import { container, KEYS } from '../container';
 import { ScheduleGeneratorService } from '../modules/matchups/schedule-generator.service';
+import { DraftPickAssetRepository } from '../modules/drafts/draft-pick-asset.repository';
 
 /**
  * Abstract base class for draft engines.
@@ -374,6 +375,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
 
   /**
    * Advance draft to the next pick
+   * Accounts for traded picks by checking pick assets
    */
   protected async advanceToNextPick(
     draft: Draft,
@@ -420,20 +422,34 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     }
 
     const nextRound = this.getRound(nextPick, totalRosters);
-    const nextPicker = this.getPickerForPickNumber(draft, draftOrder, nextPick);
+
+    // Fetch pick assets to check for traded picks
+    let nextRosterId: number | null = null;
+    try {
+      const pickAssetRepo = container.resolve<DraftPickAssetRepository>(KEYS.PICK_ASSET_REPO);
+      const pickAssets = await pickAssetRepo.findByDraftId(draft.id);
+      const actualPicker = this.getActualPickerForPickNumber(draft, draftOrder, pickAssets, nextPick);
+      nextRosterId = actualPicker?.rosterId || null;
+    } catch (error) {
+      // Fallback to original picker if pick assets not available
+      logger.warn(`Failed to fetch pick assets for draft ${draft.id}, using original picker`, error);
+      const originalPicker = this.getPickerForPickNumber(draft, draftOrder, nextPick);
+      nextRosterId = originalPicker?.rosterId || null;
+    }
+
     const pickDeadline = this.calculatePickDeadline(draft);
 
     await this.draftRepo.update(draft.id, {
       currentPick: nextPick,
       currentRound: nextRound,
-      currentRosterId: nextPicker?.rosterId || null,
+      currentRosterId: nextRosterId,
       pickDeadline,
     });
 
     return {
       currentPick: nextPick,
       currentRound: nextRound,
-      currentRosterId: nextPicker?.rosterId || null,
+      currentRosterId: nextRosterId,
       pickDeadline,
       status: 'in_progress',
     };

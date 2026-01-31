@@ -7,6 +7,8 @@ import { NotFoundException, ForbiddenException, ValidationException } from '../.
 import { tryGetSocketService } from '../../socket';
 import { populateRostersFromDraft } from './draft-completion.utils';
 import { ScheduleGeneratorService } from '../matchups/schedule-generator.service';
+import { DraftPickAssetRepository } from './draft-pick-asset.repository';
+import { container, KEYS } from '../../container';
 
 export class DraftStateService {
   constructor(
@@ -119,11 +121,17 @@ export class DraftStateService {
       throw new ValidationException('Can only pause a draft that is in progress');
     }
 
-    // Calculate remaining time on the clock
+    // Check if this is a slow auction (no deadline/timer)
+    const isSlowAuction = draft.draftType === 'auction' && draft.settings?.auctionMode !== 'fast';
+
+    // Calculate remaining time on the clock (only for timed drafts)
     const now = new Date();
-    const remainingSeconds = draft.pickDeadline
-      ? Math.max(0, Math.floor((draft.pickDeadline.getTime() - now.getTime()) / 1000))
-      : draft.pickTimeSeconds;
+    let remainingSeconds: number | null = null;
+    if (!isSlowAuction) {
+      remainingSeconds = draft.pickDeadline
+        ? Math.max(0, Math.floor((draft.pickDeadline.getTime() - now.getTime()) / 1000))
+        : draft.pickTimeSeconds;
+    }
 
     const updatedDraft = await this.draftRepo.update(draftId, {
       status: 'paused',
@@ -157,10 +165,16 @@ export class DraftStateService {
       throw new ValidationException('Can only resume a draft that is paused');
     }
 
-    // Calculate new deadline from remaining time
-    const remainingSeconds = draft.draftState?.remainingSeconds ?? draft.pickTimeSeconds;
-    const pickDeadline = new Date();
-    pickDeadline.setSeconds(pickDeadline.getSeconds() + remainingSeconds);
+    // Check if this is a slow auction (no deadline/timer)
+    const isSlowAuction = draft.draftType === 'auction' && draft.settings?.auctionMode !== 'fast';
+
+    // Calculate new deadline from remaining time (only for timed drafts)
+    let pickDeadline: Date | null = null;
+    if (!isSlowAuction) {
+      const remainingSeconds = draft.draftState?.remainingSeconds ?? draft.pickTimeSeconds;
+      pickDeadline = new Date();
+      pickDeadline.setSeconds(pickDeadline.getSeconds() + remainingSeconds);
+    }
 
     const updatedDraft = await this.draftRepo.update(draftId, {
       status: 'in_progress',
@@ -289,7 +303,19 @@ export class DraftStateService {
     // The undone pick tells us what the "current" pick should now be
     const prevPick = undonePick.pickNumber;
     const prevRound = engine.getRound(prevPick, totalRosters);
-    const prevPicker = engine.getPickerForPickNumber(draft, draftOrder, prevPick);
+
+    // Fetch pick assets to account for traded picks
+    let prevPickerRosterId: number | null = null;
+    try {
+      const pickAssetRepo = container.resolve<DraftPickAssetRepository>(KEYS.PICK_ASSET_REPO);
+      const pickAssets = await pickAssetRepo.findByDraftId(draftId);
+      const actualPicker = engine.getActualPickerForPickNumber(draft, draftOrder, pickAssets, prevPick);
+      prevPickerRosterId = actualPicker?.rosterId || null;
+    } catch {
+      // Fallback to original picker if pick assets not available
+      const prevPicker = engine.getPickerForPickNumber(draft, draftOrder, prevPick);
+      prevPickerRosterId = prevPicker?.rosterId || null;
+    }
 
     // Calculate new deadline only if draft was in progress (not paused)
     const shouldSetDeadline = draft.status === 'in_progress' || wasCompleted;
@@ -302,7 +328,7 @@ export class DraftStateService {
     const updatedDraft = await this.draftRepo.update(draftId, {
       currentPick: prevPick,
       currentRound: prevRound,
-      currentRosterId: prevPicker?.rosterId || null,
+      currentRosterId: prevPickerRosterId,
       pickDeadline,
       // If draft was completed, revert to in_progress
       status: wasCompleted ? 'in_progress' : draft.status,
@@ -318,7 +344,7 @@ export class DraftStateService {
       socket?.emitNextPick(draftId, {
         currentPick: prevPick,
         currentRound: prevRound,
-        currentRosterId: prevPicker?.rosterId,
+        currentRosterId: prevPickerRosterId,
         pickDeadline,
         status: 'in_progress',
       });
