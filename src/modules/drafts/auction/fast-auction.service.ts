@@ -463,9 +463,15 @@ export class FastAuctionService {
    * This is a simplified version that directly updates the database
    */
   async forceAdvanceNominator(draftId: number): Promise<void> {
+    const FAST_AUCTION_NOMINATOR_LOCK_BASE = 999999200;
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+
+      // Acquire advisory lock to prevent race with normal advanceNominator
+      await client.query('SELECT pg_advisory_xact_lock($1)', [
+        FAST_AUCTION_NOMINATOR_LOCK_BASE + draftId,
+      ]);
 
       // Get current draft state and order count
       const draftResult = await client.query(
