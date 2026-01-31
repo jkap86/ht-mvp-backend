@@ -148,6 +148,11 @@ export class DraftOrderService {
       throw new ValidationException('Draft order not set');
     }
 
+    // Update pick asset positions to match current draft order
+    if (this.pickAssetRepo) {
+      await this.pickAssetRepo.updatePickPositions(draftId);
+    }
+
     // Mark order as confirmed
     await this.draftRepo.setOrderConfirmed(draftId, true);
 
