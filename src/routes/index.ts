@@ -3,6 +3,7 @@ import authRoutes from '../modules/auth/auth.routes';
 import leagueRoutes from '../modules/leagues/leagues.routes';
 import playerRoutes from '../modules/players/players.routes';
 import invitationRoutes from '../modules/invitations/invitations.routes';
+import dmRoutes from '../modules/dm/dm.routes';
 import { rosterPickAssetsRoutes } from '../modules/drafts/draft-pick-assets.routes';
 import { pool, getPoolMetrics } from '../db/pool';
 import { metrics } from '../services/metrics.service';
@@ -52,6 +53,9 @@ router.use('/players', playerRoutes);
 
 // Invitation routes (top-level for user's invitations)
 router.use('/invitations', invitationRoutes);
+
+// Direct message routes
+router.use('/dm', dmRoutes);
 
 // Roster pick assets routes (top-level for roster-specific pick assets)
 router.use('/rosters/:rosterId/pick-assets', rosterPickAssetsRoutes);

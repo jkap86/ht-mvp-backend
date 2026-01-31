@@ -6,6 +6,7 @@ import { UserRepository } from './modules/auth/auth.repository';
 import { LeagueRepository, RosterRepository } from './modules/leagues/leagues.repository';
 import { DraftRepository } from './modules/drafts/drafts.repository';
 import { ChatRepository } from './modules/chat/chat.repository';
+import { DmRepository } from './modules/dm/dm.repository';
 import { PlayerRepository } from './modules/players/players.repository';
 import {
   RosterPlayersRepository,
@@ -41,6 +42,7 @@ import { DraftPickAssetRepository } from './modules/drafts/draft-pick-asset.repo
 import { SlowAuctionService } from './modules/drafts/auction/slow-auction.service';
 import { FastAuctionService } from './modules/drafts/auction/fast-auction.service';
 import { ChatService } from './modules/chat/chat.service';
+import { DmService } from './modules/dm/dm.service';
 import { PlayerService } from './modules/players/players.service';
 import { SleeperApiClient } from './modules/players/sleeper.client';
 import { CFBDApiClient } from './modules/players/cfbd.client';
@@ -74,6 +76,7 @@ function bootstrap(): void {
   container.register(KEYS.ROSTER_REPO, () => new RosterRepository(container.resolve(KEYS.POOL)));
   container.register(KEYS.DRAFT_REPO, () => new DraftRepository(container.resolve(KEYS.POOL)));
   container.register(KEYS.CHAT_REPO, () => new ChatRepository(container.resolve(KEYS.POOL)));
+  container.register(KEYS.DM_REPO, () => new DmRepository(container.resolve(KEYS.POOL)));
   container.register(KEYS.PLAYER_REPO, () => new PlayerRepository(container.resolve(KEYS.POOL)));
   container.register(
     KEYS.ROSTER_PLAYERS_REPO,
@@ -274,6 +277,11 @@ function bootstrap(): void {
   container.register(
     KEYS.CHAT_SERVICE,
     () => new ChatService(container.resolve(KEYS.CHAT_REPO), container.resolve(KEYS.LEAGUE_REPO))
+  );
+
+  container.register(
+    KEYS.DM_SERVICE,
+    () => new DmService(container.resolve(KEYS.DM_REPO), container.resolve(KEYS.USER_REPO))
   );
 
   container.register(

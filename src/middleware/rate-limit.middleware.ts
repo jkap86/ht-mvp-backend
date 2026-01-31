@@ -89,6 +89,23 @@ export const draftModifyLimiter = rateLimit({
 });
 
 /**
+ * Rate limiter for direct message sending
+ * Limits to 30 messages per minute per user to prevent spam
+ */
+export const dmMessageLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 30, // 30 messages per minute
+  message: {
+    error: 'Too many messages, please slow down',
+    status: 429,
+  },
+  keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: getRedisStore(),
+});
+
+/**
  * Rate limiter for refresh token endpoint
  * Limits to 30 attempts per hour per IP to prevent brute force attacks
  * More lenient than login since refresh is automated

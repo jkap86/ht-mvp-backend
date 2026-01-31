@@ -276,6 +276,16 @@ export class SocketService {
     this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.CHAT.MESSAGE, message);
   }
 
+  // Emit direct message to a specific user
+  emitDmMessage(userId: string, conversationId: number, message: any): void {
+    this.emitToUser(userId, SOCKET_EVENTS.DM.MESSAGE, { conversationId, message });
+  }
+
+  // Emit DM read notification to a specific user
+  emitDmRead(userId: string, conversationId: number, readByUserId: string): void {
+    this.emitToUser(userId, SOCKET_EVENTS.DM.READ, { conversationId, readBy: readByUserId });
+  }
+
   // Emit auction lot created event
   emitAuctionLotCreated(draftId: number, lot: any): void {
     this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.AUCTION.LOT_CREATED, { lot });
