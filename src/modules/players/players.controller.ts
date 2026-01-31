@@ -8,7 +8,7 @@ export class PlayerController {
 
   getAllPlayers = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const limit = parseInt(req.query.limit as string) || 100;
+      const limit = parseInt(req.query.limit as string) || 10000;
       const offset = parseInt(req.query.offset as string) || 0;
 
       const players = await this.playerService.getAllPlayers(limit, offset);
