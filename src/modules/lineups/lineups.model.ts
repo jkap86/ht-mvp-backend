@@ -2,7 +2,12 @@
  * Lineup models
  */
 
-export type PositionSlot = 'QB' | 'RB' | 'WR' | 'TE' | 'FLEX' | 'K' | 'DEF' | 'BN';
+export type PositionSlot =
+  | 'QB' | 'RB' | 'WR' | 'TE'
+  | 'FLEX' | 'SUPER_FLEX' | 'REC_FLEX'
+  | 'K' | 'DEF'
+  | 'DL' | 'LB' | 'DB' | 'IDP_FLEX'
+  | 'BN' | 'IR' | 'TAXI';
 
 export interface LineupSlots {
   QB: number[];
@@ -10,9 +15,17 @@ export interface LineupSlots {
   WR: number[];
   TE: number[];
   FLEX: number[];
+  SUPER_FLEX: number[];
+  REC_FLEX: number[];
   K: number[];
   DEF: number[];
+  DL: number[];
+  LB: number[];
+  DB: number[];
+  IDP_FLEX: number[];
   BN: number[]; // Bench
+  IR: number[]; // Injured Reserve
+  TAXI: number[]; // Taxi Squad (dynasty only)
 }
 
 export interface RosterLineup {
@@ -40,9 +53,17 @@ export function rosterLineupFromDatabase(row: any): RosterLineup {
       WR: lineup.WR || [],
       TE: lineup.TE || [],
       FLEX: lineup.FLEX || [],
+      SUPER_FLEX: lineup.SUPER_FLEX || [],
+      REC_FLEX: lineup.REC_FLEX || [],
       K: lineup.K || [],
       DEF: lineup.DEF || [],
+      DL: lineup.DL || [],
+      LB: lineup.LB || [],
+      DB: lineup.DB || [],
+      IDP_FLEX: lineup.IDP_FLEX || [],
       BN: lineup.BN || [],
+      IR: lineup.IR || [],
+      TAXI: lineup.TAXI || [],
     },
     totalPoints: row.total_points ? parseFloat(row.total_points) : null,
     isLocked: row.is_locked,
@@ -72,9 +93,17 @@ export interface RosterConfig {
   WR: number;
   TE: number;
   FLEX: number;
+  SUPER_FLEX: number;
+  REC_FLEX: number;
   K: number;
   DEF: number;
+  DL: number;
+  LB: number;
+  DB: number;
+  IDP_FLEX: number;
   BN: number;
+  IR: number;
+  TAXI: number;
 }
 
 export const DEFAULT_ROSTER_CONFIG: RosterConfig = {
@@ -83,9 +112,17 @@ export const DEFAULT_ROSTER_CONFIG: RosterConfig = {
   WR: 2,
   TE: 1,
   FLEX: 1,
+  SUPER_FLEX: 0,
+  REC_FLEX: 0,
   K: 1,
   DEF: 1,
+  DL: 0,
+  LB: 0,
+  DB: 0,
+  IDP_FLEX: 0,
   BN: 6,
+  IR: 0,
+  TAXI: 0,
 };
 
 export interface LineupValidationResult {

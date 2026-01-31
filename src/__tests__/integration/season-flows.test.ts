@@ -233,9 +233,17 @@ describe('Season Sanity Integration Tests', () => {
         WR: [104, 105],
         TE: [106],
         FLEX: [107],
+        SUPER_FLEX: [],
+        REC_FLEX: [],
         K: [108],
         DEF: [109],
+        DL: [],
+        LB: [],
+        DB: [],
+        IDP_FLEX: [],
         BN: [110, 111],
+        IR: [],
+        TAXI: [],
       };
 
       const mockRosterLineup: RosterLineup = {
@@ -564,9 +572,17 @@ describe('Season Sanity Integration Tests', () => {
         WR: [],
         TE: [],
         FLEX: [],
+        SUPER_FLEX: [],
+        REC_FLEX: [],
         K: [],
         DEF: [],
+        DL: [],
+        LB: [],
+        DB: [],
+        IDP_FLEX: [],
         BN: [],
+        IR: [],
+        TAXI: [],
       };
 
       // 253 pass yards * 0.04 = 10.12 points, but defPointsAllowed=99 gives -4

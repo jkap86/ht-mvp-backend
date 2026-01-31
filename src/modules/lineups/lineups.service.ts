@@ -61,9 +61,17 @@ export class LineupService {
         WR: [],
         TE: [],
         FLEX: [],
+        SUPER_FLEX: [],
+        REC_FLEX: [],
         K: [],
         DEF: [],
+        DL: [],
+        LB: [],
+        DB: [],
+        IDP_FLEX: [],
         BN: [],
+        IR: [],
+        TAXI: [],
       };
 
       // Put all roster players on bench initially
@@ -196,17 +204,25 @@ export class LineupService {
     rosterConfig?: any
   ): LineupValidationResult {
     const errors: string[] = [];
-    // Merge with defaults, treating 0 as "use default" since 0 slots makes no sense
+    // Merge with defaults - for new slots, 0 means none configured
     const passedConfig = rosterConfig || {};
     const config = {
-      QB: passedConfig.QB || DEFAULT_ROSTER_CONFIG.QB,
-      RB: passedConfig.RB || DEFAULT_ROSTER_CONFIG.RB,
-      WR: passedConfig.WR || DEFAULT_ROSTER_CONFIG.WR,
-      TE: passedConfig.TE || DEFAULT_ROSTER_CONFIG.TE,
-      FLEX: passedConfig.FLEX || DEFAULT_ROSTER_CONFIG.FLEX,
-      K: passedConfig.K || DEFAULT_ROSTER_CONFIG.K,
-      DEF: passedConfig.DEF || DEFAULT_ROSTER_CONFIG.DEF,
-      BN: passedConfig.BN || DEFAULT_ROSTER_CONFIG.BN,
+      QB: passedConfig.QB ?? DEFAULT_ROSTER_CONFIG.QB,
+      RB: passedConfig.RB ?? DEFAULT_ROSTER_CONFIG.RB,
+      WR: passedConfig.WR ?? DEFAULT_ROSTER_CONFIG.WR,
+      TE: passedConfig.TE ?? DEFAULT_ROSTER_CONFIG.TE,
+      FLEX: passedConfig.FLEX ?? DEFAULT_ROSTER_CONFIG.FLEX,
+      SUPER_FLEX: passedConfig.SUPER_FLEX ?? DEFAULT_ROSTER_CONFIG.SUPER_FLEX,
+      REC_FLEX: passedConfig.REC_FLEX ?? DEFAULT_ROSTER_CONFIG.REC_FLEX,
+      K: passedConfig.K ?? DEFAULT_ROSTER_CONFIG.K,
+      DEF: passedConfig.DEF ?? DEFAULT_ROSTER_CONFIG.DEF,
+      DL: passedConfig.DL ?? DEFAULT_ROSTER_CONFIG.DL,
+      LB: passedConfig.LB ?? DEFAULT_ROSTER_CONFIG.LB,
+      DB: passedConfig.DB ?? DEFAULT_ROSTER_CONFIG.DB,
+      IDP_FLEX: passedConfig.IDP_FLEX ?? DEFAULT_ROSTER_CONFIG.IDP_FLEX,
+      BN: passedConfig.BN ?? DEFAULT_ROSTER_CONFIG.BN,
+      IR: passedConfig.IR ?? DEFAULT_ROSTER_CONFIG.IR,
+      TAXI: passedConfig.TAXI ?? DEFAULT_ROSTER_CONFIG.TAXI,
     };
     const rosterPlayerIds = new Set(rosterPlayers.map((p) => p.playerId));
     const playerPositions = new Map(rosterPlayers.map((p) => [p.playerId, p.position]));
@@ -218,9 +234,17 @@ export class LineupService {
       ...lineup.WR,
       ...lineup.TE,
       ...lineup.FLEX,
+      ...lineup.SUPER_FLEX,
+      ...lineup.REC_FLEX,
       ...lineup.K,
       ...lineup.DEF,
+      ...lineup.DL,
+      ...lineup.LB,
+      ...lineup.DB,
+      ...lineup.IDP_FLEX,
       ...lineup.BN,
+      ...lineup.IR,
+      ...lineup.TAXI,
     ];
 
     for (const playerId of allLineupPlayers) {
@@ -251,11 +275,35 @@ export class LineupService {
     if (lineup.FLEX.length > config.FLEX) {
       errors.push(`Too many FLEX (max ${config.FLEX})`);
     }
+    if (lineup.SUPER_FLEX.length > config.SUPER_FLEX) {
+      errors.push(`Too many SUPER_FLEX (max ${config.SUPER_FLEX})`);
+    }
+    if (lineup.REC_FLEX.length > config.REC_FLEX) {
+      errors.push(`Too many REC_FLEX (max ${config.REC_FLEX})`);
+    }
     if (lineup.K.length > config.K) {
       errors.push(`Too many Kickers (max ${config.K})`);
     }
     if (lineup.DEF.length > config.DEF) {
       errors.push(`Too many DEF (max ${config.DEF})`);
+    }
+    if (lineup.DL.length > config.DL) {
+      errors.push(`Too many DL (max ${config.DL})`);
+    }
+    if (lineup.LB.length > config.LB) {
+      errors.push(`Too many LB (max ${config.LB})`);
+    }
+    if (lineup.DB.length > config.DB) {
+      errors.push(`Too many DB (max ${config.DB})`);
+    }
+    if (lineup.IDP_FLEX.length > config.IDP_FLEX) {
+      errors.push(`Too many IDP_FLEX (max ${config.IDP_FLEX})`);
+    }
+    if (lineup.IR.length > config.IR) {
+      errors.push(`Too many IR (max ${config.IR})`);
+    }
+    if (lineup.TAXI.length > config.TAXI) {
+      errors.push(`Too many TAXI (max ${config.TAXI})`);
     }
 
     // Check position eligibility
@@ -285,6 +333,18 @@ export class LineupService {
         errors.push(`Player ${playerId} cannot play FLEX`);
       }
     }
+    for (const playerId of lineup.SUPER_FLEX) {
+      const pos = playerPositions.get(playerId);
+      if (!['QB', 'RB', 'WR', 'TE'].includes(pos || '')) {
+        errors.push(`Player ${playerId} cannot play SUPER_FLEX`);
+      }
+    }
+    for (const playerId of lineup.REC_FLEX) {
+      const pos = playerPositions.get(playerId);
+      if (!['WR', 'TE'].includes(pos || '')) {
+        errors.push(`Player ${playerId} cannot play REC_FLEX`);
+      }
+    }
     for (const playerId of lineup.K) {
       if (playerPositions.get(playerId) !== 'K') {
         errors.push(`Player ${playerId} cannot play K`);
@@ -295,6 +355,29 @@ export class LineupService {
         errors.push(`Player ${playerId} cannot play DEF`);
       }
     }
+    for (const playerId of lineup.DL) {
+      if (playerPositions.get(playerId) !== 'DL') {
+        errors.push(`Player ${playerId} cannot play DL`);
+      }
+    }
+    for (const playerId of lineup.LB) {
+      if (playerPositions.get(playerId) !== 'LB') {
+        errors.push(`Player ${playerId} cannot play LB`);
+      }
+    }
+    for (const playerId of lineup.DB) {
+      if (playerPositions.get(playerId) !== 'DB') {
+        errors.push(`Player ${playerId} cannot play DB`);
+      }
+    }
+    for (const playerId of lineup.IDP_FLEX) {
+      const pos = playerPositions.get(playerId);
+      if (!['DL', 'LB', 'DB'].includes(pos || '')) {
+        errors.push(`Player ${playerId} cannot play IDP_FLEX`);
+      }
+    }
+    // IR and TAXI can hold any player (eligibility checked elsewhere)
+    // BN can hold any player
 
     return {
       valid: errors.length === 0,
@@ -319,12 +402,26 @@ export class LineupService {
         return position === 'TE';
       case 'FLEX':
         return ['RB', 'WR', 'TE'].includes(position);
+      case 'SUPER_FLEX':
+        return ['QB', 'RB', 'WR', 'TE'].includes(position);
+      case 'REC_FLEX':
+        return ['WR', 'TE'].includes(position);
       case 'K':
         return position === 'K';
       case 'DEF':
         return position === 'DEF';
+      case 'DL':
+        return position === 'DL';
+      case 'LB':
+        return position === 'LB';
+      case 'DB':
+        return position === 'DB';
+      case 'IDP_FLEX':
+        return ['DL', 'LB', 'DB'].includes(position);
       case 'BN':
-        return true;
+      case 'IR':
+      case 'TAXI':
+        return true; // Any player can go here
       default:
         return false;
     }
@@ -341,9 +438,17 @@ export class LineupService {
       WR: lineup.WR.filter((id) => id !== playerId),
       TE: lineup.TE.filter((id) => id !== playerId),
       FLEX: lineup.FLEX.filter((id) => id !== playerId),
+      SUPER_FLEX: lineup.SUPER_FLEX.filter((id) => id !== playerId),
+      REC_FLEX: lineup.REC_FLEX.filter((id) => id !== playerId),
       K: lineup.K.filter((id) => id !== playerId),
       DEF: lineup.DEF.filter((id) => id !== playerId),
+      DL: lineup.DL.filter((id) => id !== playerId),
+      LB: lineup.LB.filter((id) => id !== playerId),
+      DB: lineup.DB.filter((id) => id !== playerId),
+      IDP_FLEX: lineup.IDP_FLEX.filter((id) => id !== playerId),
       BN: lineup.BN.filter((id) => id !== playerId),
+      IR: lineup.IR.filter((id) => id !== playerId),
+      TAXI: lineup.TAXI.filter((id) => id !== playerId),
     };
 
     // Add to new slot
@@ -363,14 +468,38 @@ export class LineupService {
       case 'FLEX':
         newLineup.FLEX.push(playerId);
         break;
+      case 'SUPER_FLEX':
+        newLineup.SUPER_FLEX.push(playerId);
+        break;
+      case 'REC_FLEX':
+        newLineup.REC_FLEX.push(playerId);
+        break;
       case 'K':
         newLineup.K.push(playerId);
         break;
       case 'DEF':
         newLineup.DEF.push(playerId);
         break;
+      case 'DL':
+        newLineup.DL.push(playerId);
+        break;
+      case 'LB':
+        newLineup.LB.push(playerId);
+        break;
+      case 'DB':
+        newLineup.DB.push(playerId);
+        break;
+      case 'IDP_FLEX':
+        newLineup.IDP_FLEX.push(playerId);
+        break;
       case 'BN':
         newLineup.BN.push(playerId);
+        break;
+      case 'IR':
+        newLineup.IR.push(playerId);
+        break;
+      case 'TAXI':
+        newLineup.TAXI.push(playerId);
         break;
     }
 
