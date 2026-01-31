@@ -305,7 +305,7 @@ export class LeagueRepository {
         l.mode,
         l.total_rosters,
         l.is_public,
-        COUNT(r.id) as member_count
+        COUNT(r.user_id) as member_count
        FROM leagues l
        LEFT JOIN rosters r ON r.league_id = l.id
        WHERE l.is_public = true
