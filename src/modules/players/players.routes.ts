@@ -25,6 +25,9 @@ router.get('/search', playerController.searchPlayers);
 // POST /api/players/sync - Manual sync from Sleeper API
 router.post('/sync', playerController.syncPlayers);
 
+// POST /api/players/sync-college - Manual sync from CFBD API
+router.post('/sync-college', playerController.syncCollegePlayers);
+
 // GET /api/players/:id
 router.get('/:id', playerController.getPlayerById);
 

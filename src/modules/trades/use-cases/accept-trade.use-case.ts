@@ -191,6 +191,10 @@ export async function executeTrade(
   client: PoolClient
 ): Promise<PickTradedEvent[]> {
   const items = await ctx.tradeItemsRepo.findByTrade(trade.id);
+
+  const league = await ctx.leagueRepo.findById(trade.leagueId);
+  const maxRosterSize = league?.settings?.roster_size || 15;
+
   const pickTradedEvents: PickTradedEvent[] = [];
 
   // Separate player and pick items
@@ -227,9 +231,22 @@ export async function executeTrade(
   }
 
   // Execute player movements
+  // CRITICAL: Two-pass execution allows for 1-for-1 swaps even when rosters are full.
+  // Pass 1: Remove all players from source rosters to free up space.
   for (const item of playerItems) {
-    // Remove from source
     await ctx.rosterPlayersRepo.removePlayer(item.fromRosterId, item.playerId!, client);
+  }
+
+  // Second pass: Add players to destination rosters and record transactions
+  for (const item of playerItems) {
+    // Validate Roster Limits
+    // Note: rosterSize here reflects the count AFTER removals from Pass 1
+    const rosterSize = await ctx.rosterPlayersRepo.getPlayerCount(item.toRosterId, client);
+    if (rosterSize >= maxRosterSize) {
+      throw new ValidationException(
+        `Roster is full. Cannot add player to roster ${item.toRosterId}.`
+      );
+    }
 
     // Add to destination
     await ctx.rosterPlayersRepo.addPlayer(item.toRosterId, item.playerId!, 'trade', client);

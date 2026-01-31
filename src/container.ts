@@ -97,6 +97,7 @@ export const KEYS = {
 
   // External Clients
   SLEEPER_CLIENT: 'sleeperClient',
+  CFBD_CLIENT: 'cfbdClient',
 
   // Helpers
   LOCK_HELPER: 'lockHelper',

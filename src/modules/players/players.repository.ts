@@ -1,6 +1,7 @@
 import { Pool } from 'pg';
 import { Player, playerFromDatabase } from './players.model';
 import { SleeperPlayer } from './sleeper.client';
+import { CFBDPlayer } from './cfbd.client';
 
 export class PlayerRepository {
   constructor(private readonly db: Pool) {}
@@ -29,7 +30,13 @@ export class PlayerRepository {
     return result.rows.length > 0 ? playerFromDatabase(result.rows[0]) : null;
   }
 
-  async search(query: string, position?: string, team?: string, limit = 50): Promise<Player[]> {
+  async search(
+    query: string,
+    position?: string,
+    team?: string,
+    playerType?: 'nfl' | 'college',
+    limit = 50
+  ): Promise<Player[]> {
     let sql = `SELECT * FROM players WHERE active = true AND LOWER(full_name) LIKE LOWER($1)`;
     const params: any[] = [`%${query}%`];
     let paramIndex = 2;
@@ -42,6 +49,11 @@ export class PlayerRepository {
     if (team) {
       sql += ` AND team = $${paramIndex++}`;
       params.push(team);
+    }
+
+    if (playerType) {
+      sql += ` AND player_type = $${paramIndex++}`;
+      params.push(playerType);
     }
 
     sql += ` ORDER BY full_name LIMIT $${paramIndex}`;
@@ -174,5 +186,88 @@ export class PlayerRepository {
     }
 
     return totalUpserted;
+  }
+
+  /**
+   * Batch upsert college players from CFBD API.
+   * Processes players in batches to avoid memory issues and improve throughput.
+   */
+  async batchUpsertFromCFBD(cfbdPlayers: CFBDPlayer[], batchSize = 100): Promise<number> {
+    if (cfbdPlayers.length === 0) {
+      return 0;
+    }
+
+    let totalUpserted = 0;
+
+    // Process in batches
+    for (let i = 0; i < cfbdPlayers.length; i += batchSize) {
+      const batch = cfbdPlayers.slice(i, i + batchSize);
+
+      // Build parameterized batch insert
+      const values: any[] = [];
+      const placeholders = batch
+        .map((player, idx) => {
+          const baseIdx = idx * 11;
+          const fullName = `${player.first_name || ''} ${player.last_name || ''}`.trim() || 'Unknown';
+          // Convert height from inches to display format (e.g., "6-2")
+          const heightDisplay = player.height
+            ? `${Math.floor(player.height / 12)}-${player.height % 12}`
+            : null;
+
+          values.push(
+            player.id, // cfbd_id
+            player.first_name || null,
+            player.last_name || null,
+            fullName,
+            player.position || null,
+            player.team || null, // team name as stored in CFBD
+            player.jersey || null,
+            player.team || null, // college (same as team for college players)
+            heightDisplay,
+            player.weight || null,
+            player.home_city || null,
+            player.home_state || null
+          );
+          return `($${baseIdx + 1}, $${baseIdx + 2}, $${baseIdx + 3}, $${baseIdx + 4}, $${baseIdx + 5}, $${baseIdx + 6}, $${baseIdx + 7}, $${baseIdx + 8}, $${baseIdx + 9}, $${baseIdx + 10}, $${baseIdx + 11}, $${baseIdx + 12})`;
+        })
+        .join(', ');
+
+      await this.db.query(
+        `INSERT INTO players (
+          cfbd_id, first_name, last_name, full_name, position, team,
+          jersey_number, college, height, weight, home_city, home_state
+        ) VALUES ${placeholders}
+        ON CONFLICT (cfbd_id) DO UPDATE SET
+          first_name = EXCLUDED.first_name,
+          last_name = EXCLUDED.last_name,
+          full_name = EXCLUDED.full_name,
+          position = EXCLUDED.position,
+          team = EXCLUDED.team,
+          jersey_number = EXCLUDED.jersey_number,
+          college = EXCLUDED.college,
+          height = EXCLUDED.height,
+          weight = EXCLUDED.weight,
+          home_city = EXCLUDED.home_city,
+          home_state = EXCLUDED.home_state,
+          player_type = 'college',
+          active = true,
+          updated_at = CURRENT_TIMESTAMP`,
+        values
+      );
+
+      totalUpserted += batch.length;
+    }
+
+    return totalUpserted;
+  }
+
+  /**
+   * Get count of college players
+   */
+  async getCollegePlayerCount(): Promise<number> {
+    const result = await this.db.query(
+      "SELECT COUNT(*) as count FROM players WHERE active = true AND player_type = 'college'"
+    );
+    return parseInt(result.rows[0].count, 10);
   }
 }

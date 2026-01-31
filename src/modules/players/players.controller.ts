@@ -34,13 +34,14 @@ export class PlayerController {
       const query = req.query.q as string;
       const position = req.query.position as string;
       const team = req.query.team as string;
+      const playerType = req.query.playerType as 'nfl' | 'college' | undefined;
 
       if (!query || query.trim().length === 0) {
         res.status(200).json([]);
         return;
       }
 
-      const players = await this.playerService.searchPlayers(query.trim(), position, team);
+      const players = await this.playerService.searchPlayers(query.trim(), position, team, playerType);
       res.status(200).json(players);
     } catch (error) {
       next(error);
@@ -64,6 +65,19 @@ export class PlayerController {
     try {
       const state = await this.playerService.getNflState();
       res.status(200).json(state);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  syncCollegePlayers = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const year = req.query.year ? parseInt(req.query.year as string, 10) : undefined;
+      const result = await this.playerService.syncCollegePlayersFromCFBD(year);
+      res.status(200).json({
+        message: 'College player sync completed',
+        ...result,
+      });
     } catch (error) {
       next(error);
     }

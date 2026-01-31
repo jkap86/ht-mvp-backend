@@ -9,6 +9,8 @@
  */
 
 import { SOCKET_EVENTS, ROOM_NAMES } from '../../constants/socket-events';
+// Suggestion: Import actual payload interfaces to ensure samples match code reality
+// import { DraftPickPayload, AuctionLotPayload } from '../../interfaces/socket-payloads';
 
 // Frontend event names (mirrored from socket_events.dart for contract verification)
 const FRONTEND_EVENTS = {
@@ -224,6 +226,9 @@ describe('Socket Payload Contracts', () => {
      * - playerTeam: string? or player_team: string?
      */
     it('should document draft pick payload structure', () => {
+      // CRITICAL: Import the actual interface here to ensure this test fails
+      // if the interface changes.
+      // const samplePickPayload: DraftPickPayload = {
       const samplePickPayload = {
         id: 1,
         draft_id: 1,
@@ -397,14 +402,11 @@ describe('Socket Payload Contracts', () => {
 /**
  * Naming Convention Notes
  *
- * The codebase uses a mixed naming convention:
+ * Current State:
  * - Event names: snake_case (e.g., 'draft:pick_made')
  * - Some payloads: snake_case (e.g., pick_number, roster_id)
  * - Some payloads: camelCase (e.g., currentPick, rosterId)
  *
- * The frontend (draft_socket_handler.dart) defensively handles both:
- * - data['lotId'] as int? ?? data['lot_id'] as int?
- *
- * For consistency, prefer snake_case for database-sourced fields
- * and camelCase for computed/derived fields.
+ * TODO: Standardize backend emission to camelCase for all JSON payloads
+ * to remove the need for defensive coding in the frontend.
  */

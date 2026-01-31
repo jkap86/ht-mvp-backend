@@ -42,6 +42,7 @@ import { FastAuctionService } from './modules/drafts/auction/fast-auction.servic
 import { ChatService } from './modules/chat/chat.service';
 import { PlayerService } from './modules/players/players.service';
 import { SleeperApiClient } from './modules/players/sleeper.client';
+import { CFBDApiClient } from './modules/players/cfbd.client';
 import { RosterService as RosterPlayerService } from './modules/rosters/rosters.service';
 import { LineupService } from './modules/lineups/lineups.service';
 import { ScoringService } from './modules/scoring/scoring.service';
@@ -102,6 +103,15 @@ function bootstrap(): void {
 
   // External Clients
   container.register(KEYS.SLEEPER_CLIENT, () => new SleeperApiClient());
+
+  // CFBD Client - only register if API key is configured
+  container.register(KEYS.CFBD_CLIENT, () => {
+    const apiKey = process.env.CFBD_API_KEY;
+    if (apiKey) {
+      return new CFBDApiClient(apiKey);
+    }
+    return null;
+  });
 
   // Services
   container.register(KEYS.AUTH_SERVICE, () => new AuthService(container.resolve(KEYS.USER_REPO)));
@@ -263,7 +273,11 @@ function bootstrap(): void {
   container.register(
     KEYS.PLAYER_SERVICE,
     () =>
-      new PlayerService(container.resolve(KEYS.PLAYER_REPO), container.resolve(KEYS.SLEEPER_CLIENT))
+      new PlayerService(
+        container.resolve(KEYS.PLAYER_REPO),
+        container.resolve(KEYS.SLEEPER_CLIENT),
+        container.resolve(KEYS.CFBD_CLIENT)
+      )
   );
 
   // Waiver repositories (needed by roster service for waiver wire integration)
