@@ -46,25 +46,31 @@ export class DraftStateService {
     }
 
     // Check auction mode
-    const isSlowAuction =
-      draft.draftType === 'auction' && draft.settings?.auctionMode !== 'fast';
-    const isFastAuction =
-      draft.draftType === 'auction' && draft.settings?.auctionMode === 'fast';
+    const isAuction = draft.draftType === 'auction';
+    const isSlowAuction = isAuction && draft.settings?.auctionMode !== 'fast';
+    const isFastAuction = isAuction && draft.settings?.auctionMode === 'fast';
 
     // Ensure commissioner has explicitly confirmed the draft order
-    // (not required for slow auctions since nominations are open to all teams)
-    if (!draft.orderConfirmed && !isSlowAuction) {
+    // (not required for auctions since they have their own nomination order)
+    if (!draft.orderConfirmed && !isAuction) {
       throw new ValidationException('Draft order must be confirmed before starting');
     }
 
     const firstPicker = draftOrder.find((o) => o.draftPosition === 1);
 
-    // For fast auctions, no pick deadline until nomination; for others, set deadline
+    // Set initial pick deadline
     let pickDeadline: Date | null = null;
-    if (!isFastAuction) {
+    if (isFastAuction) {
+      // For fast auctions, set nomination deadline using nominationSeconds from settings
+      const nominationSeconds = draft.settings?.nominationSeconds ?? 45;
+      pickDeadline = new Date();
+      pickDeadline.setSeconds(pickDeadline.getSeconds() + nominationSeconds);
+    } else if (!isSlowAuction) {
+      // For snake/linear drafts, use pickTimeSeconds
       pickDeadline = new Date();
       pickDeadline.setSeconds(pickDeadline.getSeconds() + draft.pickTimeSeconds);
     }
+    // For slow auctions, no pick deadline (nominations are open to all teams)
 
     const updatedDraft = await this.draftRepo.update(draftId, {
       status: 'in_progress',
@@ -87,6 +93,15 @@ export class DraftStateService {
       pickDeadline,
       status: 'in_progress',
     });
+
+    // For fast auctions, also emit nominator changed so frontend shows correct nominator name
+    if (isFastAuction && firstPicker) {
+      socket?.emitAuctionNominatorChanged(draftId, {
+        nominatorRosterId: firstPicker.rosterId,
+        nominationNumber: 1,
+        nominationDeadline: pickDeadline?.toISOString(),
+      });
+    }
 
     return response;
   }

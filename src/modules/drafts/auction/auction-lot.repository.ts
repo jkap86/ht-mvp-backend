@@ -238,6 +238,18 @@ export class AuctionLotRepository {
   }
 
   /**
+   * Get all player IDs that have been nominated in a draft
+   * (includes active, won, and passed lots)
+   */
+  async getNominatedPlayerIds(draftId: number): Promise<number[]> {
+    const result = await this.db.query(
+      `SELECT DISTINCT player_id FROM auction_lots WHERE draft_id = $1`,
+      [draftId]
+    );
+    return result.rows.map((row) => row.player_id);
+  }
+
+  /**
    * Upsert a proxy bid (insert or update if exists)
    */
   async upsertProxyBid(lotId: number, rosterId: number, maxBid: number): Promise<AuctionProxyBid> {

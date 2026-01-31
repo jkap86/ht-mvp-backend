@@ -2,6 +2,7 @@ import { Pool } from 'pg';
 import { container, KEYS } from '../container';
 import { SlowAuctionService } from '../modules/drafts/auction/slow-auction.service';
 import { FastAuctionService } from '../modules/drafts/auction/fast-auction.service';
+import { AuctionLotRepository } from '../modules/drafts/auction/auction-lot.repository';
 import { tryGetSocketService } from '../socket/socket.service';
 import { logger } from '../config/logger.config';
 
@@ -9,6 +10,7 @@ let intervalId: NodeJS.Timeout | null = null;
 
 const SETTLEMENT_INTERVAL_MS = 5000; // 5 seconds for faster settlement
 const SLOW_AUCTION_LOCK_ID = 999999004;
+const NOMINATION_TIMEOUT_LOCK_ID = 999999005;
 
 async function processExpiredLots(): Promise<void> {
   const pool = container.resolve<Pool>(KEYS.POOL);
@@ -123,6 +125,84 @@ async function processExpiredLots(): Promise<void> {
   }
 }
 
+/**
+ * Process nomination timeouts for fast auction drafts
+ * Auto-nominates a random player when the nominator times out
+ */
+async function processNominationTimeouts(): Promise<void> {
+  const pool = container.resolve<Pool>(KEYS.POOL);
+  const client = await pool.connect();
+
+  try {
+    // Try to acquire advisory lock (non-blocking)
+    const lockResult = await client.query<{ acquired: boolean }>(
+      'SELECT pg_try_advisory_lock($1) as acquired',
+      [NOMINATION_TIMEOUT_LOCK_ID]
+    );
+
+    if (!lockResult.rows[0].acquired) {
+      return; // Another instance has the lock
+    }
+
+    try {
+      // Find fast auction drafts with expired nomination deadlines
+      const expiredDrafts = await client.query(
+        `SELECT d.id as draft_id
+         FROM drafts d
+         WHERE d.status = 'in_progress'
+           AND d.draft_type = 'auction'
+           AND (d.settings->>'auctionMode')::text = 'fast'
+           AND d.pick_deadline IS NOT NULL
+           AND d.pick_deadline < NOW()
+           AND NOT EXISTS (
+             SELECT 1 FROM auction_lots al
+             WHERE al.draft_id = d.id AND al.status = 'active'
+           )`
+      );
+
+      if (expiredDrafts.rows.length === 0) {
+        return;
+      }
+
+      const fastAuctionService = container.resolve<FastAuctionService>(
+        KEYS.FAST_AUCTION_SERVICE
+      );
+
+      for (const row of expiredDrafts.rows) {
+        const draftId = row.draft_id;
+        try {
+          logger.info('Processing nomination timeout', {
+            jobName: 'nomination-timeout',
+            draftId,
+          });
+
+          const result = await fastAuctionService.autoNominate(draftId);
+          if (result) {
+            logger.info('Auto-nomination completed', {
+              jobName: 'nomination-timeout',
+              draftId,
+              lotId: result.lot.id,
+              playerId: result.lot.playerId,
+            });
+          }
+        } catch (error) {
+          logger.error('Auto-nomination failed', {
+            jobName: 'nomination-timeout',
+            draftId,
+            error,
+          });
+        }
+      }
+    } finally {
+      await client.query('SELECT pg_advisory_unlock($1)', [NOMINATION_TIMEOUT_LOCK_ID]);
+    }
+  } catch (error) {
+    logger.error('nomination-timeout job error', { jobName: 'nomination-timeout', error });
+  } finally {
+    client.release();
+  }
+}
+
 export function startSlowAuctionJob(): void {
   if (intervalId) {
     logger.warn('Slow auction job already running');
@@ -134,6 +214,7 @@ export function startSlowAuctionJob(): void {
   intervalId = setInterval(async () => {
     try {
       await processExpiredLots();
+      await processNominationTimeouts();
     } catch (error) {
       logger.error('slow-auction job error', { jobName: 'slow-auction', error });
     }

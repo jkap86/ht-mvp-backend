@@ -47,6 +47,7 @@ export interface FastAuctionState {
   activeLot: AuctionLot | null;
   currentNominatorRosterId: number;
   nominationNumber: number;
+  nominationDeadline: Date | null;
   budgets: Array<{ rosterId: number; spent: number; remaining: number }>;
 }
 
@@ -407,18 +408,101 @@ export class FastAuctionService {
     const nextIndex = (nextPick - 1) % order.length;
     const nextNominator = order[nextIndex];
 
-    // Update draft
+    // Calculate nomination deadline
+    const nominationDeadline = new Date(Date.now() + settings.nominationSeconds * 1000);
+
+    // Update draft with new nominator and deadline
     await this.draftRepo.update(draftId, {
       currentPick: nextPick,
       currentRosterId: nextNominator.rosterId,
+      pickDeadline: nominationDeadline,
     });
 
-    // Emit nominator changed event
+    // Emit nominator changed event with deadline
     const socket = tryGetSocketService();
     socket?.emitAuctionNominatorChanged(draftId, {
       nominatorRosterId: nextNominator.rosterId,
       nominationNumber: nextPick,
+      nominationDeadline: nominationDeadline.toISOString(),
     });
+  }
+
+  /**
+   * Auto-nominate a random available player when nominator times out
+   */
+  async autoNominate(draftId: number): Promise<NominationResult | null> {
+    const draft = await this.draftRepo.findById(draftId);
+    if (!draft) {
+      throw new NotFoundException('Draft not found');
+    }
+
+    const settings = this.getSettings(draft);
+    if (settings.auctionMode !== 'fast') {
+      return null;
+    }
+
+    if (!draft.currentRosterId) {
+      logger.warn('No current nominator for auto-nomination', { draftId });
+      return null;
+    }
+
+    // Check if there's already an active lot
+    const activeLots = await this.lotRepo.findActiveLotsByDraft(draftId);
+    if (activeLots.length > 0) {
+      return null; // Already has an active lot, nothing to do
+    }
+
+    // Get available players (not drafted, not in active lot)
+    const draftedPlayerIds = await this.draftRepo.getDraftedPlayerIds(draftId);
+    const nominatedPlayerIds = await this.lotRepo.getNominatedPlayerIds(draftId);
+    const excludeIds = [...new Set([...draftedPlayerIds, ...nominatedPlayerIds])];
+
+    // Get all players and filter to available ones
+    const allPlayers = await this.playerRepo.findAll();
+    const availablePlayers = allPlayers.filter((p) => !excludeIds.includes(p.id));
+
+    if (availablePlayers.length === 0) {
+      logger.warn('No available players for auto-nomination', { draftId });
+      // Advance to next nominator anyway
+      await this.advanceNominator(draftId);
+      return null;
+    }
+
+    // Pick a random player
+    const randomIndex = Math.floor(Math.random() * availablePlayers.length);
+    const randomPlayer = availablePlayers[randomIndex];
+
+    // Calculate bid deadline
+    const bidDeadline = new Date(Date.now() + settings.nominationSeconds * 1000);
+
+    // Create the lot
+    const lot = await this.lotRepo.createLot(
+      draftId,
+      randomPlayer.id,
+      draft.currentRosterId,
+      bidDeadline,
+      settings.minBid
+    );
+
+    logger.info('Auto-nominated player', {
+      draftId,
+      playerId: randomPlayer.id,
+      playerName: randomPlayer.fullName,
+      nominatorRosterId: draft.currentRosterId,
+    });
+
+    // Emit socket event
+    const socket = tryGetSocketService();
+    socket?.emitAuctionLotCreated(draftId, {
+      lot: auctionLotToResponse(lot),
+      serverTime: Date.now(),
+      isAutoNomination: true,
+    });
+
+    return {
+      lot,
+      message: `Auto-nominated ${randomPlayer.fullName} for $${settings.minBid}`,
+    };
   }
 
   /**
@@ -438,6 +522,7 @@ export class FastAuctionService {
       activeLot: activeLots.length > 0 ? activeLots[0] : null,
       currentNominatorRosterId: draft.currentRosterId!,
       nominationNumber: draft.currentPick || 1,
+      nominationDeadline: draft.pickDeadline,
       budgets: budgets.map((b) => ({
         rosterId: b.rosterId,
         spent: b.spent,

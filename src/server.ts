@@ -26,9 +26,13 @@ const corsOptions: cors.CorsOptions = {
     // Allow requests with no origin (mobile apps, Postman)
     if (!origin) return callback(null, true);
 
-    // In development, allow any localhost port (both localhost and 127.0.0.1)
+    // In development, allow any localhost port and local network IPs
     if (env.NODE_ENV !== 'production') {
-      if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
+      if (
+        origin.startsWith('http://localhost:') ||
+        origin.startsWith('http://127.0.0.1:') ||
+        origin.startsWith('http://192.168.')
+      ) {
         return callback(null, true);
       }
     }

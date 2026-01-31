@@ -25,12 +25,13 @@ export class SocketService {
           // Allow requests with no origin (mobile apps, Postman)
           if (!origin) return callback(null, true);
 
-          // Dev: allow any localhost/127.0.0.1 port (both http and https)
+          // Dev: allow any localhost/127.0.0.1 port and local network IPs
           if (env.NODE_ENV !== 'production') {
             if (
               origin.startsWith('http://localhost:') ||
               origin.startsWith('http://127.0.0.1:') ||
-              origin.startsWith('https://localhost:')
+              origin.startsWith('https://localhost:') ||
+              origin.startsWith('http://192.168.')
             ) {
               return callback(null, true);
             }
@@ -306,7 +307,7 @@ export class SocketService {
   // Emit nominator changed event (for fast auction)
   emitAuctionNominatorChanged(
     draftId: number,
-    data: { nominatorRosterId: number; nominationNumber: number }
+    data: { nominatorRosterId: number; nominationNumber: number; nominationDeadline?: string }
   ): void {
     this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.AUCTION.NOMINATOR_CHANGED, data);
   }

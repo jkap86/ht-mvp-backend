@@ -350,6 +350,7 @@ export class DraftController {
         active_lots: lots.map(auctionLotToResponse), // Includes my_max_bid for each lot
         current_nominator_roster_id: auctionMode === 'fast' ? draft.currentRosterId : null,
         nomination_number: auctionMode === 'fast' ? draft.currentPick : null,
+        nomination_deadline: auctionMode === 'fast' ? draft.pickDeadline : null,
         settings: {
           auction_mode: auctionSettings.auctionMode,
           bid_window_seconds: auctionSettings.bidWindowSeconds,
