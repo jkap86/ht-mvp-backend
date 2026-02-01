@@ -8,7 +8,8 @@ import { ValidationException } from '../../utils/exceptions';
  * Parse and validate conversation ID from request params
  */
 function requireConversationId(req: AuthRequest): number {
-  const conversationId = parseInt(req.params.conversationId, 10);
+  const rawId = req.params.conversationId;
+  const conversationId = parseInt(Array.isArray(rawId) ? rawId[0] : rawId, 10);
   if (isNaN(conversationId) || conversationId <= 0) {
     throw new ValidationException('Invalid conversation ID');
   }
@@ -59,7 +60,8 @@ export class DmController {
   getOrCreateConversation = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const userId = requireUserId(req);
-      const otherUserId = req.params.otherUserId;
+      const rawOtherUserId = req.params.otherUserId;
+      const otherUserId = Array.isArray(rawOtherUserId) ? rawOtherUserId[0] : rawOtherUserId;
       if (!otherUserId || otherUserId.trim() === '') {
         throw new ValidationException('Other user ID is required');
       }
