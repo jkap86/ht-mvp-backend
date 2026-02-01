@@ -4,14 +4,14 @@ import {
   messageToResponse,
   ConversationWithDetails,
 } from './dm.model';
-import { AuthRepository } from '../auth/auth.repository';
+import { UserRepository } from '../auth/auth.repository';
 import { ForbiddenException, ValidationException, NotFoundException } from '../../utils/exceptions';
 import { tryGetSocketService } from '../../socket';
 
 export class DmService {
   constructor(
     private readonly dmRepo: DmRepository,
-    private readonly authRepo: AuthRepository
+    private readonly userRepo: UserRepository
   ) {}
 
   /**
@@ -27,7 +27,7 @@ export class DmService {
    */
   async getOrCreateConversation(userId: string, otherUserId: string): Promise<any> {
     // Validate that the other user exists
-    const otherUser = await this.authRepo.findById(otherUserId);
+    const otherUser = await this.userRepo.findById(otherUserId);
     if (!otherUser) {
       throw new NotFoundException('User not found');
     }
