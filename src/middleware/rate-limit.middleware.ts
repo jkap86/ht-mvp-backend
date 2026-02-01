@@ -106,6 +106,23 @@ export const dmMessageLimiter = rateLimit({
 });
 
 /**
+ * Rate limiter for DM read operations (fetching conversations/messages)
+ * More lenient than message sending - 60 requests per minute
+ */
+export const dmReadLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 60, // 60 requests per minute
+  message: {
+    error: 'Too many requests, please slow down',
+    status: 429,
+  },
+  keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: getRedisStore(),
+});
+
+/**
  * Rate limiter for refresh token endpoint
  * Limits to 30 attempts per hour per IP to prevent brute force attacks
  * More lenient than login since refresh is automated

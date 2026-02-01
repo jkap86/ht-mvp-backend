@@ -41,16 +41,15 @@ export class DmService {
     // Create or get the conversation
     await this.dmRepo.findOrCreateConversation(userId, otherUserId);
 
-    // Get the full conversation details with real lastMessage and unreadCount
-    const conversations = await this.dmRepo.getConversationsForUser(userId);
-    const fullConversation = conversations.find((c) => c.otherUserId === otherUserId);
+    // Get the full conversation details directly (more efficient than fetching all)
+    const conversation = await this.dmRepo.getConversationBetweenUsers(userId, otherUserId);
 
-    if (fullConversation) {
-      return conversationToResponse(fullConversation);
+    if (conversation) {
+      return conversationToResponse(conversation);
     }
 
     // This should never happen - log error and throw instead of returning invalid ID 0
-    logger.error('Conversation created but not found in list', {
+    logger.error('Conversation created but not found', {
       userId,
       otherUserId,
     });

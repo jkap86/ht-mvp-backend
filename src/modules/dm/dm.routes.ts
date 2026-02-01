@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { DmController } from './dm.controller';
 import { DmService } from './dm.service';
 import { authMiddleware } from '../../middleware/auth.middleware';
-import { dmMessageLimiter } from '../../middleware/rate-limit.middleware';
+import { dmMessageLimiter, dmReadLimiter } from '../../middleware/rate-limit.middleware';
 import { container, KEYS } from '../../container';
 
 // Resolve dependencies from container
@@ -14,22 +14,22 @@ const router = Router();
 // All DM routes require authentication
 router.use(authMiddleware);
 
-// GET /api/dm - List all conversations
-router.get('/', dmController.getConversations);
+// GET /api/dm - List all conversations (rate limited)
+router.get('/', dmReadLimiter, dmController.getConversations);
 
 // GET /api/dm/unread-count - Get total unread count (must be before :conversationId route)
-router.get('/unread-count', dmController.getUnreadCount);
+router.get('/unread-count', dmReadLimiter, dmController.getUnreadCount);
 
 // POST /api/dm/user/:otherUserId - Get or create conversation with a user
-router.post('/user/:otherUserId', dmController.getOrCreateConversation);
+router.post('/user/:otherUserId', dmReadLimiter, dmController.getOrCreateConversation);
 
 // GET /api/dm/:conversationId/messages - Get messages for a conversation
-router.get('/:conversationId/messages', dmController.getMessages);
+router.get('/:conversationId/messages', dmReadLimiter, dmController.getMessages);
 
-// POST /api/dm/:conversationId/messages - Send a message (rate limited)
+// POST /api/dm/:conversationId/messages - Send a message (stricter rate limit)
 router.post('/:conversationId/messages', dmMessageLimiter, dmController.sendMessage);
 
 // PUT /api/dm/:conversationId/read - Mark conversation as read
-router.put('/:conversationId/read', dmController.markAsRead);
+router.put('/:conversationId/read', dmReadLimiter, dmController.markAsRead);
 
 export default router;

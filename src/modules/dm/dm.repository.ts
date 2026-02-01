@@ -15,9 +15,10 @@ export class DmRepository {
    * Uses INSERT ... ON CONFLICT to handle race conditions atomically.
    */
   async findOrCreateConversation(userId1: string, userId2: string): Promise<Conversation> {
-    // Ensure canonical ordering
+    // Ensure canonical ordering using explicit string comparison
+    // This matches the Postgres CHECK constraint: user1_id::text < user2_id::text
     const [user1Id, user2Id] =
-      userId1 < userId2 ? [userId1, userId2] : [userId2, userId1];
+      userId1.toString() < userId2.toString() ? [userId1, userId2] : [userId2, userId1];
 
     // Atomic upsert - handles race conditions by using ON CONFLICT
     const result = await this.pool.query(
@@ -134,6 +135,94 @@ export class DmRepository {
           }
         : null,
     }));
+  }
+
+  /**
+   * Get a specific conversation between two users with full details.
+   * More efficient than getConversationsForUser when you know both user IDs.
+   */
+  async getConversationBetweenUsers(
+    userId: string,
+    otherUserId: string
+  ): Promise<ConversationWithDetails | null> {
+    // Use canonical ordering to find the conversation
+    const [user1Id, user2Id] =
+      userId.toString() < otherUserId.toString()
+        ? [userId, otherUserId]
+        : [otherUserId, userId];
+
+    const result = await this.pool.query(
+      `WITH target_conversation AS (
+        SELECT id, user1_id, user2_id, updated_at
+        FROM conversations
+        WHERE user1_id = $1 AND user2_id = $2
+      ),
+      conversation_message AS (
+        SELECT
+          dm.id as message_id,
+          dm.sender_id,
+          dm.message,
+          dm.created_at,
+          u.username as sender_username
+        FROM direct_messages dm
+        JOIN users u ON dm.sender_id = u.id
+        WHERE dm.conversation_id = (SELECT id FROM target_conversation)
+        ORDER BY dm.created_at DESC
+        LIMIT 1
+      ),
+      unread_count AS (
+        SELECT COUNT(dm.id)::int as count
+        FROM direct_messages dm
+        JOIN target_conversation tc ON dm.conversation_id = tc.id
+        WHERE dm.sender_id != $3
+          AND dm.id > COALESCE(
+            CASE WHEN tc.user1_id = $3 THEN (
+              SELECT user1_last_read_message_id FROM conversations WHERE id = tc.id
+            ) ELSE (
+              SELECT user2_last_read_message_id FROM conversations WHERE id = tc.id
+            ) END, 0
+          )
+      )
+      SELECT
+        tc.id,
+        $4 as "otherUserId",
+        ou.username as "otherUsername",
+        tc.updated_at as "updatedAt",
+        cm.message_id as "lastMessageId",
+        cm.sender_id as "lastMessageSenderId",
+        cm.sender_username as "lastMessageSenderUsername",
+        cm.message as "lastMessageText",
+        cm.created_at as "lastMessageCreatedAt",
+        COALESCE(uc.count, 0) as "unreadCount"
+      FROM target_conversation tc
+      JOIN users ou ON ou.id = $4
+      LEFT JOIN conversation_message cm ON true
+      LEFT JOIN unread_count uc ON true`,
+      [user1Id, user2Id, userId, otherUserId]
+    );
+
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    const row = result.rows[0];
+    return {
+      id: row.id,
+      otherUserId: row.otherUserId,
+      otherUsername: row.otherUsername,
+      updatedAt: row.updatedAt,
+      unreadCount: row.unreadCount,
+      lastMessage: row.lastMessageId
+        ? {
+            id: row.lastMessageId,
+            conversationId: row.id,
+            senderId: row.lastMessageSenderId,
+            senderUsername: row.lastMessageSenderUsername,
+            message: row.lastMessageText,
+            createdAt: row.lastMessageCreatedAt,
+          }
+        : null,
+    };
   }
 
   /**
