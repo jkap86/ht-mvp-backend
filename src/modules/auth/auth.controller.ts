@@ -22,6 +22,17 @@ export class AuthController {
     };
   }
 
+  /**
+   * Maps user to public response - excludes email for privacy
+   * Used for user search results where email shouldn't be exposed
+   */
+  private mapUserToPublicResponse(user: { userId: string; username: string }) {
+    return {
+      id: user.userId,
+      username: user.username,
+    };
+  }
+
   register = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const { username, email, password } = req.body;
@@ -106,7 +117,7 @@ export class AuthController {
 
       const users = await this.authService.searchUsers(query.trim(), userId);
 
-      res.status(200).json(users.map((user) => this.mapUserToResponse(user)));
+      res.status(200).json(users.map((user) => this.mapUserToPublicResponse(user)));
     } catch (error) {
       next(error);
     }

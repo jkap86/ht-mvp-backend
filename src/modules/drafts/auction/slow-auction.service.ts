@@ -135,25 +135,32 @@ export class SlowAuctionService {
     const settings = this.getSettings(draft);
 
     const rosters = await this.rosterRepo.findByLeagueId(draft.leagueId);
-    const budgets = await Promise.all(
-      rosters.map(async (roster) => {
-        const budgetData = await this.lotRepo.getRosterBudgetData(draftId, roster.id);
-        const remainingSlots = rosterSlots - budgetData.wonCount;
-        const reservedForMinBids = Math.max(0, remainingSlots - 1) * settings.minBid;
-        const available =
-          totalBudget - budgetData.spent - reservedForMinBids - budgetData.leadingCommitment;
+    const rosterIds = rosters.map((r) => r.id);
 
-        return {
-          rosterId: roster.id,
-          username: (roster as any).username || `Team ${roster.id}`,
-          totalBudget,
-          spent: budgetData.spent,
-          leadingCommitment: budgetData.leadingCommitment,
-          available: Math.max(0, available),
-          wonCount: budgetData.wonCount,
-        };
-      })
-    );
+    // Batch query all budget data in a single database call (avoids N+1)
+    const budgetDataMap = await this.lotRepo.getAllRosterBudgetData(draftId, rosterIds);
+
+    const budgets = rosters.map((roster) => {
+      const budgetData = budgetDataMap.get(roster.id) || {
+        spent: 0,
+        wonCount: 0,
+        leadingCommitment: 0,
+      };
+      const remainingSlots = rosterSlots - budgetData.wonCount;
+      const reservedForMinBids = Math.max(0, remainingSlots - 1) * settings.minBid;
+      const available =
+        totalBudget - budgetData.spent - reservedForMinBids - budgetData.leadingCommitment;
+
+      return {
+        rosterId: roster.id,
+        username: (roster as any).username || `Team ${roster.id}`,
+        totalBudget,
+        spent: budgetData.spent,
+        leadingCommitment: budgetData.leadingCommitment,
+        available: Math.max(0, available),
+        wonCount: budgetData.wonCount,
+      };
+    });
 
     return budgets;
   }

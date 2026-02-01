@@ -3,6 +3,7 @@ import { LeagueController } from './leagues.controller';
 import { LeagueService } from './leagues.service';
 import { authMiddleware } from '../../middleware/auth.middleware';
 import { validateRequest } from '../../middleware/validation.middleware';
+import { draftModifyLimiter, apiReadLimiter } from '../../middleware/rate-limit.middleware';
 import { createLeagueSchema, updateLeagueSchema } from './leagues.schemas';
 import { container, KEYS } from '../../container';
 import draftRoutes from '../drafts/drafts.routes';
@@ -63,19 +64,19 @@ const router = Router();
 router.use(authMiddleware);
 
 // GET /api/leagues/my-leagues
-router.get('/my-leagues', leagueController.getMyLeagues);
+router.get('/my-leagues', apiReadLimiter, leagueController.getMyLeagues);
 
 // GET /api/leagues/discover - Discover public leagues
-router.get('/discover', leagueController.discoverLeagues);
+router.get('/discover', apiReadLimiter, leagueController.discoverLeagues);
 
 // POST /api/leagues/join/:inviteCode - Join league by invite code
 router.post('/join/:inviteCode', leagueController.joinLeagueByInviteCode);
 
 // GET /api/leagues/:id
-router.get('/:id', leagueController.getLeague);
+router.get('/:id', apiReadLimiter, leagueController.getLeague);
 
 // POST /api/leagues
-router.post('/', validateRequest(createLeagueSchema, 'body'), leagueController.createLeague);
+router.post('/', draftModifyLimiter, validateRequest(createLeagueSchema, 'body'), leagueController.createLeague);
 
 // POST /api/leagues/:id/join - Join league (for public leagues or internal use)
 router.post('/:id/join', leagueController.joinPublicLeague);
@@ -90,7 +91,7 @@ router.delete('/:id', leagueController.deleteLeague);
 router.post('/:id/reset', leagueController.resetLeague);
 
 // GET /api/leagues/:id/members
-router.get('/:id/members', leagueController.getMembers);
+router.get('/:id/members', apiReadLimiter, leagueController.getMembers);
 
 // DELETE /api/leagues/:id/members/:rosterId - Kick member from league (commissioner only)
 router.delete('/:id/members/:rosterId', leagueController.kickMember);
@@ -129,22 +130,22 @@ router.use('/:leagueId/invitations', createLeagueInvitationRoutes());
 router.use('/:leagueId/users', createUserSearchRoutes());
 
 // Free agents - GET /api/leagues/:leagueId/free-agents
-router.get('/:leagueId/free-agents', rostersController.getFreeAgents);
+router.get('/:leagueId/free-agents', apiReadLimiter, rostersController.getFreeAgents);
 
 // Transactions - GET /api/leagues/:leagueId/transactions
-router.get('/:leagueId/transactions', rostersController.getTransactions);
+router.get('/:leagueId/transactions', apiReadLimiter, rostersController.getTransactions);
 
 // Lineups lock - POST /api/leagues/:leagueId/lineups/lock
 router.post('/:leagueId/lineups/lock', rostersController.lockLineups);
 
 // Standings - GET /api/leagues/:leagueId/standings
-router.get('/:leagueId/standings', matchupsController.getStandings);
+router.get('/:leagueId/standings', apiReadLimiter, matchupsController.getStandings);
 
 // Schedule generation - POST /api/leagues/:leagueId/schedule/generate
 router.post('/:leagueId/schedule/generate', matchupsController.generateSchedule);
 
 // Scoring rules - GET /api/leagues/:leagueId/scoring/rules
-router.get('/:leagueId/scoring/rules', matchupsController.getScoringRules);
+router.get('/:leagueId/scoring/rules', apiReadLimiter, matchupsController.getScoringRules);
 
 // Score calculation - POST /api/leagues/:leagueId/scoring/calculate
 router.post('/:leagueId/scoring/calculate', matchupsController.calculateScores);

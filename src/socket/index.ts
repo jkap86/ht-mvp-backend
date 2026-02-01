@@ -3,4 +3,5 @@ export {
   initializeSocket,
   getSocketService,
   tryGetSocketService,
+  closeSocket,
 } from './socket.service';

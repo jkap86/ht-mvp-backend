@@ -576,21 +576,11 @@ export class DraftRepository {
         throw new ConflictException('Draft is not in progress');
       }
 
-      // 4. Critical: Validate expected pick number matches current state
-      if (currentDraft.currentPick !== params.expectedPickNumber) {
-        await client.query('ROLLBACK');
-        throw new ConflictException(
-          `Pick already made. Expected pick ${params.expectedPickNumber}, but draft is at pick ${currentDraft.currentPick}`
-        );
-      }
-
-      // 5. Validate it's the correct roster's turn
-      if (currentDraft.currentRosterId !== params.rosterId) {
-        await client.query('ROLLBACK');
-        throw new ConflictException('It is not your turn to pick');
-      }
-
-      // 6. Check idempotency - return existing pick if found
+      // 4. Check idempotency FIRST - return existing pick if found
+      // This MUST happen before pick number validation to handle retries correctly.
+      // If a client's HTTP response times out after a successful pick, the draft
+      // will have advanced. On retry, we must return the cached pick immediately
+      // rather than failing validation due to the advanced pick number.
       if (params.idempotencyKey) {
         const existing = await client.query(
           `SELECT * FROM draft_picks
@@ -615,6 +605,20 @@ export class DraftRepository {
             draft: currentDraft,
           };
         }
+      }
+
+      // 5. Critical: Validate expected pick number matches current state
+      if (currentDraft.currentPick !== params.expectedPickNumber) {
+        await client.query('ROLLBACK');
+        throw new ConflictException(
+          `Pick already made. Expected pick ${params.expectedPickNumber}, but draft is at pick ${currentDraft.currentPick}`
+        );
+      }
+
+      // 6. Validate it's the correct roster's turn
+      if (currentDraft.currentRosterId !== params.rosterId) {
+        await client.query('ROLLBACK');
+        throw new ConflictException('It is not your turn to pick');
       }
 
       // 7. Validate player not already drafted

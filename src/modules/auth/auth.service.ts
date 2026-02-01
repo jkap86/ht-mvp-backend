@@ -1,4 +1,5 @@
 import bcrypt from 'bcrypt';
+import crypto from 'crypto';
 import { User } from './auth.model';
 import { UserRepository } from './auth.repository';
 import {
@@ -7,6 +8,14 @@ import {
   ConflictException,
 } from '../../utils/exceptions';
 import { signToken, verifyToken } from '../../utils/jwt';
+
+/**
+ * Hash a token using SHA-256 for secure storage.
+ * This allows us to verify tokens without storing them in plaintext.
+ */
+function hashToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
 
 export interface AuthResult {
   user: {
@@ -63,9 +72,9 @@ export class AuthService {
     const accessToken = this.generateAccessToken(user);
     const refreshToken = this.generateRefreshToken(user);
 
-    // Store refresh token in database
+    // Store hashed refresh token in database (never store tokens in plaintext)
     const refreshExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
-    await this.userRepository.updateRefreshToken(user.userId, refreshToken, refreshExpiry);
+    await this.userRepository.updateRefreshToken(user.userId, hashToken(refreshToken), refreshExpiry);
 
     return {
       user: user.toSafeObject(),
@@ -91,9 +100,9 @@ export class AuthService {
     const accessToken = this.generateAccessToken(user);
     const refreshToken = this.generateRefreshToken(user);
 
-    // Store refresh token in database
+    // Store hashed refresh token in database (never store tokens in plaintext)
     const refreshExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
-    await this.userRepository.updateRefreshToken(user.userId, refreshToken, refreshExpiry);
+    await this.userRepository.updateRefreshToken(user.userId, hashToken(refreshToken), refreshExpiry);
 
     return {
       user: user.toSafeObject(),
@@ -126,11 +135,12 @@ export class AuthService {
         throw new InvalidCredentialsException('Invalid refresh token');
       }
 
-      // Validate that this refresh token matches the stored one AND is not expired
-      const { token: storedToken, expiresAt } = await this.userRepository.getRefreshTokenWithExpiry(
+      // Validate that this refresh token matches the stored hash AND is not expired
+      const { token: storedHash, expiresAt } = await this.userRepository.getRefreshTokenWithExpiry(
         user.userId
       );
-      if (storedToken !== refreshToken) {
+      // Compare hashes - stored token is hashed, so hash the incoming token
+      if (storedHash !== hashToken(refreshToken)) {
         throw new InvalidCredentialsException('Invalid refresh token');
       }
 
@@ -142,9 +152,9 @@ export class AuthService {
       const newAccessToken = this.generateAccessToken(user);
       const newRefreshToken = this.generateRefreshToken(user);
 
-      // Store new refresh token
+      // Store new hashed refresh token
       const refreshExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
-      await this.userRepository.updateRefreshToken(user.userId, newRefreshToken, refreshExpiry);
+      await this.userRepository.updateRefreshToken(user.userId, hashToken(newRefreshToken), refreshExpiry);
 
       return {
         user: user.toSafeObject(),

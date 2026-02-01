@@ -3,7 +3,7 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { authMiddleware } from '../../middleware/auth.middleware';
 import { validateRequest } from '../../middleware/validation.middleware';
-import { authLimiter, refreshTokenLimiter } from '../../middleware/rate-limit.middleware';
+import { authLimiter, refreshTokenLimiter, searchLimiter } from '../../middleware/rate-limit.middleware';
 import { registerSchema, loginSchema, refreshTokenSchema } from './auth.schemas';
 import { container, KEYS } from '../../container';
 
@@ -38,7 +38,7 @@ router.get('/me', authMiddleware, authController.me);
 // POST /api/auth/logout (protected)
 router.post('/logout', authMiddleware, authController.logout);
 
-// GET /api/auth/users/search?q=<query> (protected)
-router.get('/users/search', authMiddleware, authController.searchUsers);
+// GET /api/auth/users/search?q=<query> (protected, rate limited)
+router.get('/users/search', authMiddleware, searchLimiter, authController.searchUsers);
 
 export default router;

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { MatchupsController } from './matchups.controller';
 import { MatchupService } from './matchups.service';
 import { ScoringService } from '../scoring/scoring.service';
+import { apiReadLimiter } from '../../middleware/rate-limit.middleware';
 import { container, KEYS } from '../../container';
 
 // Resolve dependencies from container
@@ -14,13 +15,13 @@ const router = Router({ mergeParams: true });
 // All routes require authentication (handled by parent router)
 
 // GET /api/leagues/:leagueId/matchups
-router.get('/', matchupsController.getMatchups);
+router.get('/', apiReadLimiter, matchupsController.getMatchups);
 
 // GET /api/leagues/:leagueId/matchups/:matchupId
-router.get('/:matchupId', matchupsController.getMatchup);
+router.get('/:matchupId', apiReadLimiter, matchupsController.getMatchup);
 
 // GET /api/leagues/:leagueId/matchups/:matchupId/detail
-router.get('/:matchupId/detail', matchupsController.getMatchupWithLineups);
+router.get('/:matchupId/detail', apiReadLimiter, matchupsController.getMatchupWithLineups);
 
 // POST /api/leagues/:leagueId/matchups/finalize
 router.post('/finalize', matchupsController.finalizeMatchups);

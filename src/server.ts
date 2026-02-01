@@ -11,7 +11,7 @@ import { requestTimingMiddleware } from './middleware/request-timing.middleware'
 import './bootstrap';
 import routes from './routes';
 import { errorHandler } from './middleware/error.middleware';
-import { initializeSocket } from './socket';
+import { initializeSocket, closeSocket } from './socket';
 import { startAutopickJob, stopAutopickJob } from './jobs/autopick.job';
 import { startPlayerSyncJob, stopPlayerSyncJob } from './jobs/player-sync.job';
 import { startSlowAuctionJob, stopSlowAuctionJob } from './jobs/slow-auction.job';
@@ -26,12 +26,14 @@ const corsOptions: cors.CorsOptions = {
     // Allow requests with no origin (mobile apps, Postman)
     if (!origin) return callback(null, true);
 
-    // In development, allow any localhost port and local network IPs
+    // In development, allow any localhost port, local network IPs, and emulator hosts
     if (env.NODE_ENV !== 'production') {
       if (
         origin.startsWith('http://localhost:') ||
         origin.startsWith('http://127.0.0.1:') ||
-        origin.startsWith('http://192.168.')
+        origin.startsWith('http://192.168.') ||
+        origin.startsWith('http://10.0.2.2:') || // Android emulator
+        /^http:\/\/172\.(1[6-9]|2[0-9]|3[0-1])\./.test(origin) // Docker networks (172.16-31.x.x)
       ) {
         return callback(null, true);
       }
@@ -108,6 +110,8 @@ const gracefulShutdown = () => {
 
   server.close(async () => {
     console.log('HTTP server closed');
+    await closeSocket();
+    console.log('Socket.IO closed');
     await closeRedis();
     await closePool();
     process.exit(0);
@@ -130,4 +134,5 @@ process.on('uncaughtException', (error) => {
 
 process.on('unhandledRejection', (reason) => {
   console.error('Unhandled Rejection:', reason);
+  gracefulShutdown();
 });

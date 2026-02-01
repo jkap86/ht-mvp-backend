@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { RostersController } from './rosters.controller';
 import { RosterService } from './rosters.service';
 import { LineupService } from '../lineups/lineups.service';
+import { apiReadLimiter } from '../../middleware/rate-limit.middleware';
 import { container, KEYS } from '../../container';
 
 // Resolve dependencies from container
@@ -14,7 +15,7 @@ const router = Router({ mergeParams: true });
 // All routes require authentication (handled by parent router)
 
 // GET /api/leagues/:leagueId/rosters/:rosterId/players
-router.get('/:rosterId/players', rostersController.getRosterPlayers);
+router.get('/:rosterId/players', apiReadLimiter, rostersController.getRosterPlayers);
 
 // POST /api/leagues/:leagueId/rosters/:rosterId/players
 router.post('/:rosterId/players', rostersController.addPlayer);
@@ -26,7 +27,7 @@ router.delete('/:rosterId/players/:playerId', rostersController.dropPlayer);
 router.post('/:rosterId/players/add-drop', rostersController.addDropPlayer);
 
 // GET /api/leagues/:leagueId/rosters/:rosterId/lineup
-router.get('/:rosterId/lineup', rostersController.getLineup);
+router.get('/:rosterId/lineup', apiReadLimiter, rostersController.getLineup);
 
 // PUT /api/leagues/:leagueId/rosters/:rosterId/lineup
 router.put('/:rosterId/lineup', rostersController.setLineup);

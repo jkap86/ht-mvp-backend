@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { ChatController } from './chat.controller';
 import { ChatService } from './chat.service';
 import { authMiddleware } from '../../middleware/auth.middleware';
+import { dmMessageLimiter, dmReadLimiter } from '../../middleware/rate-limit.middleware';
 import { container, KEYS } from '../../container';
 
 // Resolve dependencies from container
@@ -14,9 +15,9 @@ const router = Router({ mergeParams: true }); // mergeParams to access :leagueId
 router.use(authMiddleware);
 
 // GET /api/leagues/:leagueId/chat?limit=50&before=123
-router.get('/', chatController.getMessages);
+router.get('/', dmReadLimiter, chatController.getMessages);
 
 // POST /api/leagues/:leagueId/chat
-router.post('/', chatController.sendMessage);
+router.post('/', dmMessageLimiter, chatController.sendMessage);
 
 export default router;

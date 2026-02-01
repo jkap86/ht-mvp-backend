@@ -108,4 +108,5 @@ export const SOCKET_EVENTS = {
 export const ROOM_NAMES = {
   league: (leagueId: number) => `league:${leagueId}`,
   draft: (draftId: number) => `draft:${draftId}`,
+  user: (userId: string) => `user:${userId}`,
 } as const;

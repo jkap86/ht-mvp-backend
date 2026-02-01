@@ -16,7 +16,8 @@ interface AuthenticatedSocket extends Socket {
 
 export class SocketService {
   private io: Server;
-  private userSockets: Map<string, Set<string>> = new Map(); // userId -> Set<socketId>
+  // Note: Removed userSockets map in favor of user rooms for horizontal scaling support.
+  // Each user socket now joins a room named `user:{userId}` which works with Redis adapter.
 
   constructor(httpServer: HttpServer) {
     this.io = new Server(httpServer, {
@@ -25,13 +26,15 @@ export class SocketService {
           // Allow requests with no origin (mobile apps, Postman)
           if (!origin) return callback(null, true);
 
-          // Dev: allow any localhost/127.0.0.1 port and local network IPs
+          // Dev: allow any localhost/127.0.0.1 port, local network IPs, and emulator hosts
           if (env.NODE_ENV !== 'production') {
             if (
               origin.startsWith('http://localhost:') ||
               origin.startsWith('http://127.0.0.1:') ||
               origin.startsWith('https://localhost:') ||
-              origin.startsWith('http://192.168.')
+              origin.startsWith('http://192.168.') ||
+              origin.startsWith('http://10.0.2.2:') || // Android emulator
+              /^http:\/\/172\.(1[6-9]|2[0-9]|3[0-1])\./.test(origin) // Docker networks (172.16-31.x.x)
             ) {
               return callback(null, true);
             }
@@ -86,12 +89,9 @@ export class SocketService {
     this.io.on('connection', (socket: AuthenticatedSocket) => {
       logger.info(`Socket connected: ${socket.id} (user: ${socket.userId})`);
 
-      // Track user's sockets for O(1) lookup
+      // Join user-specific room for targeted emissions (works across instances with Redis adapter)
       if (socket.userId) {
-        if (!this.userSockets.has(socket.userId)) {
-          this.userSockets.set(socket.userId, new Set());
-        }
-        this.userSockets.get(socket.userId)!.add(socket.id);
+        socket.join(ROOM_NAMES.user(socket.userId));
       }
 
       // Join league room (with membership verification)
@@ -183,17 +183,7 @@ export class SocketService {
       // Handle disconnection
       socket.on('disconnect', (reason) => {
         logger.info(`Socket disconnected: ${socket.id} (reason: ${reason})`);
-
-        // Remove from tracking
-        if (socket.userId) {
-          const sockets = this.userSockets.get(socket.userId);
-          if (sockets) {
-            sockets.delete(socket.id);
-            if (sockets.size === 0) {
-              this.userSockets.delete(socket.userId);
-            }
-          }
-        }
+        // Socket.IO automatically removes socket from all rooms on disconnect
       });
     });
   }
@@ -287,13 +277,17 @@ export class SocketService {
   }
 
   // Emit auction lot created event
-  emitAuctionLotCreated(draftId: number, lot: any): void {
-    this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.AUCTION.LOT_CREATED, { lot });
+  // Note: Caller passes complete payload (including lot, serverTime, etc.)
+  // We emit as-is to avoid double-wrapping
+  emitAuctionLotCreated(draftId: number, data: any): void {
+    this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.AUCTION.LOT_CREATED, data);
   }
 
   // Emit auction lot updated event (new bid placed)
-  emitAuctionLotUpdated(draftId: number, lot: any): void {
-    this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.AUCTION.LOT_UPDATED, { lot });
+  // Note: Caller passes complete payload (including lot, serverTime, etc.)
+  // We emit as-is to avoid double-wrapping
+  emitAuctionLotUpdated(draftId: number, data: any): void {
+    this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.AUCTION.LOT_UPDATED, data);
   }
 
   // Emit auction lot won event
@@ -327,14 +321,9 @@ export class SocketService {
     this.emitToUser(userId, SOCKET_EVENTS.AUCTION.ERROR, data);
   }
 
-  // Emit to specific user (O(1) lookup via userSockets map)
+  // Emit to specific user via user room (works across instances with Redis adapter)
   emitToUser(userId: string, event: string, data: any): void {
-    const socketIds = this.userSockets.get(userId);
-    if (socketIds) {
-      for (const socketId of socketIds) {
-        this.io.to(socketId).emit(event, data);
-      }
-    }
+    this.io.to(ROOM_NAMES.user(userId)).emit(event, data);
   }
 
   // Trade events (emitted to league room)
@@ -463,6 +452,18 @@ export class SocketService {
   getIO(): Server {
     return this.io;
   }
+
+  /**
+   * Close all socket connections and the server.
+   * Returns a promise that resolves when the server is closed.
+   */
+  close(): Promise<void> {
+    return new Promise((resolve) => {
+      this.io.close(() => {
+        resolve();
+      });
+    });
+  }
 }
 
 // Singleton instance (kept for backward compatibility during migration)
@@ -488,4 +489,15 @@ export function getSocketService(): SocketService {
  */
 export function tryGetSocketService(): SocketService | null {
   return socketService;
+}
+
+/**
+ * Close the socket service and all connections.
+ * Should be called during graceful shutdown.
+ */
+export async function closeSocket(): Promise<void> {
+  if (socketService) {
+    await socketService.close();
+    socketService = null;
+  }
 }

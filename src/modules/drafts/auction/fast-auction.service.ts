@@ -353,7 +353,7 @@ export class FastAuctionService {
             socket?.emitAuctionOutbid(outbidRoster.userId, {
               lotId: notification.lotId,
               playerId: lot.playerId,
-              newPrice: finalLot.currentBid,
+              newBid: finalLot.currentBid,
             });
           } catch (socketError) {
             logger.warn('Failed to emit outbid notification', {

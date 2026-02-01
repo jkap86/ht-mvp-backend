@@ -13,6 +13,7 @@ import {
   draftPickLimiter,
   queueLimiter,
   draftModifyLimiter,
+  apiReadLimiter,
 } from '../../middleware/rate-limit.middleware';
 import { container, KEYS } from '../../container';
 import {
@@ -64,10 +65,10 @@ const router = Router({ mergeParams: true }); // mergeParams to access :leagueId
 router.use(authMiddleware);
 
 // GET /api/leagues/:leagueId/drafts
-router.get('/', draftController.getLeagueDrafts);
+router.get('/', apiReadLimiter, draftController.getLeagueDrafts);
 
 // GET /api/leagues/:leagueId/drafts/config (draft configuration options and defaults)
-router.get('/config', draftController.getDraftConfig);
+router.get('/config', apiReadLimiter, draftController.getDraftConfig);
 
 // POST /api/leagues/:leagueId/drafts
 router.post(
@@ -78,7 +79,7 @@ router.post(
 );
 
 // GET /api/leagues/:leagueId/drafts/:draftId
-router.get('/:draftId', draftController.getDraft);
+router.get('/:draftId', apiReadLimiter, draftController.getDraft);
 
 // PATCH /api/leagues/:leagueId/drafts/:draftId/settings (commissioner only)
 router.patch(
@@ -92,7 +93,7 @@ router.patch(
 router.delete('/:draftId', draftController.deleteDraft);
 
 // GET /api/leagues/:leagueId/drafts/:draftId/order
-router.get('/:draftId/order', draftController.getDraftOrder);
+router.get('/:draftId/order', apiReadLimiter, draftController.getDraftOrder);
 
 // POST /api/leagues/:leagueId/drafts/:draftId/randomize
 router.post('/:draftId/randomize', draftModifyLimiter, draftController.randomizeDraftOrder);
@@ -115,7 +116,7 @@ router.post(
 router.post('/:draftId/undo', draftModifyLimiter, draftController.undoPick);
 
 // GET /api/leagues/:leagueId/drafts/:draftId/picks
-router.get('/:draftId/picks', draftController.getDraftPicks);
+router.get('/:draftId/picks', apiReadLimiter, draftController.getDraftPicks);
 
 // POST /api/leagues/:leagueId/drafts/:draftId/pick
 router.post(
@@ -126,23 +127,23 @@ router.post(
 );
 
 // GET /api/leagues/:leagueId/drafts/:draftId/auction/state
-router.get('/:draftId/auction/state', draftController.getAuctionState);
+router.get('/:draftId/auction/state', apiReadLimiter, draftController.getAuctionState);
 
 // GET /api/leagues/:leagueId/drafts/:draftId/auction/lots
-router.get('/:draftId/auction/lots', draftController.getAuctionLots);
+router.get('/:draftId/auction/lots', apiReadLimiter, draftController.getAuctionLots);
 
 // GET /api/leagues/:leagueId/drafts/:draftId/auction/lots/:lotId
-router.get('/:draftId/auction/lots/:lotId', draftController.getAuctionLot);
+router.get('/:draftId/auction/lots/:lotId', apiReadLimiter, draftController.getAuctionLot);
 
 // GET /api/leagues/:leagueId/drafts/:draftId/auction/lots/:lotId/history
-router.get('/:draftId/auction/lots/:lotId/history', draftController.getLotBidHistory);
+router.get('/:draftId/auction/lots/:lotId/history', apiReadLimiter, draftController.getLotBidHistory);
 
 // GET /api/leagues/:leagueId/drafts/:draftId/auction/budgets
-router.get('/:draftId/auction/budgets', draftController.getAuctionBudgets);
+router.get('/:draftId/auction/budgets', apiReadLimiter, draftController.getAuctionBudgets);
 
 // Queue routes
 // GET /api/leagues/:leagueId/drafts/:draftId/queue
-router.get('/:draftId/queue', queueController.getQueue);
+router.get('/:draftId/queue', apiReadLimiter, queueController.getQueue);
 
 // POST /api/leagues/:leagueId/drafts/:draftId/queue
 router.post(

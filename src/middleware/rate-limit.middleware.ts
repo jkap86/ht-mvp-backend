@@ -123,6 +123,23 @@ export const dmReadLimiter = rateLimit({
 });
 
 /**
+ * Rate limiter for user search operations
+ * Limits to 30 searches per minute per user to prevent enumeration attacks
+ */
+export const searchLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 30, // 30 searches per minute
+  message: {
+    error: 'Too many search requests, please slow down',
+    status: 429,
+  },
+  keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: getRedisStore(),
+});
+
+/**
  * Rate limiter for refresh token endpoint
  * Limits to 30 attempts per hour per IP to prevent brute force attacks
  * More lenient than login since refresh is automated
@@ -137,6 +154,24 @@ export const refreshTokenLimiter = rateLimit({
     },
   },
   keyGenerator: (req: Request) => req.ip || 'unknown',
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: getRedisStore(),
+});
+
+/**
+ * Rate limiter for general API read operations
+ * Limits to 120 requests per minute per user
+ * Used for league, roster, matchup, draft, and other read endpoints
+ */
+export const apiReadLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 120, // 120 requests per minute
+  message: {
+    error: 'Too many requests, please slow down',
+    status: 429,
+  },
+  keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
   standardHeaders: true,
   legacyHeaders: false,
   store: getRedisStore(),
