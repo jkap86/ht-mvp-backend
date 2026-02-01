@@ -37,16 +37,25 @@ export class DmService {
       throw new ValidationException('Cannot start a conversation with yourself');
     }
 
-    const conversation = await this.dmRepo.findOrCreateConversation(userId, otherUserId);
+    // Create or get the conversation
+    await this.dmRepo.findOrCreateConversation(userId, otherUserId);
 
-    // Build response with other user details
+    // Get the full conversation details with real lastMessage and unreadCount
+    const conversations = await this.dmRepo.getConversationsForUser(userId);
+    const fullConversation = conversations.find((c) => c.otherUserId === otherUserId);
+
+    if (fullConversation) {
+      return conversationToResponse(fullConversation);
+    }
+
+    // Fallback - shouldn't happen but handle gracefully
     const response: ConversationWithDetails = {
-      id: conversation.id,
+      id: 0,
       otherUserId: otherUserId,
       otherUsername: otherUser.username,
       lastMessage: null,
       unreadCount: 0,
-      updatedAt: conversation.updatedAt,
+      updatedAt: new Date(),
     };
 
     return conversationToResponse(response);
