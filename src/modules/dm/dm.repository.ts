@@ -4,6 +4,7 @@ import {
   ConversationWithDetails,
   DirectMessageWithUser,
 } from './dm.model';
+import { logger } from '../../config/logger.config';
 
 export class DmRepository {
   constructor(private readonly pool: Pool) {}
@@ -171,38 +172,60 @@ export class DmRepository {
 
   /**
    * Create a new message in a conversation
+   * Uses a transaction to ensure message insert and conversation update are atomic
    */
   async createMessage(
     conversationId: number,
     senderId: string,
     message: string
   ): Promise<DirectMessageWithUser> {
-    // Use CTE to insert and join with users table in one query
-    const result = await this.pool.query(
-      `WITH inserted AS (
-        INSERT INTO direct_messages (conversation_id, sender_id, message)
-        VALUES ($1, $2, $3)
-        RETURNING id, conversation_id, sender_id, message, created_at
-      )
-      SELECT
-        i.id,
-        i.conversation_id as "conversationId",
-        i.sender_id as "senderId",
-        i.message,
-        i.created_at as "createdAt",
-        COALESCE(u.username, 'Unknown') as "senderUsername"
-      FROM inserted i
-      LEFT JOIN users u ON i.sender_id = u.id`,
-      [conversationId, senderId, message]
-    );
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
 
-    // Update conversation's updated_at timestamp
-    await this.pool.query(
-      `UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-      [conversationId]
-    );
+      // Insert message with CTE to join with users table
+      const result = await client.query(
+        `WITH inserted AS (
+          INSERT INTO direct_messages (conversation_id, sender_id, message)
+          VALUES ($1, $2, $3)
+          RETURNING id, conversation_id, sender_id, message, created_at
+        )
+        SELECT
+          i.id,
+          i.conversation_id as "conversationId",
+          i.sender_id as "senderId",
+          i.message,
+          i.created_at as "createdAt",
+          COALESCE(u.username, 'Unknown') as "senderUsername"
+        FROM inserted i
+        LEFT JOIN users u ON i.sender_id = u.id`,
+        [conversationId, senderId, message]
+      );
 
-    return result.rows[0];
+      // Update conversation's updated_at timestamp
+      await client.query(
+        `UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+        [conversationId]
+      );
+
+      await client.query('COMMIT');
+
+      // Log if COALESCE fallback was used (indicates data integrity issue)
+      if (result.rows[0].senderUsername === 'Unknown') {
+        logger.warn('Message created with unknown sender - possible data integrity issue', {
+          conversationId,
+          senderId,
+          messageId: result.rows[0].id,
+        });
+      }
+
+      return result.rows[0];
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
   }
 
   /**

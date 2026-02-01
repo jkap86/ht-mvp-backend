@@ -7,6 +7,7 @@ import {
 import { UserRepository } from '../auth/auth.repository';
 import { ForbiddenException, ValidationException, NotFoundException } from '../../utils/exceptions';
 import { tryGetSocketService } from '../../socket';
+import { logger } from '../../config/logger.config';
 
 export class DmService {
   constructor(
@@ -48,17 +49,12 @@ export class DmService {
       return conversationToResponse(fullConversation);
     }
 
-    // Fallback - shouldn't happen but handle gracefully
-    const response: ConversationWithDetails = {
-      id: 0,
-      otherUserId: otherUserId,
-      otherUsername: otherUser.username,
-      lastMessage: null,
-      unreadCount: 0,
-      updatedAt: new Date(),
-    };
-
-    return conversationToResponse(response);
+    // This should never happen - log error and throw instead of returning invalid ID 0
+    logger.error('Conversation created but not found in list', {
+      userId,
+      otherUserId,
+    });
+    throw new Error('Failed to create conversation - please try again');
   }
 
   /**
@@ -94,16 +90,18 @@ export class DmService {
       throw new ForbiddenException('You are not a participant in this conversation');
     }
 
-    // Validate message (same rules as league chat)
-    if (!message || message.trim().length === 0) {
+    // Trim first, then validate (fixes issue where length was checked on untrimmed message)
+    const trimmedMessage = message?.trim() ?? '';
+
+    if (trimmedMessage.length === 0) {
       throw new ValidationException('Message cannot be empty');
     }
 
-    if (message.length > 1000) {
+    if (trimmedMessage.length > 1000) {
       throw new ValidationException('Message cannot exceed 1000 characters');
     }
 
-    const msg = await this.dmRepo.createMessage(conversationId, userId, message.trim());
+    const msg = await this.dmRepo.createMessage(conversationId, userId, trimmedMessage);
     const response = messageToResponse(msg);
 
     // Get the conversation to find the other user
@@ -113,7 +111,14 @@ export class DmService {
 
       // Emit socket event to the other user
       const socket = tryGetSocketService();
-      socket?.emitDmMessage(otherUserId, conversationId, response);
+      if (socket) {
+        socket.emitDmMessage(otherUserId, conversationId, response);
+      } else {
+        logger.warn('Socket unavailable - DM notification not sent', {
+          conversationId,
+          recipientUserId: otherUserId,
+        });
+      }
     }
 
     return response;
@@ -136,7 +141,14 @@ export class DmService {
     if (conversation) {
       const otherUserId = this.dmRepo.getOtherUserId(conversation, userId);
       const socket = tryGetSocketService();
-      socket?.emitDmRead(otherUserId, conversationId, userId);
+      if (socket) {
+        socket.emitDmRead(otherUserId, conversationId, userId);
+      } else {
+        logger.warn('Socket unavailable - read receipt not sent', {
+          conversationId,
+          readByUserId: userId,
+        });
+      }
     }
   }
 
