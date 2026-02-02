@@ -35,11 +35,18 @@ export class PlayerRepository {
     position?: string,
     team?: string,
     playerType?: 'nfl' | 'college',
-    limit = 50
+    playerPool?: ('veteran' | 'rookie' | 'college')[],
+    limit = 10000
   ): Promise<Player[]> {
-    let sql = `SELECT * FROM players WHERE active = true AND LOWER(full_name) LIKE LOWER($1)`;
-    const params: any[] = [`%${query}%`];
-    let paramIndex = 2;
+    let sql = `SELECT * FROM players WHERE active = true`;
+    const params: any[] = [];
+    let paramIndex = 1;
+
+    // Only add name filter if query is provided
+    if (query && query.trim().length > 0) {
+      sql += ` AND LOWER(full_name) LIKE LOWER($${paramIndex++})`;
+      params.push(`%${query}%`);
+    }
 
     if (position) {
       sql += ` AND position = $${paramIndex++}`;
@@ -51,7 +58,23 @@ export class PlayerRepository {
       params.push(team);
     }
 
-    if (playerType) {
+    // New playerPool filtering takes precedence over legacy playerType
+    if (playerPool && playerPool.length > 0) {
+      const conditions: string[] = [];
+      if (playerPool.includes('veteran')) {
+        conditions.push("(player_type = 'nfl' AND (years_exp > 0 OR years_exp IS NULL))");
+      }
+      if (playerPool.includes('rookie')) {
+        conditions.push("(player_type = 'nfl' AND years_exp = 0)");
+      }
+      if (playerPool.includes('college')) {
+        conditions.push("(player_type = 'college')");
+      }
+      if (conditions.length > 0) {
+        sql += ` AND (${conditions.join(' OR ')})`;
+      }
+    } else if (playerType) {
+      // Legacy playerType filter
       sql += ` AND player_type = $${paramIndex++}`;
       params.push(playerType);
     }
@@ -207,8 +230,8 @@ export class PlayerRepository {
       const values: any[] = [];
       const placeholders = batch
         .map((player, idx) => {
-          const baseIdx = idx * 11;
-          const fullName = `${player.first_name || ''} ${player.last_name || ''}`.trim() || 'Unknown';
+          const baseIdx = idx * 14;
+          const fullName = `${player.firstName || ''} ${player.lastName || ''}`.trim() || 'Unknown';
           // Convert height from inches to display format (e.g., "6-2")
           const heightDisplay = player.height
             ? `${Math.floor(player.height / 12)}-${player.height % 12}`
@@ -216,8 +239,8 @@ export class PlayerRepository {
 
           values.push(
             player.id, // cfbd_id
-            player.first_name || null,
-            player.last_name || null,
+            player.firstName || null,
+            player.lastName || null,
             fullName,
             player.position || null,
             player.team || null, // team name as stored in CFBD
@@ -225,17 +248,20 @@ export class PlayerRepository {
             player.team || null, // college (same as team for college players)
             heightDisplay,
             player.weight || null,
-            player.home_city || null,
-            player.home_state || null
+            player.homeCity || null,
+            player.homeState || null,
+            'college', // player_type
+            true // active
           );
-          return `($${baseIdx + 1}, $${baseIdx + 2}, $${baseIdx + 3}, $${baseIdx + 4}, $${baseIdx + 5}, $${baseIdx + 6}, $${baseIdx + 7}, $${baseIdx + 8}, $${baseIdx + 9}, $${baseIdx + 10}, $${baseIdx + 11}, $${baseIdx + 12})`;
+          return `($${baseIdx + 1}, $${baseIdx + 2}, $${baseIdx + 3}, $${baseIdx + 4}, $${baseIdx + 5}, $${baseIdx + 6}, $${baseIdx + 7}, $${baseIdx + 8}, $${baseIdx + 9}, $${baseIdx + 10}, $${baseIdx + 11}, $${baseIdx + 12}, $${baseIdx + 13}, $${baseIdx + 14})`;
         })
         .join(', ');
 
       await this.db.query(
         `INSERT INTO players (
           cfbd_id, first_name, last_name, full_name, position, team,
-          jersey_number, college, height, weight, home_city, home_state
+          jersey_number, college, height, weight, home_city, home_state,
+          player_type, active
         ) VALUES ${placeholders}
         ON CONFLICT (cfbd_id) DO UPDATE SET
           first_name = EXCLUDED.first_name,
@@ -269,5 +295,15 @@ export class PlayerRepository {
       "SELECT COUNT(*) as count FROM players WHERE active = true AND player_type = 'college'"
     );
     return parseInt(result.rows[0].count, 10);
+  }
+
+  /**
+   * Get list of college teams that have already been synced
+   */
+  async getSyncedCollegeTeams(): Promise<string[]> {
+    const result = await this.db.query(
+      "SELECT DISTINCT team FROM players WHERE player_type = 'college' AND team IS NOT NULL"
+    );
+    return result.rows.map((row) => row.team);
   }
 }

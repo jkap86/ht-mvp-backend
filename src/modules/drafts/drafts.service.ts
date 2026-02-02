@@ -80,6 +80,7 @@ export class DraftService {
         min_bid?: number;
         min_increment?: number;
       };
+      playerPool?: ('veteran' | 'rookie' | 'college')[];
     }
   ): Promise<any> {
     const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
@@ -116,6 +117,11 @@ export class DraftService {
       if (options.auctionSettings.min_increment !== undefined) {
         settings.minIncrement = options.auctionSettings.min_increment;
       }
+    }
+
+    // Add player pool setting (defaults handled by schema)
+    if (options.playerPool) {
+      settings.playerPool = options.playerPool;
     }
 
     // Get league for roster config to calculate default rounds
@@ -374,6 +380,7 @@ export class DraftService {
         min_bid?: number;
         min_increment?: number;
       };
+      playerPool?: ('veteran' | 'rookie' | 'college')[];
     }
   ): Promise<any> {
     // 1. Verify commissioner
@@ -414,7 +421,7 @@ export class DraftService {
 
     // 5. Transform and merge auction settings
     const existingSettings = draft.settings || {};
-    const mergedSettings = { ...existingSettings };
+    const mergedSettings: Record<string, any> = { ...existingSettings };
 
     if (updates.auctionSettings) {
       if (updates.auctionSettings.auction_mode !== undefined) {
@@ -447,6 +454,11 @@ export class DraftService {
         mergedSettings.dailyNominationLimit =
           updates.auctionSettings.daily_nomination_limit;
       }
+    }
+
+    // Handle player pool setting
+    if (updates.playerPool) {
+      mergedSettings.playerPool = updates.playerPool;
     }
 
     // 6. Perform the update

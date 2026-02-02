@@ -728,10 +728,33 @@ export class DraftRepository {
     return result.rows.length > 0;
   }
 
-  async getBestAvailablePlayer(draftId: number): Promise<number | null> {
+  async getBestAvailablePlayer(
+    draftId: number,
+    playerPool: string[] = ['veteran', 'rookie']
+  ): Promise<number | null> {
+    // Build WHERE clause based on playerPool
+    // veteran: player_type = 'nfl' AND (years_exp > 0 OR years_exp IS NULL)
+    // rookie: player_type = 'nfl' AND years_exp = 0
+    // college: player_type = 'college'
+    const conditions: string[] = [];
+    if (playerPool.includes('veteran')) {
+      conditions.push("(player_type = 'nfl' AND (years_exp > 0 OR years_exp IS NULL))");
+    }
+    if (playerPool.includes('rookie')) {
+      conditions.push("(player_type = 'nfl' AND years_exp = 0)");
+    }
+    if (playerPool.includes('college')) {
+      conditions.push("(player_type = 'college')");
+    }
+
+    const playerFilter = conditions.length > 0
+      ? `AND (${conditions.join(' OR ')})`
+      : '';
+
     const result = await this.db.query(
       `SELECT id FROM players
        WHERE active = true
+       ${playerFilter}
        AND id NOT IN (SELECT player_id FROM draft_picks WHERE draft_id = $1 AND player_id IS NOT NULL)
        ORDER BY
          CASE position

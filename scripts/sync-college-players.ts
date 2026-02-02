@@ -8,7 +8,8 @@ import { CFBDApiClient } from '../src/modules/players/cfbd.client';
 import { PlayerRepository } from '../src/modules/players/players.repository';
 
 async function main() {
-  const year = process.argv[2] ? parseInt(process.argv[2], 10) : 2025;
+  const currentYear = new Date().getFullYear();
+  const year = process.argv[2] ? parseInt(process.argv[2], 10) : (currentYear > 2025 ? 2025 : currentYear);
 
   const apiKey = process.env.CFBD_API_KEY;
   if (!apiKey) {
@@ -38,7 +39,7 @@ async function main() {
       if (!relevantPositions.includes(pos)) {
         return false;
       }
-      if (!player.first_name && !player.last_name) {
+      if (!player.firstName && !player.lastName) {
         return false;
       }
       return true;

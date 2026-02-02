@@ -17,6 +17,14 @@ export interface AuctionSettings {
   minIncrement: number;
 }
 
+/** Player pool options for draft eligibility */
+export type PlayerPoolType = 'veteran' | 'rookie' | 'college';
+
+/** Draft settings that extend auction settings with player pool filtering */
+export interface DraftSettings extends Partial<AuctionSettings> {
+  playerPool?: PlayerPoolType[];  // default: ['veteran', 'rookie']
+}
+
 /** Default auction settings */
 export const DEFAULT_AUCTION_SETTINGS: AuctionSettings = {
   auctionMode: 'slow',

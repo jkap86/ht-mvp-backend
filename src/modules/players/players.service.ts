@@ -28,9 +28,10 @@ export class PlayerService {
     query: string,
     position?: string,
     team?: string,
-    playerType?: 'nfl' | 'college'
+    playerType?: 'nfl' | 'college',
+    playerPool?: ('veteran' | 'rookie' | 'college')[]
   ): Promise<any[]> {
-    const players = await this.playerRepo.search(query, position, team, playerType);
+    const players = await this.playerRepo.search(query, position, team, playerType, playerPool);
     return players.map(playerToResponse);
   }
 
@@ -77,15 +78,19 @@ export class PlayerService {
    * Sync college football players from CFBD API
    * Fetches all FBS team rosters for the given year
    */
-  async syncCollegePlayersFromCFBD(year?: number): Promise<{ synced: number; total: number }> {
+  async syncCollegePlayersFromCFBD(year?: number, incremental = true): Promise<{ synced: number; total: number }> {
     if (!this.cfbdClient) {
       throw new Error('CFBD API client not configured. Please set CFBD_API_KEY environment variable.');
     }
 
-    const syncYear = year || new Date().getFullYear();
+    // Default to 2025 (current college season) - CFBD may not have future year data
+    const currentYear = new Date().getFullYear();
+    const syncYear = year || (currentYear > 2025 ? 2025 : currentYear);
     console.log(`Starting college player sync from CFBD API for year ${syncYear}...`);
 
-    const players = await this.cfbdClient.fetchAllFBSRosters(syncYear);
+    // Get already-synced teams to skip (incremental sync)
+    const skipTeams = incremental ? await this.playerRepo.getSyncedCollegeTeams() : [];
+    const players = await this.cfbdClient.fetchAllFBSRosters(syncYear, skipTeams);
 
     // Filter for relevant positions (QB, RB, WR, TE, K - same as fantasy)
     const relevantPositions = ['QB', 'RB', 'WR', 'TE', 'K', 'ATH'];
@@ -93,7 +98,7 @@ export class PlayerService {
       if (!player.position || !relevantPositions.includes(player.position)) {
         return false;
       }
-      if (!player.first_name && !player.last_name) {
+      if (!player.firstName && !player.lastName) {
         return false;
       }
       return true;

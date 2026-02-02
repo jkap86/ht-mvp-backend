@@ -1,3 +1,6 @@
+// Ensure env is loaded before accessing process.env
+import './config/env.config';
+
 import { container, KEYS } from './container';
 import { pool } from './db/pool';
 

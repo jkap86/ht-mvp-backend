@@ -316,7 +316,8 @@ export abstract class BaseDraftEngine implements IDraftEngine {
 
     // Fall back to best available if queue exhausted
     if (!playerId) {
-      playerId = await this.draftRepo.getBestAvailablePlayer(draft.id);
+      const playerPool = (draft.settings as any)?.playerPool || ['veteran', 'rookie'];
+      playerId = await this.draftRepo.getBestAvailablePlayer(draft.id, playerPool);
     }
 
     if (!playerId) {

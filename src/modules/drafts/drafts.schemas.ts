@@ -8,6 +8,11 @@ export const draftTypeSchema = z.enum(['snake', 'linear', 'auction'], {
 /** Zod schema for auction mode validation */
 export const auctionModeSchema = z.enum(['slow', 'fast']).default('slow');
 
+/** Zod schema for player pool in draft settings */
+export const playerPoolSchema = z.array(
+  z.enum(['veteran', 'rookie', 'college'])
+).min(1, 'At least one player pool type must be selected').default(['veteran', 'rookie']);
+
 /** Zod schema for auction settings */
 export const auctionSettingsSchema = z.object({
   auction_mode: auctionModeSchema,
@@ -39,6 +44,7 @@ export const createDraftSchema = z.object({
     .max(600, 'Pick time cannot exceed 600 seconds')
     .default(90),
   auction_settings: auctionSettingsSchema.optional(),
+  player_pool: playerPoolSchema.optional(),
 });
 
 /** Schema for updating draft settings (commissioner only) */
@@ -57,6 +63,7 @@ export const updateDraftSettingsSchema = z.object({
     .max(600, 'Pick time cannot exceed 600 seconds')
     .optional(),
   auction_settings: auctionSettingsSchema.partial().optional(),
+  player_pool: playerPoolSchema.optional(),
 });
 
 export const makePickSchema = z.object({
@@ -118,6 +125,7 @@ export const draftActionSchema = z.discriminatedUnion('action', [
 // Type exports from Zod schemas
 export type DraftTypeSchema = z.infer<typeof draftTypeSchema>;
 export type AuctionModeSchema = z.infer<typeof auctionModeSchema>;
+export type PlayerPoolSchema = z.infer<typeof playerPoolSchema>;
 export type AuctionSettingsInput = z.infer<typeof auctionSettingsSchema>;
 export type CreateDraftInput = z.infer<typeof createDraftSchema>;
 export type UpdateDraftSettingsInput = z.infer<typeof updateDraftSettingsSchema>;

@@ -80,13 +80,14 @@ export class DraftController {
       const userId = requireUserId(req);
       const leagueId = requireLeagueId(req);
 
-      const { draft_type, rounds, pick_time_seconds, auction_settings } = req.body;
+      const { draft_type, rounds, pick_time_seconds, auction_settings, player_pool } = req.body;
 
       const draft = await this.draftService.createDraft(leagueId, userId, {
         draftType: draft_type,
         rounds,
         pickTimeSeconds: pick_time_seconds,
         auctionSettings: auction_settings,
+        playerPool: player_pool,
       });
       res.status(201).json(draft);
     } catch (error) {
@@ -456,13 +457,14 @@ export class DraftController {
       const leagueId = requireLeagueId(req);
       const draftId = requireDraftId(req);
 
-      const { draft_type, rounds, pick_time_seconds, auction_settings } = req.body;
+      const { draft_type, rounds, pick_time_seconds, auction_settings, player_pool } = req.body;
 
       const draft = await this.draftService.updateDraftSettings(leagueId, draftId, userId, {
         draftType: draft_type,
         rounds,
         pickTimeSeconds: pick_time_seconds,
         auctionSettings: auction_settings,
+        playerPool: player_pool,
       });
 
       res.status(200).json(draft);

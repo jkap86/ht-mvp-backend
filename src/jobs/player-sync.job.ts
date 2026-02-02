@@ -4,6 +4,7 @@ import { logger } from '../config/env.config';
 
 let intervalId: NodeJS.Timeout | null = null;
 let isRunning = false;
+let isCollegeSyncRunning = false;
 
 // 12 hours in milliseconds
 const SYNC_INTERVAL_MS = 12 * 60 * 60 * 1000;
@@ -32,6 +33,30 @@ export async function runPlayerSync(): Promise<void> {
 }
 
 /**
+ * Run the college player sync from CFBD API
+ * Protected against concurrent runs
+ */
+export async function runCollegePlayerSync(): Promise<void> {
+  if (isCollegeSyncRunning) {
+    logger.warn('College player sync already in progress, skipping');
+    return;
+  }
+
+  isCollegeSyncRunning = true;
+  try {
+    logger.info('Starting college player sync from CFBD API...');
+    const playerService = container.resolve<PlayerService>(KEYS.PLAYER_SERVICE);
+    const result = await playerService.syncCollegePlayersFromCFBD();
+    logger.info(`College player sync complete: ${result.synced} synced, ${result.total} total`);
+  } catch (error) {
+    // Don't fail startup if CFBD sync fails (API key may not be configured)
+    logger.warn(`College player sync skipped or failed: ${error}`);
+  } finally {
+    isCollegeSyncRunning = false;
+  }
+}
+
+/**
  * Start the player sync job scheduler
  * @param runImmediately - If true, runs sync immediately on startup
  */
@@ -47,6 +72,8 @@ export function startPlayerSyncJob(runImmediately = true): void {
   // Run immediately on startup if requested
   if (runImmediately) {
     runPlayerSync();
+    // College sync runs incrementally - only fetches teams not already in DB
+    runCollegePlayerSync();
   }
 
   intervalId = setInterval(runPlayerSync, SYNC_INTERVAL_MS);

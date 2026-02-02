@@ -10,6 +10,28 @@ export class PlayerController {
     try {
       const limit = parseInt(req.query.limit as string) || 10000;
       const offset = parseInt(req.query.offset as string) || 0;
+      const query = req.query.q as string | undefined;
+      const position = req.query.position as string | undefined;
+      const team = req.query.team as string | undefined;
+      const playerType = req.query.playerType as 'nfl' | 'college' | undefined;
+      // playerPool is passed as comma-separated string (e.g., "veteran,rookie")
+      const playerPoolParam = req.query.playerPool as string | undefined;
+      const playerPool = playerPoolParam
+        ? (playerPoolParam.split(',') as ('veteran' | 'rookie' | 'college')[])
+        : undefined;
+
+      // If any search/filter params provided, use search method
+      if (query || position || team || playerType || playerPool) {
+        const players = await this.playerService.searchPlayers(
+          query || '',
+          position,
+          team,
+          playerType,
+          playerPool
+        );
+        res.status(200).json(players);
+        return;
+      }
 
       const players = await this.playerService.getAllPlayers(limit, offset);
       res.status(200).json(players);
