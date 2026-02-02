@@ -48,6 +48,14 @@ export class DraftService {
     return drafts.map(draftToResponse);
   }
 
+  /**
+   * Get drafts by league ID without membership check (for internal service use only)
+   */
+  async getDraftsByLeague(leagueId: number): Promise<any[]> {
+    const drafts = await this.draftRepo.findByLeagueId(leagueId);
+    return drafts.map(draftToResponse);
+  }
+
   async getDraftById(leagueId: number, draftId: number, userId: string): Promise<any> {
     const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
     if (!isMember) {

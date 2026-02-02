@@ -109,9 +109,30 @@ export class LeagueController {
       if (req.body.scoring_settings) updates.scoringSettings = req.body.scoring_settings;
       if (req.body.status) updates.status = req.body.status;
       if (req.body.is_public !== undefined) updates.isPublic = req.body.is_public;
+      if (req.body.total_rosters !== undefined) updates.totalRosters = req.body.total_rosters;
 
       const league = await this.leagueService.updateLeague(leagueId, userId, updates);
       res.status(200).json(league);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  reinstateMember = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const userId = requireUserId(req);
+      const leagueId = requireLeagueId(req);
+      const rosterId = parseInt(req.params.rosterId as string, 10);
+
+      if (isNaN(rosterId)) {
+        throw new ValidationException('Invalid roster ID');
+      }
+
+      if (!this.rosterService) {
+        throw new ValidationException('Roster service not available');
+      }
+      const result = await this.rosterService.reinstateMember(leagueId, rosterId, userId);
+      res.status(200).json(result);
     } catch (error) {
       next(error);
     }

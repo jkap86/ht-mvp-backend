@@ -74,15 +74,73 @@ export class LeagueService {
     return updatedLeague!.toResponse();
   }
 
-  async updateLeague(leagueId: number, userId: string, updates: Partial<League>): Promise<any> {
+  async updateLeague(
+    leagueId: number,
+    userId: string,
+    updates: Partial<League> & { totalRosters?: number }
+  ): Promise<any> {
     // Check if user is commissioner
     const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
     if (!isCommissioner) {
       throw new ForbiddenException('Only the commissioner can update league settings');
     }
 
+    // Handle total_rosters change with benching logic
+    if (updates.totalRosters !== undefined) {
+      await this.handleTotalRostersChange(leagueId, userId, updates.totalRosters);
+    }
+
     const league = await this.leagueRepo.update(leagueId, updates);
     return league.toResponse();
+  }
+
+  /**
+   * Handle changes to total_rosters, benching excess members if necessary
+   */
+  private async handleTotalRostersChange(
+    leagueId: number,
+    userId: string,
+    newTotalRosters: number
+  ): Promise<void> {
+    // Validate the new value
+    if (newTotalRosters < 2 || newTotalRosters > 20) {
+      throw new ValidationException('Total rosters must be between 2 and 20');
+    }
+
+    // Only allow team count changes when league is pre_draft
+    const league = await this.leagueRepo.findById(leagueId);
+    if (!league) {
+      throw new NotFoundException('League not found');
+    }
+    if (league.status !== 'pre_draft') {
+      throw new ValidationException('Team count can only be changed before the draft');
+    }
+
+    // Get current active member count
+    const currentActiveCount = await this.rosterRepo.getRosterCount(leagueId);
+
+    // If reducing below current active count, bench excess members
+    if (newTotalRosters < currentActiveCount) {
+      const excessCount = currentActiveCount - newTotalRosters;
+
+      // Get commissioner's roster ID to exclude from benching
+      const commissionerRoster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId);
+      if (!commissionerRoster) {
+        throw new ValidationException('Commissioner roster not found');
+      }
+
+      // Get newest members to bench (excluding commissioner)
+      const membersToBlock = await this.rosterRepo.getNewestMembers(
+        leagueId,
+        excessCount,
+        commissionerRoster.rosterId
+      );
+
+      // Bench each member (no player data to clear pre-draft)
+      for (const member of membersToBlock) {
+        await this.rosterRepo.benchMember(member.id);
+      }
+    }
   }
 
   async deleteLeague(leagueId: number, userId: string): Promise<void> {

@@ -108,11 +108,75 @@ export class RosterService {
       user_id: r.userId,
       roster_id: r.rosterId,
       team_name: (r as any).teamName || null,
-      username: (r as any).username || 'Unknown',
+      username: r.username || 'Unknown',
+      is_benched: r.isBenched || false,
     }));
   }
 
-  async devBulkAddUsers(
+  /**
+   * Reinstate a benched member (commissioner only)
+   */
+  async reinstateMember(
+    leagueId: number,
+    targetRosterId: number,
+    userId: string
+  ): Promise<{ message: string; teamName: string }> {
+    // Check if user is commissioner
+    const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
+    if (!isCommissioner) {
+      throw new ForbiddenException('Only the commissioner can reinstate members');
+    }
+
+    // Get target roster
+    const targetRoster = await this.rosterRepo.findById(targetRosterId);
+    if (!targetRoster) {
+      throw new NotFoundException('Roster not found');
+    }
+
+    // Verify roster belongs to this league
+    if (targetRoster.leagueId !== leagueId) {
+      throw new ValidationException('Roster does not belong to this league');
+    }
+
+    // Verify roster is actually benched
+    if (!targetRoster.isBenched) {
+      throw new ValidationException('This member is not benched');
+    }
+
+    // Get league to check capacity
+    const league = await this.leagueRepo.findById(leagueId);
+    if (!league) {
+      throw new NotFoundException('League not found');
+    }
+
+    // Check if there's room (active count < total_rosters)
+    const activeCount = await this.rosterRepo.getRosterCount(leagueId);
+    if (activeCount >= league.totalRosters) {
+      throw new ValidationException(
+        'Cannot reinstate member: league is full. Increase team count or kick an active member first.'
+      );
+    }
+
+    // Get team name
+    const teamName = (await this.rosterRepo.getTeamName(targetRosterId)) || 'Unknown Team';
+
+    // Reinstate the member
+    await this.rosterRepo.reinstateMember(targetRosterId);
+
+    // Emit socket event (reuse member joined event as the UI effect is similar)
+    const socketService = tryGetSocketService();
+    if (socketService && targetRoster.userId) {
+      socketService.emitMemberJoined(leagueId, {
+        rosterId: targetRosterId,
+        teamName,
+        userId: targetRoster.userId,
+      });
+    }
+
+    return { message: `${teamName} has been reinstated`, teamName };
+  }
+
+async devBulkAddUsers(
     leagueId: number,
     usernames: string[]
   ): Promise<Array<{ username: string; success: boolean; error?: string }>> {

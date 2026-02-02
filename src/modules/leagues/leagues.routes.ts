@@ -96,6 +96,9 @@ router.get('/:id/members', apiReadLimiter, leagueController.getMembers);
 // DELETE /api/leagues/:id/members/:rosterId - Kick member from league (commissioner only)
 router.delete('/:id/members/:rosterId', leagueController.kickMember);
 
+// POST /api/leagues/:id/members/:rosterId/reinstate - Reinstate benched member (commissioner only)
+router.post('/:id/members/:rosterId/reinstate', leagueController.reinstateMember);
+
 // POST /api/leagues/:id/dev/add-users - Dev endpoint to add multiple users to league
 router.post('/:id/dev/add-users', leagueController.devAddUsers);
 

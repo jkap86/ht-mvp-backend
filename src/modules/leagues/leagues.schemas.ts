@@ -43,6 +43,7 @@ export const updateLeagueSchema = z.object({
   mode: leagueModeEnum.optional(),
   league_settings: leagueSettingsSchema.optional(),
   is_public: z.boolean().optional(),
+  total_rosters: z.number().min(2).max(20).optional(),
 });
 
 export type CreateLeagueInput = z.infer<typeof createLeagueSchema>;

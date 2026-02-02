@@ -88,4 +88,6 @@ export interface Roster {
   bench: string[];
   createdAt: Date;
   updatedAt: Date;
+  isBenched?: boolean;
+  username?: string;
 }

@@ -133,6 +133,11 @@ export class LeagueRepository {
       values.push(updates.isPublic);
     }
 
+    if (updates.totalRosters !== undefined) {
+      setClauses.push(`total_rosters = $${paramIndex++}`);
+      values.push(updates.totalRosters);
+    }
+
     if (setClauses.length === 0) {
       const existing = await this.findById(id);
       if (!existing) throw new Error('League not found');
@@ -340,7 +345,7 @@ export class RosterRepository {
        FROM rosters r
        LEFT JOIN users u ON r.user_id = u.id
        WHERE r.league_id = $1
-       ORDER BY r.roster_id`,
+       ORDER BY r.is_benched ASC, r.roster_id ASC`,
       [leagueId]
     );
 
@@ -355,6 +360,7 @@ export class RosterRepository {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       username: row.username,
+      isBenched: row.is_benched || false,
     }));
   }
 
@@ -375,7 +381,7 @@ export class RosterRepository {
        LEFT JOIN users u ON r.user_id = u.id
        CROSS JOIN membership_check mc
        WHERE r.league_id = $1
-       ORDER BY r.roster_id`,
+       ORDER BY r.is_benched ASC, r.roster_id ASC`,
       [leagueId, userId]
     );
 
@@ -404,6 +410,7 @@ export class RosterRepository {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       username: row.username,
+      isBenched: row.is_benched || false,
     }));
   }
 
@@ -431,6 +438,7 @@ export class RosterRepository {
       bench: row.bench || [],
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      isBenched: row.is_benched || false,
     };
   }
 
@@ -450,6 +458,7 @@ export class RosterRepository {
       bench: row.bench || [],
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      isBenched: row.is_benched || false,
     };
   }
 
@@ -476,6 +485,7 @@ export class RosterRepository {
       bench: row.bench || [],
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      isBenched: row.is_benched || false,
     };
   }
 
@@ -504,6 +514,7 @@ export class RosterRepository {
       bench: row.bench || [],
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      isBenched: row.is_benched || false,
     };
   }
 
@@ -518,10 +529,83 @@ export class RosterRepository {
 
   async getRosterCount(leagueId: number, client?: PoolClient): Promise<number> {
     const db = client || this.db;
+    // Only count active (non-benched) members
+    const result = await db.query(
+      'SELECT COUNT(*) as count FROM rosters WHERE league_id = $1 AND is_benched = false',
+      [leagueId]
+    );
+    return parseInt(result.rows[0].count, 10);
+  }
+
+  /**
+   * Get total roster count including benched members
+   */
+  async getTotalRosterCount(leagueId: number, client?: PoolClient): Promise<number> {
+    const db = client || this.db;
     const result = await db.query('SELECT COUNT(*) as count FROM rosters WHERE league_id = $1', [
       leagueId,
     ]);
     return parseInt(result.rows[0].count, 10);
+  }
+
+  /**
+   * Bench a member (set is_benched = true)
+   */
+  async benchMember(rosterId: number, client?: PoolClient): Promise<void> {
+    const db = client || this.db;
+    await db.query(
+      'UPDATE rosters SET is_benched = true, updated_at = CURRENT_TIMESTAMP WHERE id = $1',
+      [rosterId]
+    );
+  }
+
+  /**
+   * Reinstate a benched member (set is_benched = false)
+   */
+  async reinstateMember(rosterId: number, client?: PoolClient): Promise<void> {
+    const db = client || this.db;
+    await db.query(
+      'UPDATE rosters SET is_benched = false, updated_at = CURRENT_TIMESTAMP WHERE id = $1',
+      [rosterId]
+    );
+  }
+
+  /**
+   * Get newest members (excluding commissioner) for benching when reducing team count
+   * Returns members sorted by created_at DESC (newest first)
+   */
+  async getNewestMembers(
+    leagueId: number,
+    count: number,
+    excludeRosterId: number,
+    client?: PoolClient
+  ): Promise<Roster[]> {
+    const db = client || this.db;
+    const result = await db.query(
+      `SELECT r.*, u.username
+       FROM rosters r
+       LEFT JOIN users u ON r.user_id = u.id
+       WHERE r.league_id = $1
+         AND r.roster_id != $2
+         AND r.is_benched = false
+       ORDER BY r.created_at DESC
+       LIMIT $3`,
+      [leagueId, excludeRosterId, count]
+    );
+
+    return result.rows.map((row) => ({
+      id: row.id,
+      leagueId: row.league_id,
+      userId: row.user_id,
+      rosterId: row.roster_id,
+      settings: row.settings || {},
+      starters: row.starters || [],
+      bench: row.bench || [],
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      username: row.username,
+      isBenched: row.is_benched || false,
+    }));
   }
 
   /**
@@ -576,6 +660,7 @@ export class RosterRepository {
       bench: row.bench || [],
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      isBenched: row.is_benched || false,
     };
   }
 
@@ -603,6 +688,7 @@ export class RosterRepository {
       bench: row.bench || [],
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      isBenched: row.is_benched || false,
     };
   }
 
@@ -634,6 +720,7 @@ export class RosterRepository {
       bench: row.bench || [],
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      isBenched: row.is_benched || false,
     };
   }
 }
