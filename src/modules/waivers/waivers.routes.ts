@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { WaiversController } from './waivers.controller';
 import { authMiddleware } from '../../middleware/auth.middleware';
 import { validateRequest } from '../../middleware/validation.middleware';
+import { apiReadLimiter, waiverLimiter } from '../../middleware/rate-limit.middleware';
 import {
   submitClaimSchema,
   updateClaimSchema,
@@ -24,18 +25,20 @@ export function createWaiversRoutes(controller: WaiversController): Router {
   // POST /leagues/:leagueId/waivers/claims
   router.post(
     '/claims',
+    waiverLimiter,
     validateRequest(submitClaimSchema),
     controller.submitClaim.bind(controller)
   );
 
   // Get user's waiver claims
   // GET /leagues/:leagueId/waivers/claims
-  router.get('/claims', validateRequest(getClaimsSchema), controller.getClaims.bind(controller));
+  router.get('/claims', apiReadLimiter, validateRequest(getClaimsSchema), controller.getClaims.bind(controller));
 
   // Update a waiver claim
   // PUT /leagues/:leagueId/waivers/claims/:claimId
   router.put(
     '/claims/:claimId',
+    waiverLimiter,
     validateRequest(updateClaimSchema),
     controller.updateClaim.bind(controller)
   );
@@ -44,6 +47,7 @@ export function createWaiversRoutes(controller: WaiversController): Router {
   // DELETE /leagues/:leagueId/waivers/claims/:claimId
   router.delete(
     '/claims/:claimId',
+    waiverLimiter,
     validateRequest(cancelClaimSchema),
     controller.cancelClaim.bind(controller)
   );
@@ -52,6 +56,7 @@ export function createWaiversRoutes(controller: WaiversController): Router {
   // GET /leagues/:leagueId/waivers/priority
   router.get(
     '/priority',
+    apiReadLimiter,
     validateRequest(getPrioritySchema),
     controller.getPriority.bind(controller)
   );
@@ -60,6 +65,7 @@ export function createWaiversRoutes(controller: WaiversController): Router {
   // GET /leagues/:leagueId/waivers/faab
   router.get(
     '/faab',
+    apiReadLimiter,
     validateRequest(getFaabBudgetsSchema),
     controller.getFaabBudgets.bind(controller)
   );
@@ -68,6 +74,7 @@ export function createWaiversRoutes(controller: WaiversController): Router {
   // GET /leagues/:leagueId/waivers/wire
   router.get(
     '/wire',
+    apiReadLimiter,
     validateRequest(getWaiverWireSchema),
     controller.getWaiverWire.bind(controller)
   );
@@ -76,6 +83,7 @@ export function createWaiversRoutes(controller: WaiversController): Router {
   // POST /leagues/:leagueId/waivers/initialize
   router.post(
     '/initialize',
+    waiverLimiter,
     validateRequest(initializeWaiversSchema),
     controller.initializeWaivers.bind(controller)
   );
@@ -84,6 +92,7 @@ export function createWaiversRoutes(controller: WaiversController): Router {
   // POST /leagues/:leagueId/waivers/process
   router.post(
     '/process',
+    waiverLimiter,
     validateRequest(processClaimsSchema),
     controller.processClaims.bind(controller)
   );

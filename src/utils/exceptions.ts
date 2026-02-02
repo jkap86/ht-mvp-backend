@@ -57,3 +57,28 @@ export class ConflictException extends AppException {
     super(message, 409, 'CONFLICT');
   }
 }
+
+/**
+ * Thrown when a database operation fails.
+ * Wraps the original error to prevent schema leakage.
+ */
+export class DatabaseException extends AppException {
+  public readonly originalError?: Error;
+
+  constructor(message: string, originalError?: Error) {
+    super(message, 500, 'DATABASE_ERROR');
+    this.originalError = originalError;
+  }
+
+  /**
+   * Creates a DatabaseException from a raw database error.
+   * Logs the original error but returns a sanitized message.
+   */
+  static fromError(error: unknown, operation: string): DatabaseException {
+    const originalError = error instanceof Error ? error : new Error(String(error));
+    return new DatabaseException(
+      `Database operation failed: ${operation}`,
+      originalError
+    );
+  }
+}

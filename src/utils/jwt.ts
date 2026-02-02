@@ -9,6 +9,7 @@ export interface JwtPayload {
 
 export function signToken(payload: JwtPayload, options?: { expiresIn?: string }): string {
   const signOptions: jwt.SignOptions = {
+    algorithm: 'HS256',
     expiresIn: (options?.expiresIn || env.JWT_EXPIRES_IN) as jwt.SignOptions['expiresIn'],
   };
 
@@ -16,8 +17,9 @@ export function signToken(payload: JwtPayload, options?: { expiresIn?: string })
 }
 
 export function verifyToken(token: string): JwtPayload {
-  const decoded = jwt.verify(token, env.JWT_SECRET as jwt.Secret) as jwt.JwtPayload &
-    Partial<JwtPayload>;
+  const decoded = jwt.verify(token, env.JWT_SECRET as jwt.Secret, {
+    algorithms: ['HS256'],
+  }) as jwt.JwtPayload & Partial<JwtPayload>;
 
   const sub = (decoded.sub as string) ?? '';
   return {

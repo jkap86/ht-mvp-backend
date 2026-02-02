@@ -112,6 +112,12 @@ export class SocketService {
           return;
         }
 
+        // Validate leagueId is a positive integer
+        if (typeof leagueId !== 'number' || !Number.isInteger(leagueId) || leagueId <= 0) {
+          socket.emit(SOCKET_EVENTS.APP.ERROR, { message: 'Invalid league ID' });
+          return;
+        }
+
         try {
           const leagueRepo = container.resolve<LeagueRepository>(KEYS.LEAGUE_REPO);
           const isMember = await leagueRepo.isUserMember(leagueId, socket.userId);
@@ -133,6 +139,12 @@ export class SocketService {
 
       // Leave league room
       socket.on(SOCKET_EVENTS.LEAGUE.LEAVE, (leagueId: number) => {
+        // Validate leagueId is a positive integer
+        if (typeof leagueId !== 'number' || !Number.isInteger(leagueId) || leagueId <= 0) {
+          socket.emit(SOCKET_EVENTS.APP.ERROR, { message: 'Invalid league ID' });
+          return;
+        }
+
         const room = ROOM_NAMES.league(leagueId);
         socket.leave(room);
         logger.info(`User ${socket.userId} left league room ${leagueId}`);
@@ -142,6 +154,12 @@ export class SocketService {
       socket.on(SOCKET_EVENTS.DRAFT.JOIN, async (draftId: number) => {
         if (!socket.userId) {
           socket.emit(SOCKET_EVENTS.APP.ERROR, { message: 'Not authenticated' });
+          return;
+        }
+
+        // Validate draftId is a positive integer
+        if (typeof draftId !== 'number' || !Number.isInteger(draftId) || draftId <= 0) {
+          socket.emit(SOCKET_EVENTS.APP.ERROR, { message: 'Invalid draft ID' });
           return;
         }
 
@@ -181,6 +199,12 @@ export class SocketService {
 
       // Leave draft room
       socket.on(SOCKET_EVENTS.DRAFT.LEAVE, (draftId: number) => {
+        // Validate draftId is a positive integer
+        if (typeof draftId !== 'number' || !Number.isInteger(draftId) || draftId <= 0) {
+          socket.emit(SOCKET_EVENTS.APP.ERROR, { message: 'Invalid draft ID' });
+          return;
+        }
+
         const room = ROOM_NAMES.draft(draftId);
         socket.leave(room);
         logger.info(`User ${socket.userId} left draft room ${draftId}`);

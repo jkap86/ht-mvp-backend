@@ -3,6 +3,7 @@ import { TradesController } from './trades.controller';
 import { TradesService } from './trades.service';
 import { authMiddleware } from '../../middleware/auth.middleware';
 import { validateRequest } from '../../middleware/validation.middleware';
+import { apiReadLimiter, tradeLimiter } from '../../middleware/rate-limit.middleware';
 import { container, KEYS } from '../../container';
 import { proposeTradeSchema, counterTradeSchema, voteTradeSchema } from './trades.schemas';
 
@@ -22,38 +23,38 @@ router.use(authMiddleware);
  * Get trades for a league with optional status filter
  * Query params: ?status=pending,accepted&limit=50&offset=0
  */
-router.get('/', tradesController.getTrades);
+router.get('/', apiReadLimiter, tradesController.getTrades);
 
 /**
  * GET /api/leagues/:leagueId/trades/:tradeId
  * Get a single trade with full details
  */
-router.get('/:tradeId', tradesController.getTrade);
+router.get('/:tradeId', apiReadLimiter, tradesController.getTrade);
 
 /**
  * POST /api/leagues/:leagueId/trades
  * Propose a new trade
  * Body: { recipient_roster_id, offering_player_ids[], requesting_player_ids[], message? }
  */
-router.post('/', validateRequest(proposeTradeSchema), tradesController.proposeTrade);
+router.post('/', tradeLimiter, validateRequest(proposeTradeSchema), tradesController.proposeTrade);
 
 /**
  * POST /api/leagues/:leagueId/trades/:tradeId/accept
  * Accept a pending trade (recipient only)
  */
-router.post('/:tradeId/accept', tradesController.acceptTrade);
+router.post('/:tradeId/accept', tradeLimiter, tradesController.acceptTrade);
 
 /**
  * POST /api/leagues/:leagueId/trades/:tradeId/reject
  * Reject a pending trade (recipient only)
  */
-router.post('/:tradeId/reject', tradesController.rejectTrade);
+router.post('/:tradeId/reject', tradeLimiter, tradesController.rejectTrade);
 
 /**
  * POST /api/leagues/:leagueId/trades/:tradeId/cancel
  * Cancel a pending trade (proposer only)
  */
-router.post('/:tradeId/cancel', tradesController.cancelTrade);
+router.post('/:tradeId/cancel', tradeLimiter, tradesController.cancelTrade);
 
 /**
  * POST /api/leagues/:leagueId/trades/:tradeId/counter
@@ -62,6 +63,7 @@ router.post('/:tradeId/cancel', tradesController.cancelTrade);
  */
 router.post(
   '/:tradeId/counter',
+  tradeLimiter,
   validateRequest(counterTradeSchema),
   tradesController.counterTrade
 );
@@ -71,6 +73,6 @@ router.post(
  * Vote on a trade during review period
  * Body: { vote: 'approve' | 'veto' }
  */
-router.post('/:tradeId/vote', validateRequest(voteTradeSchema), tradesController.voteTrade);
+router.post('/:tradeId/vote', tradeLimiter, validateRequest(voteTradeSchema), tradesController.voteTrade);
 
 export default router;

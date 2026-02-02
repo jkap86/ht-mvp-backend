@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { PlayerController } from './players.controller';
 import { PlayerService } from './players.service';
 import { authMiddleware } from '../../middleware/auth.middleware';
-import { apiReadLimiter } from '../../middleware/rate-limit.middleware';
+import { apiReadLimiter, playerSyncLimiter } from '../../middleware/rate-limit.middleware';
 import { container, KEYS } from '../../container';
 
 // Resolve dependencies from container
@@ -24,10 +24,10 @@ router.get('/', apiReadLimiter, playerController.getAllPlayers);
 router.get('/search', apiReadLimiter, playerController.searchPlayers);
 
 // POST /api/players/sync - Manual sync from Sleeper API
-router.post('/sync', playerController.syncPlayers);
+router.post('/sync', playerSyncLimiter, playerController.syncPlayers);
 
 // POST /api/players/sync-college - Manual sync from CFBD API
-router.post('/sync-college', playerController.syncCollegePlayers);
+router.post('/sync-college', playerSyncLimiter, playerController.syncCollegePlayers);
 
 // GET /api/players/:id
 router.get('/:id', apiReadLimiter, playerController.getPlayerById);

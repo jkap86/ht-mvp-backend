@@ -176,3 +176,71 @@ export const apiReadLimiter = rateLimit({
   legacyHeaders: false,
   store: getRedisStore(),
 });
+
+/**
+ * Rate limiter for trade operations (propose, accept, reject, counter)
+ * Limits to 20 operations per minute per user
+ */
+export const tradeLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 20, // 20 trade operations per minute
+  message: {
+    error: 'Too many trade operations, please slow down',
+    status: 429,
+  },
+  keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: getRedisStore(),
+});
+
+/**
+ * Rate limiter for roster modification operations (add/drop players, lineup changes)
+ * Limits to 30 operations per minute per user
+ */
+export const rosterModifyLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 30, // 30 roster operations per minute
+  message: {
+    error: 'Too many roster operations, please slow down',
+    status: 429,
+  },
+  keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: getRedisStore(),
+});
+
+/**
+ * Rate limiter for waiver operations (submit/cancel claims)
+ * Limits to 20 operations per minute per user
+ */
+export const waiverLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 20, // 20 waiver operations per minute
+  message: {
+    error: 'Too many waiver operations, please slow down',
+    status: 429,
+  },
+  keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: getRedisStore(),
+});
+
+/**
+ * Rate limiter for expensive player sync operations
+ * Limits to 2 operations per hour per user (these are expensive API calls)
+ */
+export const playerSyncLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 2, // 2 syncs per hour
+  message: {
+    error: 'Player sync is rate limited. Please try again later.',
+    status: 429,
+  },
+  keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: getRedisStore(),
+});

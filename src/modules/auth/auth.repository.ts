@@ -137,9 +137,9 @@ export class UserRepository {
   async lockAccount(userId: string, lockDurationMinutes: number): Promise<void> {
     await this.db.query(
       `UPDATE users
-       SET locked_until = NOW() + INTERVAL '${lockDurationMinutes} minutes', updated_at = NOW()
-       WHERE id = $1`,
-      [userId]
+       SET locked_until = NOW() + make_interval(mins => $1), updated_at = NOW()
+       WHERE id = $2`,
+      [lockDurationMinutes, userId]
     );
   }
 
