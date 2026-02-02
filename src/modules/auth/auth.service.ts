@@ -32,6 +32,8 @@ export interface AuthResult {
 export class AuthService {
   private readonly ACCESS_TOKEN_EXPIRY = '15m';
   private readonly REFRESH_TOKEN_EXPIRY = '30d';
+  private readonly MAX_FAILED_ATTEMPTS = 5;
+  private readonly LOCK_DURATION_MINUTES = 15;
 
   constructor(private readonly userRepository: UserRepository) {}
 
@@ -90,11 +92,33 @@ export class AuthService {
       throw new InvalidCredentialsException('Invalid credentials');
     }
 
+    // Check if account is locked
+    const isLocked = await this.userRepository.isAccountLocked(user.userId);
+    if (isLocked) {
+      throw new InvalidCredentialsException(
+        `Account is locked due to too many failed login attempts. Please try again in ${this.LOCK_DURATION_MINUTES} minutes.`
+      );
+    }
+
     // Verify password
     const isValid = await bcrypt.compare(password, user.passwordHash);
     if (!isValid) {
+      // Increment failed attempts
+      const failedAttempts = await this.userRepository.incrementFailedAttempts(user.userId);
+
+      // Lock account if max attempts reached
+      if (failedAttempts >= this.MAX_FAILED_ATTEMPTS) {
+        await this.userRepository.lockAccount(user.userId, this.LOCK_DURATION_MINUTES);
+        throw new InvalidCredentialsException(
+          `Account locked due to too many failed login attempts. Please try again in ${this.LOCK_DURATION_MINUTES} minutes.`
+        );
+      }
+
       throw new InvalidCredentialsException('Invalid credentials');
     }
+
+    // Password is valid - reset failed attempts
+    await this.userRepository.resetFailedAttempts(user.userId);
 
     // Generate tokens
     const accessToken = this.generateAccessToken(user);

@@ -109,6 +109,7 @@ const createMockLeagueRepo = (): jest.Mocked<LeagueRepository> =>
     isUserMember: jest.fn(),
     findById: jest.fn(),
     isUserCommissioner: jest.fn(),
+    update: jest.fn().mockResolvedValue(undefined),
   }) as unknown as jest.Mocked<LeagueRepository>;
 
 const createMockRosterRepo = (): jest.Mocked<RosterRepository> =>

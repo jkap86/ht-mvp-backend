@@ -3,6 +3,7 @@ import { container, KEYS } from '../container';
 import { DraftEngineFactory } from '../engines';
 import { DraftRepository } from '../modules/drafts/drafts.repository';
 import { logger } from '../config/logger.config';
+import { ValidationException } from '../utils/exceptions';
 
 let intervalId: NodeJS.Timeout | null = null;
 
@@ -62,7 +63,22 @@ async function processAutopicks(): Promise<void> {
             logger.info(`Draft ${draft.id}: autopick via engine.tick() (${result.reason})`);
           }
         } catch (error) {
-          logger.error('autopick draft error', { jobName: 'autopick', draftId: draft.id, error });
+          // Gracefully handle race condition when manual pick beats autopick
+          if (
+            error instanceof ValidationException &&
+            (error.message.includes('Draft state changed') ||
+              error.message.includes('already been made') ||
+              error.message.includes('not your turn'))
+          ) {
+            // This is expected and fine - user made manual pick first (preferred over autopick)
+            logger.info('autopick skipped - manual pick was faster', {
+              jobName: 'autopick',
+              draftId: draft.id,
+            });
+          } else {
+            // Unexpected error - log it
+            logger.error('autopick draft error', { jobName: 'autopick', draftId: draft.id, error });
+          }
         }
       }
 

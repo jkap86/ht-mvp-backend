@@ -4,10 +4,12 @@ import { env } from './env.config';
 export function getDatabaseConfig(): PoolConfig {
   const config: PoolConfig = {
     connectionString: env.DATABASE_URL,
-    max: 20,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 5000,
-    statement_timeout: 5000,
+    max: env.DB_POOL_SIZE || 20, // Configurable pool size (default: 20)
+    min: 2, // Keep 2 connections warm
+    idleTimeoutMillis: 30000, // Close idle connections after 30s
+    connectionTimeoutMillis: 5000, // 5s to acquire connection from pool
+    statement_timeout: 30000, // 30s max query time (prevent runaway queries)
+    idle_in_transaction_session_timeout: 60000, // 60s max idle time within transaction
   };
 
   // SSL configuration for production

@@ -184,7 +184,7 @@ describe('DmService', () => {
       } as any);
       mockDmRepo.getOtherUserId.mockReturnValue('user-456');
 
-      const result = await dmService.sendMessage('user-123', 1, '  Hello  ');
+      await dmService.sendMessage('user-123', 1, '  Hello  ');
 
       expect(mockDmRepo.createMessage).toHaveBeenCalledWith(1, 'user-123', 'Hello');
     });

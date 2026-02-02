@@ -31,6 +31,21 @@ import { RosterTransaction } from '../../modules/rosters/rosters.model';
 
 // Mock socket service to prevent emission errors
 jest.mock('../../socket', () => ({
+  tryGetSocketService: jest.fn(() => ({
+    emitTradeProposed: jest.fn(),
+    emitTradeAccepted: jest.fn(),
+    emitTradeRejected: jest.fn(),
+    emitTradeCancelled: jest.fn(),
+    emitTradeCountered: jest.fn(),
+    emitTradeCompleted: jest.fn(),
+    emitTradeVetoed: jest.fn(),
+    emitTradeVoteCast: jest.fn(),
+    emitTradeExpired: jest.fn(),
+    emitTradeInvalidated: jest.fn(),
+    emitWaiverClaimSuccessful: jest.fn(),
+    emitWaiverClaimFailed: jest.fn(),
+    emitWaiverPriorityUpdated: jest.fn(),
+  })),
   getSocketService: jest.fn(() => ({
     emitTradeProposed: jest.fn(),
     emitTradeAccepted: jest.fn(),

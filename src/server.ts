@@ -7,6 +7,7 @@ import { env } from './config/env.config';
 import { closePool } from './db/pool';
 import { closeRedis } from './config/redis.config';
 import { requestTimingMiddleware } from './middleware/request-timing.middleware';
+import { requestIdMiddleware } from './middleware/request-id.middleware';
 // Bootstrap DI container (auto-runs on import, must be before routes)
 import './bootstrap';
 import routes from './routes';
@@ -20,21 +21,32 @@ import { startWaiverProcessingJob, stopWaiverProcessingJob } from './jobs/waiver
 
 const app = express();
 
+// Trust proxy for correct IP detection behind load balancers/proxies
+// Required for rate limiting and security features to work correctly
+app.set('trust proxy', 1);
+
 // CORS configuration
 const corsOptions: cors.CorsOptions = {
   origin: (origin, callback) => {
     // Allow requests with no origin (mobile apps, Postman)
     if (!origin) return callback(null, true);
 
-    // In development, allow any localhost port, local network IPs, and emulator hosts
+    // In development, allow localhost, 127.0.0.1, Android emulator, and specific development IPs
     if (env.NODE_ENV !== 'production') {
-      if (
-        origin.startsWith('http://localhost:') ||
-        origin.startsWith('http://127.0.0.1:') ||
-        origin.startsWith('http://192.168.') ||
-        origin.startsWith('http://10.0.2.2:') || // Android emulator
-        /^http:\/\/172\.(1[6-9]|2[0-9]|3[0-1])\./.test(origin) // Docker networks (172.16-31.x.x)
-      ) {
+      // Allowed development origins - update with your specific dev machine IPs
+      const allowedDevOrigins = [
+        'http://localhost',
+        'http://127.0.0.1',
+        'http://10.0.2.2', // Android emulator host
+        // Add your specific development machine IPs here (not entire networks):
+        // 'http://192.168.1.100',
+        // 'http://172.16.0.50',
+      ];
+
+      // Check if origin starts with any allowed prefix (for different ports)
+      const isAllowed = allowedDevOrigins.some((allowed) => origin.startsWith(`${allowed}:`));
+
+      if (isAllowed) {
         return callback(null, true);
       }
     }
@@ -64,6 +76,7 @@ app.use(
 );
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '10kb' })); // Limit payload size to prevent DoS
+app.use(requestIdMiddleware); // Add request ID for distributed tracing
 app.use(requestTimingMiddleware);
 
 // Routes

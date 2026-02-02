@@ -8,6 +8,10 @@ import { container, KEYS } from '../container';
 import { LeagueRepository } from '../modules/leagues/leagues.repository';
 import { DraftRepository } from '../modules/drafts/drafts.repository';
 import { SOCKET_EVENTS, ROOM_NAMES } from '../constants/socket-events';
+import {
+  socketRateLimitMiddleware,
+  trackUserConnections,
+} from '../middleware/socket-rate-limit.middleware';
 
 interface AuthenticatedSocket extends Socket {
   userId?: string;
@@ -66,10 +70,14 @@ export class SocketService {
   }
 
   private setupMiddleware(): void {
+    // Rate limiting middleware (applied first to block DoS before authentication)
+    this.io.use(socketRateLimitMiddleware);
+
     // Authentication middleware
     this.io.use(async (socket: AuthenticatedSocket, next) => {
       try {
-        const token = socket.handshake.auth.token || socket.handshake.query.token;
+        // Only accept token from handshake.auth, not query string (security: query params get logged)
+        const token = socket.handshake.auth.token;
 
         if (!token) {
           return next(new Error('Authentication required'));
@@ -88,6 +96,9 @@ export class SocketService {
   private setupEventHandlers(): void {
     this.io.on('connection', (socket: AuthenticatedSocket) => {
       logger.info(`Socket connected: ${socket.id} (user: ${socket.userId})`);
+
+      // Track concurrent connections per user (prevent resource exhaustion)
+      trackUserConnections(socket);
 
       // Join user-specific room for targeted emissions (works across instances with Redis adapter)
       if (socket.userId) {

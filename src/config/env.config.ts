@@ -21,7 +21,11 @@ const envSchema = z.object({
     .transform((val) => parseInt(val, 10)),
 
   // Frontend (for CORS) - used by both Express and Socket.IO
-  FRONTEND_URL: z.string().url().optional(),
+  // Required in production, optional in development
+  FRONTEND_URL:
+    process.env.NODE_ENV === 'production'
+      ? z.string().url().min(1, 'FRONTEND_URL is required in production')
+      : z.string().url().optional(),
 
   // Background Jobs
   // Set to "true" to enable background jobs (autopick, player sync)
@@ -39,6 +43,12 @@ const envSchema = z.object({
   REDIS_PORT: z.string().optional(),
   REDIS_PASSWORD: z.string().optional(),
   REDIS_DB: z.string().optional(),
+
+  // Database Connection Pool
+  DB_POOL_SIZE: z
+    .string()
+    .optional()
+    .transform((val) => (val ? parseInt(val, 10) : 20)),
 });
 
 // Parse and validate environment variables

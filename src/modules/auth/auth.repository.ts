@@ -115,4 +115,66 @@ export class UserRepository {
       expiresAt: result.rows[0].refresh_token_expires_at,
     };
   }
+
+  /**
+   * Increment failed login attempts and return the new count
+   */
+  async incrementFailedAttempts(userId: string): Promise<number> {
+    const result = await this.db.query(
+      `UPDATE users
+       SET failed_login_attempts = failed_login_attempts + 1, updated_at = NOW()
+       WHERE id = $1
+       RETURNING failed_login_attempts`,
+      [userId]
+    );
+
+    return result.rows[0].failed_login_attempts;
+  }
+
+  /**
+   * Lock account for specified duration (in minutes)
+   */
+  async lockAccount(userId: string, lockDurationMinutes: number): Promise<void> {
+    await this.db.query(
+      `UPDATE users
+       SET locked_until = NOW() + INTERVAL '${lockDurationMinutes} minutes', updated_at = NOW()
+       WHERE id = $1`,
+      [userId]
+    );
+  }
+
+  /**
+   * Reset failed login attempts (called on successful login)
+   */
+  async resetFailedAttempts(userId: string): Promise<void> {
+    await this.db.query(
+      `UPDATE users
+       SET failed_login_attempts = 0, locked_until = NULL, updated_at = NOW()
+       WHERE id = $1`,
+      [userId]
+    );
+  }
+
+  /**
+   * Check if account is currently locked
+   */
+  async isAccountLocked(userId: string): Promise<boolean> {
+    const result = await this.db.query(
+      'SELECT locked_until FROM users WHERE id = $1',
+      [userId]
+    );
+
+    if (result.rows.length === 0) {
+      return false;
+    }
+
+    const lockedUntil = result.rows[0].locked_until;
+
+    if (!lockedUntil) {
+      return false;
+    }
+
+    // Check if locked_until is in the future
+    return new Date(lockedUntil) > new Date();
+  }
 }

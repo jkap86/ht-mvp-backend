@@ -30,6 +30,9 @@ const createMockUserRepository = (): jest.Mocked<UserRepository> =>
     clearRefreshToken: jest.fn(),
     getRefreshToken: jest.fn(),
     getRefreshTokenWithExpiry: jest.fn(),
+    isAccountLocked: jest.fn().mockResolvedValue(false),
+    incrementFailedAttempts: jest.fn().mockResolvedValue(undefined),
+    resetFailedAttempts: jest.fn().mockResolvedValue(undefined),
   }) as unknown as jest.Mocked<UserRepository>;
 
 describe('AuthService', () => {
@@ -47,7 +50,7 @@ describe('AuthService', () => {
       mockUserRepo.emailExists.mockResolvedValue(false);
       mockUserRepo.create.mockResolvedValue(mockUser);
 
-      const result = await authService.register('testuser', 'test@example.com', 'password123');
+      const result = await authService.register('testuser', 'test@example.com', 'password1234');
 
       expect(result.user.username).toBe('testuser');
       expect(result.user.email).toBe('test@example.com');
@@ -64,10 +67,10 @@ describe('AuthService', () => {
       mockUserRepo.usernameExists.mockResolvedValue(true);
 
       await expect(
-        authService.register('existinguser', 'test@example.com', 'password123')
+        authService.register('existinguser', 'test@example.com', 'password1234')
       ).rejects.toThrow(ConflictException);
       await expect(
-        authService.register('existinguser', 'test@example.com', 'password123')
+        authService.register('existinguser', 'test@example.com', 'password1234')
       ).rejects.toThrow('Username already taken');
     });
 
@@ -76,18 +79,18 @@ describe('AuthService', () => {
       mockUserRepo.emailExists.mockResolvedValue(true);
 
       await expect(
-        authService.register('newuser', 'existing@example.com', 'password123')
+        authService.register('newuser', 'existing@example.com', 'password1234')
       ).rejects.toThrow(ConflictException);
       await expect(
-        authService.register('newuser', 'existing@example.com', 'password123')
+        authService.register('newuser', 'existing@example.com', 'password1234')
       ).rejects.toThrow('Email already in use');
     });
 
     it('should throw ValidationException for invalid username format', async () => {
-      await expect(authService.register('ab', 'test@example.com', 'password123')).rejects.toThrow(
+      await expect(authService.register('ab', 'test@example.com', 'password1234')).rejects.toThrow(
         ValidationException
       );
-      await expect(authService.register('ab', 'test@example.com', 'password123')).rejects.toThrow(
+      await expect(authService.register('ab', 'test@example.com', 'password1234')).rejects.toThrow(
         'Username must be 3-20 characters'
       );
     });
@@ -128,10 +131,10 @@ describe('AuthService', () => {
     it('should throw InvalidCredentialsException when user not found', async () => {
       mockUserRepo.findByUsername.mockResolvedValue(null);
 
-      await expect(authService.login('nonexistent', 'password123')).rejects.toThrow(
+      await expect(authService.login('nonexistent', 'password1234')).rejects.toThrow(
         InvalidCredentialsException
       );
-      await expect(authService.login('nonexistent', 'password123')).rejects.toThrow(
+      await expect(authService.login('nonexistent', 'password1234')).rejects.toThrow(
         'Invalid credentials'
       );
     });
@@ -161,8 +164,10 @@ describe('AuthService', () => {
   describe('refreshAccessToken', () => {
     it('should return new tokens on valid refresh token', async () => {
       mockUserRepo.findById.mockResolvedValue(mockUser);
+      // The stored token is the SHA-256 hash of the refresh token
+      // hash('valid_refresh_token') = '479c71d3ce73609bcd4a63b4d6084d17ecc684f53e4d22698b473f2c43ae4cbe'
       mockUserRepo.getRefreshTokenWithExpiry.mockResolvedValue({
-        token: 'valid_refresh_token',
+        token: '479c71d3ce73609bcd4a63b4d6084d17ecc684f53e4d22698b473f2c43ae4cbe',
         expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours from now
       });
 

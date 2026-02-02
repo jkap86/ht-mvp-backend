@@ -25,6 +25,18 @@ import {
 
 // Mock socket service
 jest.mock('../../../socket', () => ({
+  tryGetSocketService: jest.fn(() => ({
+    emitTradeProposed: jest.fn(),
+    emitTradeAccepted: jest.fn(),
+    emitTradeRejected: jest.fn(),
+    emitTradeCancelled: jest.fn(),
+    emitTradeCountered: jest.fn(),
+    emitTradeCompleted: jest.fn(),
+    emitTradeVetoed: jest.fn(),
+    emitTradeVoteCast: jest.fn(),
+    emitTradeExpired: jest.fn(),
+    emitTradeInvalidated: jest.fn(),
+  })),
   getSocketService: jest.fn(() => ({
     emitTradeProposed: jest.fn(),
     emitTradeAccepted: jest.fn(),
@@ -150,6 +162,7 @@ const createMockTradesRepo = (): jest.Mocked<TradesRepository> =>
   ({
     findById: jest.fn(),
     findByLeague: jest.fn(),
+    findByLeagueWithDetails: jest.fn(),
     findByIdWithDetails: jest.fn(),
     findPendingByPlayer: jest.fn(),
     findExpiredTrades: jest.fn(),
@@ -176,6 +189,7 @@ const createMockRosterRepo = (): jest.Mocked<RosterRepository> =>
   ({
     findById: jest.fn(),
     findByLeagueAndUser: jest.fn(),
+    findByLeagueAndRosterId: jest.fn(),
   }) as unknown as jest.Mocked<RosterRepository>;
 
 const createMockRosterPlayersRepo = (): jest.Mocked<RosterPlayersRepository> =>
@@ -253,7 +267,7 @@ describe('TradesService', () => {
 
     it('should throw NotFoundException when recipient roster not found', async () => {
       mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster);
-      mockRosterRepo.findById.mockResolvedValue(null);
+      mockRosterRepo.findByLeagueAndRosterId.mockResolvedValue(null);
 
       await expect(tradesService.proposeTrade(1, 'user-123', proposeRequest)).rejects.toThrow(
         NotFoundException
@@ -265,7 +279,7 @@ describe('TradesService', () => {
 
     it('should throw ValidationException when trading with self', async () => {
       mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster);
-      mockRosterRepo.findById.mockResolvedValue(mockRoster); // Same roster
+      mockRosterRepo.findByLeagueAndRosterId.mockResolvedValue(mockRoster); // Same roster
 
       await expect(
         tradesService.proposeTrade(1, 'user-123', { ...proposeRequest, recipientRosterId: 1 })
@@ -277,7 +291,7 @@ describe('TradesService', () => {
 
     it('should throw ValidationException when trade deadline passed', async () => {
       mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster);
-      mockRosterRepo.findById.mockResolvedValue(mockRoster2);
+      mockRosterRepo.findByLeagueAndRosterId.mockResolvedValue(mockRoster2);
       mockLeagueRepo.findById.mockResolvedValue({
         ...mockLeague,
         settings: { ...mockLeague.settings, trade_deadline: '2020-01-01' },
@@ -293,7 +307,7 @@ describe('TradesService', () => {
 
     it('should throw ValidationException when no players included', async () => {
       mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster);
-      mockRosterRepo.findById.mockResolvedValue(mockRoster2);
+      mockRosterRepo.findByLeagueAndRosterId.mockResolvedValue(mockRoster2);
       mockLeagueRepo.findById.mockResolvedValue(mockLeague);
 
       await expect(
@@ -314,7 +328,7 @@ describe('TradesService', () => {
 
     it('should throw ValidationException when proposer does not own offered player', async () => {
       mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster);
-      mockRosterRepo.findById.mockResolvedValue(mockRoster2);
+      mockRosterRepo.findByLeagueAndRosterId.mockResolvedValue(mockRoster2);
       mockLeagueRepo.findById.mockResolvedValue(mockLeague);
       mockRosterPlayersRepo.findByRosterAndPlayer.mockResolvedValue(null);
 
@@ -328,7 +342,7 @@ describe('TradesService', () => {
 
     it('should throw ConflictException when player already in pending trade', async () => {
       mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster);
-      mockRosterRepo.findById.mockResolvedValue(mockRoster2);
+      mockRosterRepo.findByLeagueAndRosterId.mockResolvedValue(mockRoster2);
       mockLeagueRepo.findById.mockResolvedValue(mockLeague);
       mockRosterPlayersRepo.findByRosterAndPlayer.mockResolvedValue(mockRosterPlayer);
       mockTradesRepo.findPendingByPlayer.mockResolvedValue([mockTrade]);
@@ -343,7 +357,7 @@ describe('TradesService', () => {
 
     it('should create trade successfully', async () => {
       mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster);
-      mockRosterRepo.findById.mockResolvedValue(mockRoster2);
+      mockRosterRepo.findByLeagueAndRosterId.mockResolvedValue(mockRoster2);
       mockLeagueRepo.findById.mockResolvedValue(mockLeague);
       mockRosterPlayersRepo.findByRosterAndPlayer.mockResolvedValue(mockRosterPlayer);
       mockTradesRepo.findPendingByPlayer.mockResolvedValue([]);
@@ -621,7 +635,7 @@ describe('TradesService', () => {
       const result = await tradesService.voteTrade(1, 'user-789', 'approve');
 
       expect(result.voteCount).toEqual({ approve: 1, veto: 0 });
-      expect(mockTradeVotesRepo.create).toHaveBeenCalledWith(1, 3, 'approve');
+      expect(mockTradeVotesRepo.create).toHaveBeenCalledWith(1, 3, 'approve', expect.anything());
     });
 
     it('should veto trade when threshold reached', async () => {
@@ -638,7 +652,7 @@ describe('TradesService', () => {
 
       await tradesService.voteTrade(1, 'user-789', 'veto');
 
-      expect(mockTradesRepo.updateStatus).toHaveBeenCalledWith(1, 'vetoed');
+      expect(mockTradesRepo.updateStatus).toHaveBeenCalledWith(1, 'vetoed', expect.anything(), 'in_review');
     });
   });
 
@@ -672,27 +686,30 @@ describe('TradesService', () => {
 
     it('should complete trades without enough vetoes', async () => {
       mockTradesRepo.findReviewCompleteTrades.mockResolvedValue([reviewCompleteTrade]);
+      mockTradesRepo.findById.mockResolvedValue(reviewCompleteTrade);
       mockTradeVotesRepo.countVotes.mockResolvedValue({ approve: 2, veto: 1 });
       mockLeagueRepo.findById.mockResolvedValue(mockLeague);
       mockTradeItemsRepo.findByTrade.mockResolvedValue([mockTradeItem]);
       mockRosterPlayersRepo.findByRosterAndPlayer.mockResolvedValue(mockRosterPlayer);
       mockTransactionsRepo.create.mockResolvedValue({ id: 1 } as any);
+      mockTradesRepo.updateStatus.mockResolvedValue({ ...reviewCompleteTrade, status: 'completed' });
 
       const count = await tradesService.processReviewCompleteTrades();
 
       expect(count).toBe(1);
-      expect(mockTradesRepo.updateStatus).toHaveBeenCalledWith(1, 'completed', mockPoolClient);
+      expect(mockTradesRepo.updateStatus).toHaveBeenCalledWith(1, 'completed', mockPoolClient, 'in_review');
     });
 
     it('should veto trades with enough veto votes', async () => {
       mockTradesRepo.findReviewCompleteTrades.mockResolvedValue([reviewCompleteTrade]);
       mockTradeVotesRepo.countVotes.mockResolvedValue({ approve: 0, veto: 4 });
       mockLeagueRepo.findById.mockResolvedValue(mockLeague);
+      mockTradesRepo.updateStatus.mockResolvedValue({ ...reviewCompleteTrade, status: 'vetoed' });
 
       const count = await tradesService.processReviewCompleteTrades();
 
       expect(count).toBe(1);
-      expect(mockTradesRepo.updateStatus).toHaveBeenCalledWith(1, 'vetoed', mockPoolClient);
+      expect(mockTradesRepo.updateStatus).toHaveBeenCalledWith(1, 'vetoed', mockPoolClient, 'in_review');
     });
   });
 
@@ -708,8 +725,7 @@ describe('TradesService', () => {
     it('should return trades for league', async () => {
       mockLeagueRepo.isUserMember.mockResolvedValue(true);
       mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster);
-      mockTradesRepo.findByLeague.mockResolvedValue([mockTrade]);
-      mockTradesRepo.findByIdWithDetails.mockResolvedValue(mockTradeWithDetails);
+      mockTradesRepo.findByLeagueWithDetails.mockResolvedValue([mockTradeWithDetails]);
 
       const result = await tradesService.getTradesForLeague(1, 'user-123');
 

@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { ZodSchema, ZodError } from 'zod';
+import { logger } from '../config/env.config';
 
 /**
  * Validation middleware factory that validates request data against a Zod schema
@@ -31,7 +32,7 @@ export function validateRequest(schema: ZodSchema, source: 'body' | 'query' | 'p
         });
       }
 
-      console.error('Validation middleware error:', error);
+      logger.error('Validation middleware error', { error, source });
       return res.status(500).json({
         error: {
           code: 'INTERNAL_ERROR',

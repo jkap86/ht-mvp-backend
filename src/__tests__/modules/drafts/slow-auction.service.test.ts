@@ -733,9 +733,12 @@ describe('SlowAuctionService', () => {
           username: 'User2',
         } as any,
       ]);
-      mockLotRepo.getRosterBudgetData
-        .mockResolvedValueOnce({ spent: 50, wonCount: 5, leadingCommitment: 20 })
-        .mockResolvedValueOnce({ spent: 100, wonCount: 10, leadingCommitment: 0 });
+      mockLotRepo.getAllRosterBudgetData.mockResolvedValue(
+        new Map([
+          [1, { spent: 50, wonCount: 5, leadingCommitment: 20 }],
+          [2, { spent: 100, wonCount: 10, leadingCommitment: 0 }],
+        ])
+      );
 
       const result = await service.getAllBudgets(1);
 

@@ -34,7 +34,7 @@ export class User {
     return usernameRegex.test(username);
   }
 
-  static readonly MIN_PASSWORD_LENGTH = 6;
+  static readonly MIN_PASSWORD_LENGTH = 12;
 
   toSafeObject(): {
     userId: string;
