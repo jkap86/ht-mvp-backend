@@ -2,7 +2,7 @@
  * League domain model
  */
 
-export type LeagueMode = 'redraft' | 'dynasty' | 'keeper';
+export type LeagueMode = 'redraft' | 'dynasty' | 'keeper' | 'devy';
 export type SeasonStatus = 'pre_season' | 'regular_season' | 'playoffs' | 'offseason';
 
 export interface LeagueSettings {
@@ -55,7 +55,7 @@ export class League {
     );
   }
 
-  toResponse() {
+  toResponse(options?: { canChangeMode?: boolean }) {
     return {
       id: this.id,
       name: this.name,
@@ -74,6 +74,7 @@ export class League {
       season_status: this.seasonStatus,
       invite_code: this.inviteCode,
       is_public: this.isPublic,
+      can_change_mode: options?.canChangeMode ?? true,
     };
   }
 }

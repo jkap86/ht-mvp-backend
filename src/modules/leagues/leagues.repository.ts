@@ -298,6 +298,45 @@ export class LeagueRepository {
   }
 
   /**
+   * Check if league mode can be changed.
+   * Mode can only be changed when:
+   * 1. All drafts have status 'not_started'
+   * 2. No players are on any roster in the league
+   */
+  async canChangeLeagueMode(leagueId: number): Promise<{ allowed: boolean; reason?: string }> {
+    // Check 1: All drafts must be 'not_started'
+    const draftResult = await this.db.query(
+      `SELECT COUNT(*) as count FROM drafts
+       WHERE league_id = $1 AND status != 'not_started'`,
+      [leagueId]
+    );
+
+    if (parseInt(draftResult.rows[0].count, 10) > 0) {
+      return {
+        allowed: false,
+        reason: 'League mode cannot be changed after a draft has started',
+      };
+    }
+
+    // Check 2: No players on any roster
+    const rosterPlayersResult = await this.db.query(
+      `SELECT COUNT(*) as count FROM roster_players rp
+       JOIN rosters r ON rp.roster_id = r.id
+       WHERE r.league_id = $1`,
+      [leagueId]
+    );
+
+    if (parseInt(rosterPlayersResult.rows[0].count, 10) > 0) {
+      return {
+        allowed: false,
+        reason: 'League mode cannot be changed after players have been added to rosters',
+      };
+    }
+
+    return { allowed: true };
+  }
+
+  /**
    * Find public leagues that the user hasn't joined yet
    * Returns leagues with member count for discovery
    */

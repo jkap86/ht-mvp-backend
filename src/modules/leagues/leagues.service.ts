@@ -30,7 +30,10 @@ export class LeagueService {
       throw new ForbiddenException('You are not a member of this league');
     }
 
-    return league.toResponse();
+    // Check if league mode can be changed
+    const modeCheck = await this.leagueRepo.canChangeLeagueMode(leagueId);
+
+    return league.toResponse({ canChangeMode: modeCheck.allowed });
   }
 
   async createLeague(params: CreateLeagueParams, userId: string): Promise<any> {
@@ -83,6 +86,17 @@ export class LeagueService {
     const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
     if (!isCommissioner) {
       throw new ForbiddenException('Only the commissioner can update league settings');
+    }
+
+    // Validate mode change restriction
+    if (updates.mode !== undefined) {
+      const currentLeague = await this.leagueRepo.findById(leagueId);
+      if (currentLeague && updates.mode !== currentLeague.mode) {
+        const modeChangeCheck = await this.leagueRepo.canChangeLeagueMode(leagueId);
+        if (!modeChangeCheck.allowed) {
+          throw new ValidationException(modeChangeCheck.reason!);
+        }
+      }
     }
 
     // Handle total_rosters change with benching logic
