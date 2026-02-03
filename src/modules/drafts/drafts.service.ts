@@ -132,8 +132,14 @@ export class DraftService {
       settings.playerPool = options.playerPool;
     }
 
-    // Get league for roster config to calculate default rounds
+    // Get league for validation and roster config
     const league = await this.leagueRepo.findById(leagueId);
+
+    // Validate college player pool only allowed for devy leagues
+    if (options.playerPool?.includes('college') && league?.mode !== 'devy') {
+      throw new ValidationException('College players can only be included in Devy leagues');
+    }
+
     const defaultRounds = this.calculateTotalRosterSlots(
       league?.leagueSettings || league?.settings
     );
@@ -165,8 +171,8 @@ export class DraftService {
         rosterIds
       );
 
-      // For dynasty leagues, also generate future pick assets
-      if (league.mode === 'dynasty') {
+      // For dynasty and devy leagues, also generate future pick assets
+      if (league.mode === 'dynasty' || league.mode === 'devy') {
         for (let futureYear = season + 1; futureYear <= season + 3; futureYear++) {
           await this.pickAssetRepo.generateFuturePickAssets(
             leagueId,
@@ -176,7 +182,7 @@ export class DraftService {
           );
         }
         logger.info(
-          `Generated future pick assets for dynasty league ${leagueId} (seasons ${season + 1}-${season + 3})`
+          `Generated future pick assets for ${league.mode} league ${leagueId} (seasons ${season + 1}-${season + 3})`
         );
       }
 
@@ -466,6 +472,11 @@ export class DraftService {
 
     // Handle player pool setting
     if (updates.playerPool) {
+      // Validate college player pool only allowed for devy leagues
+      const league = await this.leagueRepo.findById(leagueId);
+      if (updates.playerPool.includes('college') && league?.mode !== 'devy') {
+        throw new ValidationException('College players can only be included in Devy leagues');
+      }
       mergedSettings.playerPool = updates.playerPool;
     }
 

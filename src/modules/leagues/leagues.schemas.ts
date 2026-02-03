@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 // Enums
-export const leagueModeEnum = z.enum(['redraft', 'dynasty', 'keeper']);
+export const leagueModeEnum = z.enum(['redraft', 'dynasty', 'keeper', 'devy']);
 export const draftTypeEnum = z.enum([
   'snake',
   'linear',

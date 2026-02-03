@@ -334,7 +334,11 @@ export class RosterService {
       throw new ForbiddenException('You are not a member of this league');
     }
 
-    return this.rosterPlayersRepo.getFreeAgents(leagueId, position, search, limit, offset);
+    // Get league mode to determine if college players should be included
+    const league = await this.leagueRepo.findById(leagueId);
+    const leagueMode = league?.mode || 'redraft';
+
+    return this.rosterPlayersRepo.getFreeAgents(leagueId, position, search, limit, offset, leagueMode);
   }
 
   /**

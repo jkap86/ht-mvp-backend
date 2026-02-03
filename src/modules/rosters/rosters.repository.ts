@@ -123,7 +123,8 @@ export class RosterPlayersRepository {
     position?: string,
     search?: string,
     limit: number = 50,
-    offset: number = 0
+    offset: number = 0,
+    leagueMode?: string
   ): Promise<any[]> {
     const params: any[] = [leagueId, limit, offset];
     let whereClause = `
@@ -135,6 +136,11 @@ export class RosterPlayersRepository {
           WHERE r.league_id = $1
         )
     `;
+
+    // Filter out college players for non-devy leagues
+    if (leagueMode !== 'devy') {
+      whereClause += ` AND (p.player_type IS NULL OR p.player_type != 'college')`;
+    }
 
     if (position) {
       params.push(position);
