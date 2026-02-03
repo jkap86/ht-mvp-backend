@@ -160,7 +160,9 @@ export class DraftRepository {
     limit?: number,
     offset?: number
   ): Promise<DraftOrderEntry[]> {
-    let query = `SELECT dord.*, u.username, r.user_id
+    let query = `SELECT dord.*,
+       COALESCE(r.settings->>'team_name', u.username, 'Team ' || r.roster_id) as username,
+       r.user_id
        FROM draft_order dord
        LEFT JOIN rosters r ON dord.roster_id = r.id
        LEFT JOIN users u ON r.user_id = u.id

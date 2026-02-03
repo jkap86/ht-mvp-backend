@@ -78,6 +78,40 @@ export class RosterService {
         userId,
       });
 
+      // Emit draft order update for any not-started drafts so draft room shows updated team names
+      if (socketService) {
+        const draftsResult = await this.db.query(
+          `SELECT d.id, dord.draft_position, dord.roster_id,
+                  COALESCE(r.settings->>'team_name', u.username, 'Team ' || r.roster_id) as username,
+                  r.user_id
+           FROM drafts d
+           JOIN draft_order dord ON d.id = dord.draft_id
+           LEFT JOIN rosters r ON dord.roster_id = r.id
+           LEFT JOIN users u ON r.user_id = u.id
+           WHERE d.league_id = $1 AND d.status = 'not_started'
+           ORDER BY d.id, dord.draft_position`,
+          [leagueId]
+        );
+
+        // Group by draft and emit settings update for each
+        const draftOrders = new Map<number, any[]>();
+        for (const row of draftsResult.rows) {
+          if (!draftOrders.has(row.id)) {
+            draftOrders.set(row.id, []);
+          }
+          draftOrders.get(row.id)!.push({
+            draftPosition: row.draft_position,
+            rosterId: row.roster_id,
+            username: row.username,
+            userId: row.user_id,
+          });
+        }
+
+        for (const [draftId, draftOrder] of draftOrders) {
+          socketService.emitDraftSettingsUpdated(draftId, { draft_order: draftOrder });
+        }
+      }
+
       return {
         message: 'Successfully joined the league',
         roster: {
