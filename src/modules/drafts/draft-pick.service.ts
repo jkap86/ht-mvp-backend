@@ -7,7 +7,7 @@ import { PlayerRepository } from '../players/players.repository';
 import { NotFoundException, ForbiddenException, ValidationException } from '../../utils/exceptions';
 import { tryGetSocketService } from '../../socket';
 import { DraftEngineFactory, IDraftEngine } from '../../engines';
-import { populateRostersFromDraft } from './draft-completion.utils';
+import { finalizeDraftCompletion } from './draft-completion.utils';
 
 export class DraftPickService {
   constructor(
@@ -104,9 +104,9 @@ export class DraftPickService {
       idempotencyKey,
     });
 
-    // If draft completed, populate rosters AFTER the atomic transaction
+    // If draft completed, run unified finalization (rosters, league status, schedule)
     if (nextPickState.status === 'completed') {
-      await populateRostersFromDraft(
+      await finalizeDraftCompletion(
         {
           draftRepo: this.draftRepo,
           leagueRepo: this.leagueRepo,
@@ -115,9 +115,6 @@ export class DraftPickService {
         draftId,
         leagueId
       );
-
-      // Update league status to regular_season now that draft is complete
-      await this.leagueRepo.update(leagueId, { status: 'regular_season' });
     }
 
     // Enrich pick with player info for socket event

@@ -5,7 +5,7 @@ import { RosterPlayersRepository } from '../rosters/rosters.repository';
 import { DraftEngineFactory } from '../../engines';
 import { NotFoundException, ForbiddenException, ValidationException } from '../../utils/exceptions';
 import { tryGetSocketService } from '../../socket';
-import { populateRostersFromDraft } from './draft-completion.utils';
+import { finalizeDraftCompletion } from './draft-completion.utils';
 import { ScheduleGeneratorService } from '../matchups/schedule-generator.service';
 import { DraftPickAssetRepository } from './draft-pick-asset.repository';
 import { container, KEYS } from '../../container';
@@ -16,7 +16,8 @@ export class DraftStateService {
     private readonly leagueRepo: LeagueRepository,
     private readonly engineFactory: DraftEngineFactory,
     private readonly rosterPlayersRepo: RosterPlayersRepository,
-    private readonly scheduleGeneratorService?: ScheduleGeneratorService
+    private readonly scheduleGeneratorService?: ScheduleGeneratorService,
+    private readonly pickAssetRepo?: DraftPickAssetRepository
   ) {}
 
   async startDraft(draftId: number, userId: string): Promise<any> {
@@ -58,7 +59,24 @@ export class DraftStateService {
       throw new ValidationException('Draft order must be confirmed before starting');
     }
 
-    const firstPicker = draftOrder.find((o) => o.draftPosition === 1);
+    // Determine first picker, accounting for traded picks
+    const engine = this.engineFactory.createEngine(draft.draftType);
+    let firstPickerRosterId: number | null = null;
+
+    if (this.pickAssetRepo) {
+      const pickAssets = await this.pickAssetRepo.findByDraftId(draftId);
+      const actualPicker = engine.getActualPickerForPickNumber(draft, draftOrder, pickAssets, 1);
+      firstPickerRosterId = actualPicker?.rosterId ?? null;
+    }
+
+    // Fallback to original logic if no pick assets or no actual picker found
+    if (!firstPickerRosterId) {
+      const fallbackPicker = draftOrder.find((o) => o.draftPosition === 1);
+      firstPickerRosterId = fallbackPicker?.rosterId ?? null;
+    }
+
+    const firstPicker = draftOrder.find((o) => o.rosterId === firstPickerRosterId) ??
+      draftOrder.find((o) => o.draftPosition === 1);
 
     // Set initial pick deadline
     let pickDeadline: Date | null = null;
@@ -79,7 +97,7 @@ export class DraftStateService {
       startedAt: new Date(),
       currentPick: 1,
       currentRound: 1,
-      currentRosterId: firstPicker?.rosterId || null,
+      currentRosterId: firstPickerRosterId,
       pickDeadline,
     });
 
@@ -219,12 +237,13 @@ export class DraftStateService {
       throw new ValidationException('Cannot complete a draft that has not started');
     }
 
-    // Populate rosters with drafted players before marking complete
-    await populateRostersFromDraft(
+    // Run unified finalization (rosters, league status, schedule)
+    await finalizeDraftCompletion(
       {
         draftRepo: this.draftRepo,
         leagueRepo: this.leagueRepo,
         rosterPlayersRepo: this.rosterPlayersRepo,
+        scheduleGeneratorService: this.scheduleGeneratorService,
       },
       draftId,
       draft.leagueId
@@ -236,19 +255,6 @@ export class DraftStateService {
       pickDeadline: null,
       currentRosterId: null,
     });
-
-    // Update league status to regular_season now that draft is complete
-    await this.leagueRepo.update(draft.leagueId, { status: 'regular_season' });
-
-    // Auto-generate season schedule (14 weeks regular season)
-    if (this.scheduleGeneratorService) {
-      try {
-        await this.scheduleGeneratorService.generateScheduleSystem(draft.leagueId, 14);
-      } catch (error) {
-        // Log but don't fail draft completion if schedule generation fails
-        console.error('Failed to auto-generate schedule:', error);
-      }
-    }
 
     const response = draftToResponse(updatedDraft);
 

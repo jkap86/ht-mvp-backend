@@ -325,13 +325,14 @@ export class DmRepository {
   async markAsRead(conversationId: number, userId: string): Promise<void> {
     // Atomic update - updates the appropriate column based on which user is reading
     // Uses subquery to get latest message ID and CASE to determine which column to update
+    // Note: ORDER BY id DESC ensures consistency with unread count calculation (dm.id > last_read_message_id)
     await this.pool.query(
       `UPDATE conversations
        SET user1_last_read_message_id = CASE
              WHEN user1_id = $2 THEN (
                SELECT id FROM direct_messages
                WHERE conversation_id = $1
-               ORDER BY created_at DESC LIMIT 1
+               ORDER BY id DESC LIMIT 1
              )
              ELSE user1_last_read_message_id
            END,
@@ -339,7 +340,7 @@ export class DmRepository {
              WHEN user2_id = $2 THEN (
                SELECT id FROM direct_messages
                WHERE conversation_id = $1
-               ORDER BY created_at DESC LIMIT 1
+               ORDER BY id DESC LIMIT 1
              )
              ELSE user2_last_read_message_id
            END

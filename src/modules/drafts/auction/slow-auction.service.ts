@@ -36,6 +36,19 @@ export interface SettlementResult {
   passed: boolean;
 }
 
+/**
+ * Get current date string in Eastern timezone (America/New_York).
+ * Fantasy football conventions use Eastern time for day boundaries.
+ */
+function getEasternDateString(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
+
 export class SlowAuctionService {
   constructor(
     private readonly lotRepo: AuctionLotRepository,
@@ -195,7 +208,7 @@ export class SlowAuctionService {
     if (!draft) throw new NotFoundException('Draft not found');
 
     const settings = this.getSettings(draft);
-    const today = new Date().toISOString().split('T')[0];
+    const today = getEasternDateString();
 
     // Get counts
     const dailyCount = settings.dailyNominationLimit
@@ -268,7 +281,7 @@ export class SlowAuctionService {
 
     // 5c. Check daily nomination limit (if configured)
     if (settings.dailyNominationLimit) {
-      const today = new Date().toISOString().split('T')[0];
+      const today = getEasternDateString();
       const todayCount = await this.lotRepo.countDailyNominationsForRoster(draftId, rosterId, today);
       if (todayCount >= settings.dailyNominationLimit) {
         throw new ValidationException(
@@ -568,6 +581,9 @@ export class SlowAuctionService {
       const rosterSlots = league.leagueSettings?.rosterSlots ?? 15;
       const settings = this.getSettings(draft);
 
+      // Acquire draft-level lock first (per lock ordering: DRAFT before ROSTER)
+      await client.query('SELECT pg_advisory_xact_lock($1)', [getDraftLockId(lot.draftId)]);
+
       // Try each bidder in order until one can afford
       for (let i = 0; i < proxyBids.length; i++) {
         const candidateRosterId = proxyBids[i].roster_id;
@@ -584,7 +600,7 @@ export class SlowAuctionService {
           price = Math.min(candidateMaxBid, nextHighestBid + settings.minIncrement);
         }
 
-        // Lock candidate's roster
+        // Lock candidate's roster (after DRAFT lock per ordering)
         await client.query('SELECT pg_advisory_xact_lock($1)', [
           getAuctionRosterLockId(candidateRosterId),
         ]);
@@ -620,11 +636,6 @@ export class SlowAuctionService {
           [lotId, candidateRosterId, price]
         );
         const settledLot = auctionLotFromDatabase(settleResult.rows[0]);
-
-        // Acquire draft-level lock to prevent concurrent pick_number conflicts
-        await client.query('SELECT pg_advisory_xact_lock($1)', [
-          getDraftLockId(lot.draftId),
-        ]);
 
         // Create draft pick entry
         await client.query(

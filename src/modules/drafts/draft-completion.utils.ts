@@ -1,12 +1,18 @@
 import { DraftRepository } from './drafts.repository';
 import { LeagueRepository } from '../leagues/leagues.repository';
 import { RosterPlayersRepository } from '../rosters/rosters.repository';
+import { ScheduleGeneratorService } from '../matchups/schedule-generator.service';
+import { container, KEYS } from '../../container';
 import { logger } from '../../config/env.config';
 
 export interface PopulateRostersContext {
   draftRepo: DraftRepository;
   leagueRepo: LeagueRepository;
   rosterPlayersRepo: RosterPlayersRepository;
+}
+
+export interface FinalizeDraftContext extends PopulateRostersContext {
+  scheduleGeneratorService?: ScheduleGeneratorService;
 }
 
 /**
@@ -59,4 +65,39 @@ export async function populateRostersFromDraft(
   }
 
   logger.info(`Populated rosters from draft ${draftId} with ${addedCount}/${picks.length} picks`);
+}
+
+/**
+ * Unified function to finalize draft completion.
+ * Ensures consistent side-effects across all completion paths:
+ * - Manual pick (DraftPickService.makePick)
+ * - Autopick (BaseDraftEngine.advanceToNextPick)
+ * - Commissioner (DraftStateService.completeDraft)
+ *
+ * Side-effects:
+ * 1. Populate rosters with drafted players
+ * 2. Update league status to regular_season
+ * 3. Generate schedule (14 weeks)
+ */
+export async function finalizeDraftCompletion(
+  ctx: FinalizeDraftContext,
+  draftId: number,
+  leagueId: number
+): Promise<void> {
+  // 1. Populate rosters
+  await populateRostersFromDraft(ctx, draftId, leagueId);
+
+  // 2. Update league status
+  await ctx.leagueRepo.update(leagueId, { status: 'regular_season' });
+
+  // 3. Generate schedule (14 weeks)
+  try {
+    const scheduleService =
+      ctx.scheduleGeneratorService ??
+      container.resolve<ScheduleGeneratorService>(KEYS.SCHEDULE_GENERATOR_SERVICE);
+    await scheduleService.generateScheduleSystem(leagueId, 14);
+    logger.info(`Generated schedule for league ${leagueId} after draft ${draftId} completion`);
+  } catch (error) {
+    logger.error(`Failed to auto-generate schedule for league ${leagueId}:`, error);
+  }
 }

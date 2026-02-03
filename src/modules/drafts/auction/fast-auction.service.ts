@@ -16,7 +16,7 @@ import {
   NotFoundException,
   ForbiddenException,
 } from '../../../utils/exceptions';
-import { getAuctionRosterLockId } from '../../../utils/locks';
+import { getAuctionRosterLockId, getDraftLockId } from '../../../utils/locks';
 import { logger } from '../../../config/logger.config';
 import { Draft } from '../drafts.model';
 import { getRosterBudgetDataWithClient } from './auction-budget-calculator';
@@ -129,10 +129,7 @@ export class FastAuctionService {
       await client.query('BEGIN');
 
       // Acquire draft-level lock to prevent concurrent nominations
-      const FAST_AUCTION_NOMINATION_LOCK_BASE = 999999100;
-      await client.query('SELECT pg_advisory_xact_lock($1)', [
-        FAST_AUCTION_NOMINATION_LOCK_BASE + draftId,
-      ]);
+      await client.query('SELECT pg_advisory_xact_lock($1)', [getDraftLockId(draftId)]);
 
       // Check no active lot exists (inside lock)
       const activeLotResult = await client.query(
@@ -350,10 +347,11 @@ export class FastAuctionService {
             playerId: lot.playerId,
           });
           try {
+            // Use snake_case to match slow auction payload format
             socket?.emitAuctionOutbid(outbidRoster.userId, {
-              lotId: notification.lotId,
-              playerId: lot.playerId,
-              newBid: finalLot.currentBid,
+              lot_id: notification.lotId,
+              player_id: lot.playerId,
+              new_bid: finalLot.currentBid,
             });
           } catch (socketError) {
             logger.warn('Failed to emit outbid notification', {
@@ -384,16 +382,13 @@ export class FastAuctionService {
    * Uses transaction with advisory lock to prevent race conditions
    */
   async advanceNominator(draftId: number): Promise<void> {
-    const FAST_AUCTION_NOMINATOR_LOCK_BASE = 999999200;
     const client = await this.pool.connect();
 
     try {
       await client.query('BEGIN');
 
       // Acquire draft-level lock to prevent concurrent nominator advancement
-      await client.query('SELECT pg_advisory_xact_lock($1)', [
-        FAST_AUCTION_NOMINATOR_LOCK_BASE + draftId,
-      ]);
+      await client.query('SELECT pg_advisory_xact_lock($1)', [getDraftLockId(draftId)]);
 
       // Re-read draft inside transaction with lock
       const draftResult = await client.query(
@@ -463,15 +458,12 @@ export class FastAuctionService {
    * This is a simplified version that directly updates the database
    */
   async forceAdvanceNominator(draftId: number): Promise<void> {
-    const FAST_AUCTION_NOMINATOR_LOCK_BASE = 999999200;
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
 
       // Acquire advisory lock to prevent race with normal advanceNominator
-      await client.query('SELECT pg_advisory_xact_lock($1)', [
-        FAST_AUCTION_NOMINATOR_LOCK_BASE + draftId,
-      ]);
+      await client.query('SELECT pg_advisory_xact_lock($1)', [getDraftLockId(draftId)]);
 
       // Get current draft state and order count
       const draftResult = await client.query(

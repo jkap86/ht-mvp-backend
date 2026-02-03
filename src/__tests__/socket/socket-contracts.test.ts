@@ -51,6 +51,10 @@ const FRONTEND_EVENTS = {
   // Chat events
   chatMessage: 'chat:message',
 
+  // Direct message events
+  dmMessage: 'dm:message',
+  dmRead: 'dm:read',
+
   // Trade events
   tradeProposed: 'trade:proposed',
   tradeAccepted: 'trade:accepted',
@@ -132,6 +136,11 @@ describe('Socket Event Contracts', () => {
       expect(SOCKET_EVENTS.CHAT.MESSAGE).toBe(FRONTEND_EVENTS.chatMessage);
     });
 
+    it('should have matching DM event names between frontend and backend', () => {
+      expect(SOCKET_EVENTS.DM.MESSAGE).toBe(FRONTEND_EVENTS.dmMessage);
+      expect(SOCKET_EVENTS.DM.READ).toBe(FRONTEND_EVENTS.dmRead);
+    });
+
     it('should have matching trade event names between frontend and backend', () => {
       expect(SOCKET_EVENTS.TRADE.PROPOSED).toBe(FRONTEND_EVENTS.tradeProposed);
       expect(SOCKET_EVENTS.TRADE.ACCEPTED).toBe(FRONTEND_EVENTS.tradeAccepted);
@@ -175,6 +184,7 @@ describe('Socket Event Contracts', () => {
         ...Object.values(SOCKET_EVENTS.LEAGUE),
         ...Object.values(SOCKET_EVENTS.DRAFT),
         ...Object.values(SOCKET_EVENTS.CHAT),
+        ...Object.values(SOCKET_EVENTS.DM),
         ...Object.values(SOCKET_EVENTS.AUCTION),
         ...Object.values(SOCKET_EVENTS.TRADE),
         ...Object.values(SOCKET_EVENTS.WAIVER),

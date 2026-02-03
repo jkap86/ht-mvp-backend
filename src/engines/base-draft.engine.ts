@@ -12,10 +12,11 @@ import { RosterPlayersRepository } from '../modules/rosters/rosters.repository';
 import { LeagueRepository, RosterRepository } from '../modules/leagues/leagues.repository';
 import { tryGetSocketService } from '../socket';
 import { logger } from '../config/env.config';
-import { populateRostersFromDraft } from '../modules/drafts/draft-completion.utils';
+import { finalizeDraftCompletion } from '../modules/drafts/draft-completion.utils';
 import { container, KEYS } from '../container';
-import { ScheduleGeneratorService } from '../modules/matchups/schedule-generator.service';
 import { DraftPickAssetRepository } from '../modules/drafts/draft-pick-asset.repository';
+import { getDraftLockId } from '../utils/locks';
+import { Pool } from 'pg';
 
 /**
  * Abstract base class for draft engines.
@@ -179,12 +180,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     const draft = await this.draftRepo.findById(draftId);
 
     if (!draft) {
-      return {
-        actionTaken: false,
-        draftCompleted: false,
-        draft: draft!,
-        reason: 'none',
-      };
+      throw new Error(`Draft not found: ${draftId}`);
     }
 
     if (draft.status !== 'in_progress') {
@@ -230,32 +226,63 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     // Check if pick already exists (race condition: pick was made but draft state not updated)
     const pickAlreadyExists = await this.draftRepo.pickExists(draftId, draft.currentPick);
     if (pickAlreadyExists) {
-      // Pick was made but draft state is stale - advance to next pick
-      logger.info(
-        `Draft ${draftId}: pick ${draft.currentPick} already exists, recovering stale state`
-      );
-      const nextPickInfo = await this.advanceToNextPick(draft, draftOrder);
+      // Acquire lock before advancing to prevent race with other tickers
+      const pool = container.resolve<Pool>(KEYS.POOL);
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('SELECT pg_advisory_xact_lock($1)', [getDraftLockId(draftId)]);
 
-      // Emit next pick or completion event
-      const socket = tryGetSocketService();
-      if (socket) {
-        if (nextPickInfo) {
-          socket.emitNextPick(draftId, nextPickInfo);
-        } else {
-          const completedDraft = await this.draftRepo.findById(draftId);
-          if (completedDraft) {
-            socket.emitDraftCompleted(draftId, draftToResponse(completedDraft));
+        // Re-check under lock to confirm pick still exists and state is still stale
+        const stillExists = await this.draftRepo.pickExists(draftId, draft.currentPick);
+        const currentDraft = await this.draftRepo.findById(draftId);
+
+        if (stillExists && currentDraft && currentDraft.currentPick === draft.currentPick) {
+          // Pick was made but draft state is stale - advance to next pick
+          logger.info(
+            `Draft ${draftId}: pick ${draft.currentPick} already exists, recovering stale state`
+          );
+          const nextPickInfo = await this.advanceToNextPick(draft, draftOrder);
+
+          await client.query('COMMIT');
+
+          // Emit next pick or completion event (after commit)
+          const socket = tryGetSocketService();
+          if (socket) {
+            if (nextPickInfo) {
+              socket.emitNextPick(draftId, nextPickInfo);
+            } else {
+              const completedDraft = await this.draftRepo.findById(draftId);
+              if (completedDraft) {
+                socket.emitDraftCompleted(draftId, draftToResponse(completedDraft));
+              }
+            }
           }
-        }
-      }
 
-      const updatedDraft = await this.draftRepo.findById(draftId);
-      return {
-        actionTaken: true,
-        draftCompleted: updatedDraft?.status === 'completed',
-        draft: updatedDraft!,
-        reason,
-      };
+          const updatedDraft = await this.draftRepo.findById(draftId);
+          return {
+            actionTaken: true,
+            draftCompleted: updatedDraft?.status === 'completed',
+            draft: updatedDraft!,
+            reason,
+          };
+        } else {
+          // State was already updated by another ticker, nothing to do
+          await client.query('COMMIT');
+          const updatedDraft = await this.draftRepo.findById(draftId);
+          return {
+            actionTaken: false,
+            draftCompleted: updatedDraft?.status === 'completed',
+            draft: updatedDraft!,
+            reason: 'none',
+          };
+        }
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
     }
 
     // Perform autopick (due to deadline expired or autodraft enabled)
@@ -387,8 +414,8 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     const nextPick = draft.currentPick + 1;
 
     if (nextPick > totalPicks) {
-      // Draft complete - populate rosters BEFORE marking complete
-      await populateRostersFromDraft(
+      // Draft complete - run unified finalization (rosters, league status, schedule)
+      await finalizeDraftCompletion(
         {
           draftRepo: this.draftRepo,
           leagueRepo: this.leagueRepo,
@@ -404,20 +431,6 @@ export abstract class BaseDraftEngine implements IDraftEngine {
         currentRosterId: null,
         pickDeadline: null,
       });
-
-      // Update league status to regular_season now that draft is complete
-      await this.leagueRepo.update(draft.leagueId, { status: 'regular_season' });
-
-      // Auto-generate season schedule (14 weeks regular season)
-      try {
-        const scheduleGeneratorService = container.resolve<ScheduleGeneratorService>(
-          KEYS.SCHEDULE_GENERATOR_SERVICE
-        );
-        await scheduleGeneratorService.generateScheduleSystem(draft.leagueId, 14);
-        logger.info(`Generated schedule for league ${draft.leagueId} after draft ${draft.id} completion`);
-      } catch (error) {
-        logger.error('Failed to auto-generate schedule after autopick completion:', error);
-      }
 
       return null;
     }

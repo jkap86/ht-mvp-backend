@@ -104,6 +104,8 @@ export function trackUserConnections(
     if (onConnectionLimit) {
       onConnectionLimit();
     }
+    // Force disconnect the socket to enforce the limit
+    socket.disconnect(true);
     return;
   }
 
