@@ -47,6 +47,9 @@ export class LeagueController {
         settings = {},
         scoring_settings = {},
         is_public = false,
+        mode,
+        league_settings,
+        draft_structure,
       } = req.body;
 
       const league = await this.leagueService.createLeague(
@@ -57,6 +60,9 @@ export class LeagueController {
           settings,
           scoringSettings: scoring_settings,
           isPublic: is_public,
+          mode,
+          leagueSettings: league_settings,
+          draftStructure: draft_structure,
         },
         userId
       );

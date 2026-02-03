@@ -105,7 +105,32 @@ export function draftFromDatabase(row: any): Draft {
   };
 }
 
+/**
+ * Compute a human-readable label for a draft based on its player pool configuration.
+ */
+export function computeDraftLabel(playerPool?: PlayerPoolType[]): string {
+  if (!playerPool || playerPool.length === 0) return 'Draft';
+
+  const sorted = [...playerPool].sort();
+  const key = sorted.join('+');
+
+  const labelMap: Record<string, string> = {
+    'veteran': 'Veteran Draft',
+    'rookie': 'Rookie Draft',
+    'college': 'College Draft',
+    'rookie+veteran': 'Startup Draft',
+    'college+rookie+veteran': 'Combined Draft',
+    'college+rookie': 'Future Draft',
+    'college+veteran': 'Veteran + College Draft',
+  };
+
+  return labelMap[key] || 'Draft';
+}
+
 export function draftToResponse(draft: Draft) {
+  const draftSettings = draft.settings as DraftSettings | undefined;
+  const playerPool = draftSettings?.playerPool;
+
   return {
     id: draft.id,
     league_id: draft.leagueId,
@@ -124,5 +149,6 @@ export function draftToResponse(draft: Draft) {
     order_confirmed: draft.orderConfirmed,
     created_at: draft.createdAt,
     updated_at: draft.updatedAt,
+    label: computeDraftLabel(playerPool),
   };
 }

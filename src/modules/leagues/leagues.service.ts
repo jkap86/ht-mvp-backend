@@ -2,6 +2,7 @@ import { LeagueRepository, RosterRepository, CreateLeagueParams } from './league
 import { RosterService } from './roster.service';
 import { League } from './leagues.model';
 import { DraftService } from '../drafts/drafts.service';
+import { getDraftStructure } from '../drafts/draft-structure-presets';
 import { NotFoundException, ForbiddenException, ValidationException } from '../../utils/exceptions';
 
 export class LeagueService {
@@ -36,7 +37,10 @@ export class LeagueService {
     return league.toResponse({ canChangeMode: modeCheck.allowed });
   }
 
-  async createLeague(params: CreateLeagueParams, userId: string): Promise<any> {
+  async createLeague(
+    params: CreateLeagueParams & { draftStructure?: string },
+    userId: string
+  ): Promise<any> {
     // Validate
     if (!params.name || params.name.trim().length === 0) {
       throw new ValidationException('League name is required');
@@ -65,12 +69,24 @@ export class LeagueService {
     // Create first roster for the creator (commissioner) via RosterService
     await this.rosterService.createInitialRoster(league.id, userId);
 
-    // Auto-create draft for all league types
-    await this.draftService.createDraft(league.id, userId, {
-      draftType: league.leagueSettings?.draftType || 'snake',
-      // rounds will default to roster_config total via calculateTotalRosterSlots()
-      pickTimeSeconds: 90,
-    });
+    // Get draft structure preset (default to 'combined')
+    const structureId = params.draftStructure || 'combined';
+    const leagueMode = params.mode || 'redraft';
+    const structure = getDraftStructure(leagueMode, structureId);
+
+    if (!structure) {
+      throw new ValidationException('Invalid draft structure');
+    }
+
+    // Create all drafts in the structure
+    for (const preset of structure.drafts) {
+      await this.draftService.createDraft(league.id, userId, {
+        draftType: league.leagueSettings?.draftType || 'snake',
+        pickTimeSeconds: 90,
+        rounds: preset.defaultRounds, // undefined uses default calculation
+        playerPool: preset.playerPool,
+      });
+    }
 
     // Get updated league with commissioner info
     const updatedLeague = await this.leagueRepo.findByIdWithUserRoster(league.id, userId);

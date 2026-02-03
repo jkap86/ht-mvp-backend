@@ -33,6 +33,7 @@ export const createLeagueSchema = z.object({
   mode: leagueModeEnum.optional(),
   league_settings: leagueSettingsSchema.optional(),
   is_public: z.boolean().default(false).optional(),
+  draft_structure: z.string().optional(), // 'combined', 'split', 'nfl_college', etc.
 });
 
 export const updateLeagueSchema = z.object({

@@ -30,6 +30,7 @@ import { MatchupService } from '../matchups/matchups.service';
 import { ScoringService } from '../scoring/scoring.service';
 import { ScheduleGeneratorService } from '../matchups/schedule-generator.service';
 import { StandingsService } from '../matchups/standings.service';
+import { getDraftStructures } from '../drafts/draft-structure-presets';
 
 // Resolve dependencies from container
 const leagueService = container.resolve<LeagueService>(KEYS.LEAGUE_SERVICE);
@@ -62,6 +63,13 @@ const router = Router();
 
 // All league routes require authentication
 router.use(authMiddleware);
+
+// GET /api/leagues/draft-structures - Get available draft structure options
+router.get('/draft-structures', apiReadLimiter, (req, res) => {
+  const mode = (req.query.mode as string) || 'redraft';
+  const structures = getDraftStructures(mode);
+  res.json(structures);
+});
 
 // GET /api/leagues/my-leagues
 router.get('/my-leagues', apiReadLimiter, leagueController.getMyLeagues);
