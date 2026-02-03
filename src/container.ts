@@ -102,6 +102,10 @@ export const KEYS = {
   SLEEPER_CLIENT: 'sleeperClient',
   CFBD_CLIENT: 'cfbdClient',
 
+  // System Messages
+  SYSTEM_MESSAGE_SERVICE: 'systemMessageService',
+  EVENT_LISTENER_SERVICE: 'eventListenerService',
+
   // Helpers
   LOCK_HELPER: 'lockHelper',
 };

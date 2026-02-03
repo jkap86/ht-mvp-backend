@@ -1031,6 +1031,8 @@ describe('Season Sanity Integration Tests', () => {
       createdAt: new Date(),
       updatedAt: new Date(),
       completedAt: null,
+      notifyLeagueChat: true,
+      notifyDm: true,
     };
 
     const mockTradeItems: TradeItem[] = [

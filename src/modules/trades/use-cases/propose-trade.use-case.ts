@@ -24,6 +24,7 @@ import {
   buildPickTradeItems,
   ValidatePickTradeContext,
 } from './validate-pick-trade.use-case';
+import { EventListenerService } from '../../chat/event-listener.service';
 
 const DEFAULT_TRADE_EXPIRY_HOURS = 48;
 
@@ -34,6 +35,7 @@ export interface ProposeTradeContext {
   rosterPlayersRepo: RosterPlayersRepository;
   leagueRepo: LeagueRepository;
   pickAssetRepo?: DraftPickAssetRepository;
+  eventListenerService?: EventListenerService;
 }
 
 /**
@@ -149,7 +151,9 @@ export async function proposeTrade(
       league.currentWeek || 1,
       request.message,
       undefined,
-      client
+      client,
+      request.notifyLeagueChat,
+      request.notifyDm
     );
 
     // Create trade items for players
@@ -192,6 +196,13 @@ export async function proposeTrade(
     // Emit socket event (only for standalone trades, counter emits its own event)
     if (manageTransaction) {
       emitTradeProposed(leagueId, tradeWithDetails);
+
+      // Emit system message to league chat
+      if (ctx.eventListenerService) {
+        ctx.eventListenerService
+          .handleTradeProposed(leagueId, trade.id, trade.notifyLeagueChat)
+          .catch((err) => console.error('Failed to emit trade proposed system message:', err));
+      }
     }
 
     return tradeWithDetails;

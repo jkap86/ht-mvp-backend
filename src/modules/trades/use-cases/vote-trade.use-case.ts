@@ -10,6 +10,7 @@ import {
   ConflictException,
 } from '../../../utils/exceptions';
 import { getTradeLockId } from '../../../utils/locks';
+import { EventListenerService } from '../../chat/event-listener.service';
 
 const DEFAULT_VETO_COUNT = 4;
 
@@ -19,6 +20,7 @@ export interface VoteTradeContext {
   tradeVotesRepo: TradeVotesRepository;
   rosterRepo: RosterRepository;
   leagueRepo: LeagueRepository;
+  eventListenerService?: EventListenerService;
 }
 
 /**
@@ -99,6 +101,12 @@ export async function voteTrade(
   // Emit events after transaction commits (outside transaction for reliability)
   if (voteCount.veto >= vetoThreshold) {
     emitTradeVetoedEvent(trade.leagueId, trade.id);
+    // Emit system message for veto
+    if (ctx.eventListenerService) {
+      ctx.eventListenerService
+        .handleTradeVetoed(trade.leagueId, trade.id)
+        .catch((err) => console.error('Failed to emit trade vetoed system message:', err));
+    }
   } else {
     emitTradeVoteCastEvent(trade.leagueId, trade.id, voteCount);
   }

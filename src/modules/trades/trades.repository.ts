@@ -28,14 +28,17 @@ export class TradesRepository {
     week: number,
     message?: string,
     parentTradeId?: number,
-    client?: PoolClient
+    client?: PoolClient,
+    notifyLeagueChat?: boolean,
+    notifyDm?: boolean
   ): Promise<Trade> {
     const conn = client || this.db;
     const result = await conn.query(
       `INSERT INTO trades (
         league_id, proposer_roster_id, recipient_roster_id,
-        expires_at, season, week, message, parent_trade_id
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        expires_at, season, week, message, parent_trade_id,
+        notify_league_chat, notify_dm
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING *`,
       [
         leagueId,
@@ -46,6 +49,8 @@ export class TradesRepository {
         week,
         message || null,
         parentTradeId || null,
+        notifyLeagueChat ?? true,
+        notifyDm ?? true,
       ]
     );
     return tradeFromDatabase(result.rows[0]);

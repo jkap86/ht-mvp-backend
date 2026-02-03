@@ -2,11 +2,13 @@ import { TradesRepository, TradeVotesRepository } from '../trades.repository';
 import { tryGetSocketService } from '../../../socket';
 import { getTradeLockId } from '../../../utils/locks';
 import { executeTrade, AcceptTradeContext, PickTradedEvent } from './accept-trade.use-case';
+import { EventListenerService } from '../../chat/event-listener.service';
 
 const DEFAULT_VETO_COUNT = 4;
 
 export interface ProcessTradesContext extends AcceptTradeContext {
   tradeVotesRepo: TradeVotesRepository;
+  eventListenerService?: EventListenerService;
 }
 
 /**
@@ -152,9 +154,21 @@ export async function processReviewCompleteTrades(ctx: ProcessTradesContext): Pr
       // Emit events AFTER successful commit
       if (pendingEvent === 'vetoed') {
         emitTradeVetoedEvent(trade.leagueId, trade.id);
+        // Emit system message for veto
+        if (ctx.eventListenerService) {
+          ctx.eventListenerService
+            .handleTradeVetoed(trade.leagueId, trade.id)
+            .catch((err) => console.error('Failed to emit trade vetoed system message:', err));
+        }
       } else if (pendingEvent === 'completed') {
         emitTradeCompletedEvent(trade.leagueId, trade.id);
         emitPickTradedEvents(pickTradedEvents);
+        // Emit system message for completion
+        if (ctx.eventListenerService) {
+          ctx.eventListenerService
+            .handleTradeAccepted(trade.leagueId, trade.id, true)
+            .catch((err) => console.error('Failed to emit trade completed system message:', err));
+        }
       }
 
       processed++;

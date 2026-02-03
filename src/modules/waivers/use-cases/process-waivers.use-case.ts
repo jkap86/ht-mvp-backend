@@ -17,12 +17,14 @@ import {
 import { NotFoundException } from '../../../utils/exceptions';
 import { getWaiverLockId } from '../../../utils/locks';
 import { addToWaiverWire, WaiverInfoContext } from './waiver-info.use-case';
+import { EventListenerService } from '../../chat/event-listener.service';
 
 export interface ProcessWaiversContext extends WaiverInfoContext {
   claimsRepo: WaiverClaimsRepository;
   rosterPlayersRepo: RosterPlayersRepository;
   transactionsRepo: RosterTransactionsRepository;
   tradesRepo?: TradesRepository;
+  eventListenerService?: EventListenerService;
 }
 
 /**
@@ -149,6 +151,13 @@ export async function processLeagueClaims(
     // Emit budgets updated if any successful claims in FAAB mode
     if (successful > 0 && settings.waiverType === 'faab') {
       emitBudgetUpdated(ctx, leagueId, season);
+    }
+
+    // Emit waiver processed system message if any claims were processed
+    if (processed > 0 && ctx.eventListenerService) {
+      ctx.eventListenerService
+        .handleWaiverProcessed(leagueId)
+        .catch((err) => console.error('Failed to emit waiver processed system message:', err));
     }
 
     return { processed, successful };
@@ -334,6 +343,19 @@ async function emitClaimSuccessful(ctx: ProcessWaiversContext, claim: WaiverClai
     const claimWithDetails = await ctx.claimsRepo.findByIdWithDetails(claim.id);
     if (claimWithDetails) {
       socket?.emitWaiverClaimSuccessful(roster.userId, waiverClaimToResponse(claimWithDetails));
+
+      // Emit system message to league chat
+      if (ctx.eventListenerService) {
+        const teamName = roster.settings?.team_name || `Team ${roster.id}`;
+        ctx.eventListenerService
+          .handleWaiverSuccessful(
+            claim.leagueId,
+            teamName,
+            claimWithDetails.playerName || 'Unknown Player',
+            claim.bidAmount > 0 ? claim.bidAmount : undefined
+          )
+          .catch((err) => console.error('Failed to emit waiver successful system message:', err));
+      }
     }
   }
 }

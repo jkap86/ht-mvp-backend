@@ -8,9 +8,11 @@ import {
 } from '../../../utils/exceptions';
 import { getTradeLockId } from '../../../utils/locks';
 import { proposeTrade, ProposeTradeContext } from './propose-trade.use-case';
+import { EventListenerService } from '../../chat/event-listener.service';
 
 export interface CounterTradeContext extends ProposeTradeContext {
   db: Pool;
+  eventListenerService?: EventListenerService;
 }
 
 /**
@@ -85,6 +87,13 @@ export async function counterTrade(
   }
 
   emitTradeCounteredEvent(originalTrade.leagueId, tradeId, newTrade);
+
+  // Emit system message for the counter trade
+  if (ctx.eventListenerService) {
+    ctx.eventListenerService
+      .handleTradeCountered(originalTrade.leagueId, newTrade.id, newTrade.notifyLeagueChat)
+      .catch((err) => console.error('Failed to emit trade countered system message:', err));
+  }
 
   return newTrade;
 }

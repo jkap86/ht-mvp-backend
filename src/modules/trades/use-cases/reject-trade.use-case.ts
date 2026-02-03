@@ -9,11 +9,13 @@ import {
   ValidationException,
 } from '../../../utils/exceptions';
 import { getTradeLockId } from '../../../utils/locks';
+import { EventListenerService } from '../../chat/event-listener.service';
 
 export interface RejectTradeContext {
   db: Pool;
   tradesRepo: TradesRepository;
   rosterRepo: RosterRepository;
+  eventListenerService?: EventListenerService;
 }
 
 /**
@@ -64,6 +66,13 @@ export async function rejectTrade(
   if (!tradeWithDetails) throw new Error('Failed to get trade details');
 
   emitTradeRejectedEvent(trade.leagueId, trade.id);
+
+  // Emit system message to league chat
+  if (ctx.eventListenerService) {
+    ctx.eventListenerService
+      .handleTradeRejected(trade.leagueId, trade.id, trade.notifyLeagueChat)
+      .catch((err) => console.error('Failed to emit trade rejected system message:', err));
+  }
 
   return tradeWithDetails;
 }

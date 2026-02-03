@@ -68,6 +68,8 @@ const mockTrade: Trade = {
   createdAt: new Date(),
   updatedAt: new Date(),
   completedAt: null,
+  notifyLeagueChat: true,
+  notifyDm: true,
 };
 
 const mockTradeItem: TradeItem = {

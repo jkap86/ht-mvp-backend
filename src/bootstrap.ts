@@ -45,6 +45,8 @@ import { DraftPickAssetRepository } from './modules/drafts/draft-pick-asset.repo
 import { SlowAuctionService } from './modules/drafts/auction/slow-auction.service';
 import { FastAuctionService } from './modules/drafts/auction/fast-auction.service';
 import { ChatService } from './modules/chat/chat.service';
+import { SystemMessageService } from './modules/chat/system-message.service';
+import { EventListenerService } from './modules/chat/event-listener.service';
 import { DmService } from './modules/dm/dm.service';
 import { PlayerService } from './modules/players/players.service';
 import { SleeperApiClient } from './modules/players/sleeper.client';
@@ -283,6 +285,22 @@ function bootstrap(): void {
   );
 
   container.register(
+    KEYS.SYSTEM_MESSAGE_SERVICE,
+    () => new SystemMessageService(container.resolve(KEYS.CHAT_REPO))
+  );
+
+  container.register(
+    KEYS.EVENT_LISTENER_SERVICE,
+    () =>
+      new EventListenerService(
+        container.resolve(KEYS.SYSTEM_MESSAGE_SERVICE),
+        container.resolve(KEYS.TRADES_REPO),
+        container.resolve(KEYS.ROSTER_REPO),
+        container.resolve(KEYS.LEAGUE_REPO)
+      )
+  );
+
+  container.register(
     KEYS.DM_SERVICE,
     () => new DmService(container.resolve(KEYS.DM_REPO), container.resolve(KEYS.USER_REPO))
   );
@@ -398,7 +416,8 @@ function bootstrap(): void {
         container.resolve(KEYS.ROSTER_REPO),
         container.resolve(KEYS.ROSTER_PLAYERS_REPO),
         container.resolve(KEYS.ROSTER_TRANSACTIONS_REPO),
-        container.resolve(KEYS.LEAGUE_REPO)
+        container.resolve(KEYS.LEAGUE_REPO),
+        container.resolve(KEYS.EVENT_LISTENER_SERVICE)
       )
   );
 
@@ -416,7 +435,8 @@ function bootstrap(): void {
         container.resolve(KEYS.ROSTER_PLAYERS_REPO),
         container.resolve(KEYS.ROSTER_TRANSACTIONS_REPO),
         container.resolve(KEYS.LEAGUE_REPO),
-        container.resolve(KEYS.TRADES_REPO)
+        container.resolve(KEYS.TRADES_REPO),
+        container.resolve(KEYS.EVENT_LISTENER_SERVICE)
       )
   );
 

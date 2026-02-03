@@ -15,6 +15,7 @@ import {
   ConflictException,
 } from '../../../utils/exceptions';
 import { getTradeLockId } from '../../../utils/locks';
+import { EventListenerService } from '../../chat/event-listener.service';
 
 const DEFAULT_REVIEW_HOURS = 24;
 
@@ -27,6 +28,7 @@ export interface AcceptTradeContext {
   transactionsRepo: RosterTransactionsRepository;
   leagueRepo: LeagueRepository;
   pickAssetRepo?: DraftPickAssetRepository;
+  eventListenerService?: EventListenerService;
 }
 
 /**
@@ -160,6 +162,14 @@ export async function acceptTrade(
     // Emit socket events AFTER commit
     emitTradeAcceptedEvent(trade.leagueId, trade.id, updatedTrade);
     emitPickTradedEvents(pickTradedEvents);
+
+    // Emit system message to league chat
+    if (ctx.eventListenerService) {
+      const isCompleted = updatedTrade.status === 'completed';
+      ctx.eventListenerService
+        .handleTradeAccepted(trade.leagueId, trade.id, isCompleted, trade.notifyLeagueChat)
+        .catch((err) => console.error('Failed to emit trade accepted system message:', err));
+    }
 
     return tradeWithDetails;
   } catch (error) {

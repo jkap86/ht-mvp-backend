@@ -6,6 +6,7 @@ import {
 } from '../rosters/rosters.repository';
 import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import { TradeWithDetails, ProposeTradeRequest, CounterTradeRequest } from './trades.model';
+import { EventListenerService } from '../chat/event-listener.service';
 
 // Import use-cases
 import {
@@ -37,7 +38,8 @@ export class TradesService {
     private readonly rosterRepo: RosterRepository,
     private readonly rosterPlayersRepo: RosterPlayersRepository,
     private readonly transactionsRepo: RosterTransactionsRepository,
-    private readonly leagueRepo: LeagueRepository
+    private readonly leagueRepo: LeagueRepository,
+    private readonly eventListenerService?: EventListenerService
   ) {}
 
   /**
@@ -57,6 +59,7 @@ export class TradesService {
           rosterRepo: this.rosterRepo,
           rosterPlayersRepo: this.rosterPlayersRepo,
           leagueRepo: this.leagueRepo,
+          eventListenerService: this.eventListenerService,
         },
         client,
         leagueId,
@@ -82,6 +85,7 @@ export class TradesService {
         rosterPlayersRepo: this.rosterPlayersRepo,
         transactionsRepo: this.transactionsRepo,
         leagueRepo: this.leagueRepo,
+        eventListenerService: this.eventListenerService,
       },
       tradeId,
       userId
@@ -97,6 +101,7 @@ export class TradesService {
         db: this.db,
         tradesRepo: this.tradesRepo,
         rosterRepo: this.rosterRepo,
+        eventListenerService: this.eventListenerService,
       },
       tradeId,
       userId
@@ -112,6 +117,7 @@ export class TradesService {
         db: this.db,
         tradesRepo: this.tradesRepo,
         rosterRepo: this.rosterRepo,
+        eventListenerService: this.eventListenerService,
       },
       tradeId,
       userId
@@ -134,6 +140,7 @@ export class TradesService {
         rosterRepo: this.rosterRepo,
         rosterPlayersRepo: this.rosterPlayersRepo,
         leagueRepo: this.leagueRepo,
+        eventListenerService: this.eventListenerService,
       },
       tradeId,
       userId,
@@ -156,6 +163,7 @@ export class TradesService {
         tradeVotesRepo: this.tradeVotesRepo,
         rosterRepo: this.rosterRepo,
         leagueRepo: this.leagueRepo,
+        eventListenerService: this.eventListenerService,
       },
       tradeId,
       userId,
@@ -229,6 +237,7 @@ export class TradesService {
       rosterPlayersRepo: this.rosterPlayersRepo,
       transactionsRepo: this.transactionsRepo,
       leagueRepo: this.leagueRepo,
+      eventListenerService: this.eventListenerService,
     });
   }
 }

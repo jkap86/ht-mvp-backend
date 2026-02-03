@@ -24,6 +24,8 @@ export const proposeTradeSchema = z
       .array(z.number().int().positive('Each requesting pick asset ID must be a positive integer'))
       .default([]),
     message: z.string().max(500, 'Message cannot exceed 500 characters').optional(),
+    notify_league_chat: z.boolean().default(true),
+    notify_dm: z.boolean().default(true),
   })
   .refine(
     (data) => data.requesting_player_ids.length > 0 || data.requesting_pick_asset_ids.length > 0,

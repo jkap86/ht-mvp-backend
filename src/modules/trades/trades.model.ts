@@ -31,6 +31,8 @@ export interface Trade {
   createdAt: Date;
   updatedAt: Date;
   completedAt: Date | null;
+  notifyLeagueChat: boolean;
+  notifyDm: boolean;
 }
 
 export interface TradeItem {
@@ -98,6 +100,8 @@ export interface ProposeTradeRequest {
   offeringPickAssetIds?: number[];
   requestingPickAssetIds?: number[];
   message?: string;
+  notifyLeagueChat?: boolean;
+  notifyDm?: boolean;
 }
 
 export interface CounterTradeRequest {
@@ -128,6 +132,8 @@ export function tradeFromDatabase(row: any): Trade {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     completedAt: row.completed_at,
+    notifyLeagueChat: row.notify_league_chat ?? true,
+    notifyDm: row.notify_dm ?? true,
   };
 }
 
@@ -151,6 +157,8 @@ export function tradeToResponse(trade: Trade): Record<string, any> {
     created_at: trade.createdAt,
     updated_at: trade.updatedAt,
     completed_at: trade.completedAt,
+    notify_league_chat: trade.notifyLeagueChat,
+    notify_dm: trade.notifyDm,
   };
 }
 

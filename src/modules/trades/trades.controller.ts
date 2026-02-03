@@ -72,6 +72,8 @@ export class TradesController {
         offering_pick_asset_ids,
         requesting_pick_asset_ids,
         message,
+        notify_league_chat,
+        notify_dm,
       } = req.body;
 
       if (!recipient_roster_id) {
@@ -99,6 +101,8 @@ export class TradesController {
         offeringPickAssetIds: offering_pick_asset_ids,
         requestingPickAssetIds: requesting_pick_asset_ids,
         message,
+        notifyLeagueChat: notify_league_chat,
+        notifyDm: notify_dm,
       });
 
       res.status(201).json(tradeWithDetailsToResponse(trade));
