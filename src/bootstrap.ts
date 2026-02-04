@@ -112,6 +112,12 @@ function bootstrap(): void {
     () => new TradeVotesRepository(container.resolve(KEYS.POOL))
   );
 
+  // Dues repository (needed by RosterService)
+  container.register(
+    KEYS.DUES_REPO,
+    () => new DuesRepository(container.resolve(KEYS.POOL))
+  );
+
   // External Clients
   container.register(KEYS.SLEEPER_CLIENT, () => new SleeperApiClient());
 
@@ -162,7 +168,8 @@ function bootstrap(): void {
         container.resolve(KEYS.ROSTER_REPO),
         container.resolve(KEYS.USER_REPO),
         container.resolve(KEYS.ROSTER_PLAYERS_REPO),
-        container.resolve(KEYS.EVENT_LISTENER_SERVICE)
+        container.resolve(KEYS.EVENT_LISTENER_SERVICE),
+        container.resolve(KEYS.DUES_REPO)
       )
   );
 
@@ -477,12 +484,7 @@ function bootstrap(): void {
       )
   );
 
-  // Dues
-  container.register(
-    KEYS.DUES_REPO,
-    () => new DuesRepository(container.resolve(KEYS.POOL))
-  );
-
+  // Dues service
   container.register(
     KEYS.DUES_SERVICE,
     () =>

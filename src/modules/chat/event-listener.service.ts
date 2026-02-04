@@ -199,6 +199,7 @@ export class EventListenerService {
       toTeam: trade.recipientTeamName,
       fromRosterId: trade.proposerRosterId,
       toRosterId: trade.recipientRosterId,
+      reason,
     });
   }
 

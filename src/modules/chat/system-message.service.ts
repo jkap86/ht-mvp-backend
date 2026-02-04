@@ -19,7 +19,10 @@ const TEMPLATES: Record<MessageType, (m: SystemMessageMetadata) => string> = {
   trade_rejected: (m) => `${m.toTeam} rejected trade from ${m.fromTeam}`,
   trade_cancelled: (m) => `${m.fromTeam} cancelled their trade offer to ${m.toTeam}`,
   trade_vetoed: (m) => `Trade vetoed: ${m.fromTeam} ↔ ${m.toTeam}`,
-  trade_invalidated: (m) => `Trade invalidated: ${m.fromTeam} ↔ ${m.toTeam}`,
+  trade_invalidated: (m) =>
+    m.reason
+      ? `Trade invalidated: ${m.fromTeam} ↔ ${m.toTeam} (${m.reason})`
+      : `Trade invalidated: ${m.fromTeam} ↔ ${m.toTeam}`,
   waiver_successful: (m) =>
     m.bidAmount && m.bidAmount > 0
       ? `${m.teamName} claimed ${m.playerName} ($${m.bidAmount})`

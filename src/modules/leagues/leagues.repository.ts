@@ -338,7 +338,7 @@ export class LeagueRepository {
 
   /**
    * Find public leagues that the user hasn't joined yet
-   * Returns leagues with member count for discovery
+   * Returns leagues with member count, dues info, and fill status for discovery
    */
   async findPublicLeagues(userId: string, limit: number = 50, offset: number = 0): Promise<any[]> {
     const result = await this.db.query(
@@ -349,29 +349,79 @@ export class LeagueRepository {
         l.mode,
         l.total_rosters,
         l.is_public,
-        COUNT(r.user_id) as member_count
+        COUNT(DISTINCT r.user_id) FILTER (WHERE r.is_benched = false) as member_count,
+        CASE WHEN ld.id IS NOT NULL THEN true ELSE false END as has_dues,
+        ld.buy_in_amount,
+        ld.currency,
+        COALESCE(COUNT(DISTINCT dp.roster_id) FILTER (WHERE dp.is_paid = true), 0) as paid_count
        FROM leagues l
-       LEFT JOIN rosters r ON r.league_id = l.id
+       LEFT JOIN rosters r ON r.league_id = l.id AND r.user_id IS NOT NULL
+       LEFT JOIN league_dues ld ON ld.league_id = l.id
+       LEFT JOIN dues_payments dp ON dp.league_id = l.id
+         AND dp.roster_id IN (SELECT id FROM rosters WHERE league_id = l.id AND is_benched = false)
        WHERE l.is_public = true
          AND NOT EXISTS (
            SELECT 1 FROM rosters r2
            WHERE r2.league_id = l.id AND r2.user_id = $1
          )
-       GROUP BY l.id
+       GROUP BY l.id, ld.id, ld.buy_in_amount, ld.currency
        ORDER BY l.created_at DESC
        LIMIT $2 OFFSET $3`,
       [userId, limit, offset]
     );
 
-    return result.rows.map((row) => ({
-      id: row.id,
-      name: row.name,
-      season: row.season,
-      mode: row.mode,
-      total_rosters: row.total_rosters,
-      is_public: row.is_public,
-      member_count: parseInt(row.member_count, 10),
-    }));
+    return result.rows.map((row) => {
+      const memberCount = parseInt(row.member_count, 10);
+      const totalRosters = row.total_rosters;
+      const hasDues = row.has_dues;
+      const paidCount = parseInt(row.paid_count, 10);
+
+      return {
+        id: row.id,
+        name: row.name,
+        season: row.season,
+        mode: row.mode,
+        total_rosters: totalRosters,
+        is_public: row.is_public,
+        member_count: memberCount,
+        has_dues: hasDues,
+        buy_in_amount: row.buy_in_amount ? parseFloat(row.buy_in_amount) : null,
+        currency: row.currency || null,
+        paid_count: paidCount,
+        fill_status: this.computeFillStatus(memberCount, totalRosters, hasDues, paidCount),
+      };
+    });
+  }
+
+  /**
+   * Compute fill status for a league
+   * - 'open': Slots available
+   * - 'waiting_payment': Paid league at capacity but not all paid
+   * - 'filled': Free league full, OR paid league with all paid
+   */
+  private computeFillStatus(
+    memberCount: number,
+    totalRosters: number,
+    hasDues: boolean,
+    paidCount: number
+  ): 'open' | 'waiting_payment' | 'filled' {
+    // Slots still available
+    if (memberCount < totalRosters) {
+      return 'open';
+    }
+
+    // League at capacity
+    if (hasDues) {
+      // Paid league - check if all members have paid
+      if (paidCount >= memberCount) {
+        return 'filled';
+      }
+      // Not all paid - can join as bench
+      return 'waiting_payment';
+    }
+
+    // Free league at capacity
+    return 'filled';
   }
 }
 

@@ -71,15 +71,23 @@ export class DuesRepository {
    * Delete dues configuration for a league
    */
   async deleteDuesConfig(leagueId: number): Promise<boolean> {
-    const result = await this.db.query(
-      'DELETE FROM league_dues WHERE league_id = $1',
-      [leagueId]
-    );
-
-    // Also delete all payment records for this league
-    await this.db.query('DELETE FROM dues_payments WHERE league_id = $1', [leagueId]);
-
-    return result.rowCount !== null && result.rowCount > 0;
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query(
+        'DELETE FROM league_dues WHERE league_id = $1',
+        [leagueId]
+      );
+      // Also delete all payment records for this league
+      await client.query('DELETE FROM dues_payments WHERE league_id = $1', [leagueId]);
+      await client.query('COMMIT');
+      return result.rowCount !== null && result.rowCount > 0;
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
   }
 
   /**
@@ -108,8 +116,8 @@ export class DuesRepository {
       paidAt: row.paid_at,
       markedByUserId: row.marked_by_user_id,
       notes: row.notes,
-      createdAt: row.created_at || new Date(),
-      updatedAt: row.updated_at || new Date(),
+      createdAt: row.created_at || null,
+      updatedAt: row.updated_at || null,
       teamName: row.team_name,
       username: row.username,
     }));
@@ -130,9 +138,11 @@ export class DuesRepository {
 
   /**
    * Mark payment status for a roster
+   * Note: notes=undefined preserves existing notes, notes=null or notes=string sets the value
    */
   async markPaymentStatus(params: MarkPaymentParams): Promise<DuesPayment> {
-    const paidAt = params.isPaid ? 'CURRENT_TIMESTAMP' : 'NULL';
+    const notesProvided = params.notes !== undefined;
+    const notesClause = notesProvided ? 'EXCLUDED.notes' : 'dues_payments.notes';
 
     const result = await this.db.query(
       `INSERT INTO dues_payments (league_id, roster_id, is_paid, paid_at, marked_by_user_id, notes)
@@ -141,7 +151,7 @@ export class DuesRepository {
          is_paid = EXCLUDED.is_paid,
          paid_at = ${params.isPaid ? 'CURRENT_TIMESTAMP' : 'NULL'},
          marked_by_user_id = EXCLUDED.marked_by_user_id,
-         notes = COALESCE(EXCLUDED.notes, dues_payments.notes),
+         notes = ${notesClause},
          updated_at = CURRENT_TIMESTAMP
        RETURNING *`,
       [
@@ -149,7 +159,7 @@ export class DuesRepository {
         params.rosterId,
         params.isPaid,
         params.markedByUserId,
-        params.notes || null,
+        notesProvided ? params.notes : null,
       ]
     );
 

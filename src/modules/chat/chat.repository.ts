@@ -82,7 +82,7 @@ export class ChatRepository {
       params.push(before);
     }
 
-    query += ` ORDER BY m.created_at DESC LIMIT $${params.length + 1}`;
+    query += ` ORDER BY m.id DESC LIMIT $${params.length + 1}`;
     params.push(limit);
 
     const result = await this.pool.query(query, params);

@@ -25,8 +25,8 @@ export interface DuesPayment {
   paidAt: Date | null;
   markedByUserId: string | null;
   notes: string | null;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: Date | null;
+  updatedAt: Date | null;
 }
 
 export interface DuesPaymentWithRoster extends DuesPayment {

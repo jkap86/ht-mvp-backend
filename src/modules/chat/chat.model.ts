@@ -29,6 +29,7 @@ export interface SystemMessageMetadata {
   toTeam?: string;
   fromRosterId?: number;
   toRosterId?: number;
+  reason?: string; // e.g., for trade_invalidated
 
   // Waiver events
   teamName?: string;

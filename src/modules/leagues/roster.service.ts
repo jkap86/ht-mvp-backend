@@ -2,6 +2,7 @@ import { Pool } from 'pg';
 import { LeagueRepository, RosterRepository } from './leagues.repository';
 import { UserRepository } from '../auth/auth.repository';
 import { RosterPlayersRepository } from '../rosters/rosters.repository';
+import { DuesRepository } from '../dues/dues.repository';
 import { EventListenerService } from '../chat/event-listener.service';
 import { tryGetSocketService } from '../../socket/socket.service';
 import {
@@ -18,7 +19,8 @@ export class RosterService {
     private readonly rosterRepo: RosterRepository,
     private readonly userRepo?: UserRepository,
     private readonly rosterPlayersRepo?: RosterPlayersRepository,
-    private readonly eventListenerService?: EventListenerService
+    private readonly eventListenerService?: EventListenerService,
+    private readonly duesRepo?: DuesRepository
   ) {}
 
   /**
@@ -31,7 +33,7 @@ export class RosterService {
     return { rosterId: roster.rosterId };
   }
 
-  async joinLeague(leagueId: number, userId: string): Promise<{ message: string; roster: any }> {
+  async joinLeague(leagueId: number, userId: string): Promise<{ message: string; roster: any; joinedAsBench?: boolean }> {
     const league = await this.leagueRepo.findById(leagueId);
 
     if (!league) {
@@ -52,6 +54,7 @@ export class RosterService {
       }
 
       let roster;
+      let joinedAsBench = false;
 
       // Try to claim an empty roster first (for leagues with pre-created rosters from randomization)
       const emptyRoster = await this.rosterRepo.findEmptyRoster(leagueId, client);
@@ -62,12 +65,23 @@ export class RosterService {
         // No empty roster available - check if league is full
         const rosterCount = await this.rosterRepo.getRosterCount(leagueId, client);
         if (rosterCount >= league.totalRosters) {
-          throw new ConflictException('League is full');
-        }
+          // League is at capacity - check if it's a paid league with unpaid members
+          const canJoinAsBench = await this.canJoinAsBench(leagueId, rosterCount, client);
 
-        // Create new roster (league doesn't have pre-created empty rosters)
-        const nextRosterId = await this.rosterRepo.getNextRosterId(leagueId, client);
-        roster = await this.rosterRepo.create(leagueId, userId, nextRosterId, client);
+          if (canJoinAsBench) {
+            // Create as benched roster - user can participate once someone pays or leaves
+            const nextRosterId = await this.rosterRepo.getNextRosterId(leagueId, client);
+            roster = await this.rosterRepo.create(leagueId, userId, nextRosterId, client);
+            await this.rosterRepo.benchMember(roster.id, client);
+            joinedAsBench = true;
+          } else {
+            throw new ConflictException('League is full');
+          }
+        } else {
+          // Create new roster (league doesn't have pre-created empty rosters)
+          const nextRosterId = await this.rosterRepo.getNextRosterId(leagueId, client);
+          roster = await this.rosterRepo.create(leagueId, userId, nextRosterId, client);
+        }
       }
 
       await client.query('COMMIT');
@@ -123,11 +137,14 @@ export class RosterService {
       }
 
       return {
-        message: 'Successfully joined the league',
+        message: joinedAsBench
+          ? 'Successfully joined the league as a bench member'
+          : 'Successfully joined the league',
         roster: {
           roster_id: roster.rosterId,
           league_id: roster.leagueId,
         },
+        joinedAsBench,
       };
     } catch (error) {
       await client.query('ROLLBACK');
@@ -135,6 +152,43 @@ export class RosterService {
     } finally {
       client.release();
     }
+  }
+
+  /**
+   * Check if a user can join a paid league as bench (when at capacity but not all paid)
+   * Returns true if:
+   * - League has dues configured
+   * - Not all active members have paid their dues
+   */
+  private async canJoinAsBench(
+    leagueId: number,
+    activeRosterCount: number,
+    client: any
+  ): Promise<boolean> {
+    // Check if league has dues
+    const duesResult = await client.query(
+      'SELECT id FROM league_dues WHERE league_id = $1',
+      [leagueId]
+    );
+
+    if (duesResult.rows.length === 0) {
+      // Free league - cannot join as bench
+      return false;
+    }
+
+    // Check how many active members have paid
+    const paidResult = await client.query(
+      `SELECT COUNT(DISTINCT dp.roster_id) as paid_count
+       FROM dues_payments dp
+       INNER JOIN rosters r ON dp.roster_id = r.id
+       WHERE dp.league_id = $1 AND dp.is_paid = true AND r.is_benched = false`,
+      [leagueId]
+    );
+
+    const paidCount = parseInt(paidResult.rows[0].paid_count, 10) || 0;
+
+    // Can join as bench if not all active members have paid
+    return paidCount < activeRosterCount;
   }
 
   async getLeagueMembers(leagueId: number, userId: string): Promise<any[]> {

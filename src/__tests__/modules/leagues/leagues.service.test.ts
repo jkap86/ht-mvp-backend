@@ -78,6 +78,7 @@ const createMockLeagueRepo = (): jest.Mocked<LeagueRepository> =>
     update: jest.fn(),
     delete: jest.fn(),
     findPublicLeagues: jest.fn(),
+    canChangeLeagueMode: jest.fn(),
   }) as unknown as jest.Mocked<LeagueRepository>;
 
 const createMockRosterRepo = (): jest.Mocked<RosterRepository> =>
@@ -186,6 +187,7 @@ describe('LeagueService', () => {
     it('should return league when user is member', async () => {
       mockLeagueRepo.findByIdWithUserRoster.mockResolvedValue(mockLeague);
       mockLeagueRepo.isUserMember.mockResolvedValue(true);
+      mockLeagueRepo.canChangeLeagueMode.mockResolvedValue({ allowed: true });
 
       const result = await leagueService.getLeagueById(1, 'user-123');
 
@@ -235,6 +237,7 @@ describe('LeagueService', () => {
   describe('updateLeague', () => {
     it('should update league when user is commissioner', async () => {
       mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockLeagueRepo.findById.mockResolvedValue(mockLeague);
       mockLeagueRepo.update.mockResolvedValue(mockLeague);
 
       await leagueService.updateLeague(1, 'user-123', { name: 'Updated Name' });
@@ -296,6 +299,56 @@ describe('LeagueService', () => {
       await leagueService.discoverPublicLeagues('user-123', 10, 20);
 
       expect(mockLeagueRepo.findPublicLeagues).toHaveBeenCalledWith('user-123', 10, 20);
+    });
+
+    it('should return leagues with fill status fields', async () => {
+      const mockPublicLeagues = [
+        {
+          id: 1,
+          name: 'Open Free League',
+          member_count: 5,
+          total_rosters: 10,
+          has_dues: false,
+          buy_in_amount: null,
+          currency: null,
+          paid_count: 0,
+          fill_status: 'open',
+        },
+        {
+          id: 2,
+          name: 'Paid League Waiting Payment',
+          member_count: 10,
+          total_rosters: 10,
+          has_dues: true,
+          buy_in_amount: 50.0,
+          currency: 'USD',
+          paid_count: 8,
+          fill_status: 'waiting_payment',
+        },
+        {
+          id: 3,
+          name: 'Full Paid League',
+          member_count: 12,
+          total_rosters: 12,
+          has_dues: true,
+          buy_in_amount: 100.0,
+          currency: 'USD',
+          paid_count: 12,
+          fill_status: 'filled',
+        },
+      ];
+      mockLeagueRepo.findPublicLeagues.mockResolvedValue(mockPublicLeagues);
+
+      const result = await leagueService.discoverPublicLeagues('user-123');
+
+      expect(result).toHaveLength(3);
+      expect(result[0].fill_status).toBe('open');
+      expect(result[0].has_dues).toBe(false);
+      expect(result[1].fill_status).toBe('waiting_payment');
+      expect(result[1].has_dues).toBe(true);
+      expect(result[1].buy_in_amount).toBe(50.0);
+      expect(result[2].fill_status).toBe('filled');
+      expect(result[2].paid_count).toBe(12);
     });
   });
 
