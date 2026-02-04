@@ -3,6 +3,7 @@ import { RosterService } from './roster.service';
 import { League } from './leagues.model';
 import { DraftService } from '../drafts/drafts.service';
 import { getDraftStructure } from '../drafts/draft-structure-presets';
+import { EventListenerService } from '../chat/event-listener.service';
 import { NotFoundException, ForbiddenException, ValidationException } from '../../utils/exceptions';
 
 export class LeagueService {
@@ -10,7 +11,8 @@ export class LeagueService {
     private readonly leagueRepo: LeagueRepository,
     private readonly rosterRepo: RosterRepository,
     private readonly rosterService: RosterService,
-    private readonly draftService: DraftService
+    private readonly draftService: DraftService,
+    private readonly eventListenerService?: EventListenerService
   ) {}
 
   async getUserLeagues(userId: string, limit?: number, offset?: number): Promise<any[]> {
@@ -104,10 +106,15 @@ export class LeagueService {
       throw new ForbiddenException('Only the commissioner can update league settings');
     }
 
+    // Get current league state before updates to track what changed
+    const currentLeague = await this.leagueRepo.findById(leagueId);
+    if (!currentLeague) {
+      throw new NotFoundException('League not found');
+    }
+
     // Validate mode change restriction
     if (updates.mode !== undefined) {
-      const currentLeague = await this.leagueRepo.findById(leagueId);
-      if (currentLeague && updates.mode !== currentLeague.mode) {
+      if (updates.mode !== currentLeague.mode) {
         const modeChangeCheck = await this.leagueRepo.canChangeLeagueMode(leagueId);
         if (!modeChangeCheck.allowed) {
           throw new ValidationException(modeChangeCheck.reason!);
@@ -121,7 +128,89 @@ export class LeagueService {
     }
 
     const league = await this.leagueRepo.update(leagueId, updates);
+
+    // Send system messages for changed settings
+    if (this.eventListenerService) {
+      const changedSettings = this.getChangedSettings(currentLeague, updates);
+      for (const settingName of changedSettings) {
+        await this.eventListenerService.handleSettingsUpdated(leagueId, settingName);
+      }
+    }
+
     return league.toResponse();
+  }
+
+  /**
+   * Determines which settings have changed and returns human-readable names
+   */
+  private getChangedSettings(
+    currentLeague: League,
+    updates: Partial<League> & { totalRosters?: number }
+  ): string[] {
+    const changedSettings: string[] = [];
+
+    // Map of field names to human-readable labels
+    const settingLabels: Record<string, string> = {
+      name: 'League Name',
+      mode: 'League Mode',
+      totalRosters: 'Team Count',
+      isPublic: 'Privacy Setting',
+      season: 'Season',
+    };
+
+    // Check simple fields
+    if (updates.name !== undefined && updates.name !== currentLeague.name) {
+      changedSettings.push(settingLabels.name);
+    }
+    if (updates.mode !== undefined && updates.mode !== currentLeague.mode) {
+      changedSettings.push(settingLabels.mode);
+    }
+    if (updates.totalRosters !== undefined && updates.totalRosters !== currentLeague.totalRosters) {
+      changedSettings.push(settingLabels.totalRosters);
+    }
+    if (updates.isPublic !== undefined && updates.isPublic !== currentLeague.isPublic) {
+      changedSettings.push(settingLabels.isPublic);
+    }
+    if (updates.season !== undefined && updates.season !== currentLeague.season) {
+      changedSettings.push(settingLabels.season);
+    }
+
+    // Check leagueSettings (nested object)
+    if (updates.leagueSettings) {
+      const currentSettings = currentLeague.leagueSettings || {};
+      const leagueSettingLabels: Record<string, string> = {
+        draftType: 'Draft Type',
+        rosterPositions: 'Roster Positions',
+        benchSlots: 'Bench Slots',
+        irSlots: 'IR Slots',
+        tradeDeadline: 'Trade Deadline',
+        waiverType: 'Waiver Type',
+        waiverDays: 'Waiver Period',
+        faabBudget: 'FAAB Budget',
+        playoffTeams: 'Playoff Teams',
+        playoffStartWeek: 'Playoff Start Week',
+        playoffRounds: 'Playoff Rounds',
+      };
+
+      for (const [key, label] of Object.entries(leagueSettingLabels)) {
+        const newValue = (updates.leagueSettings as any)[key];
+        const oldValue = (currentSettings as any)[key];
+        if (newValue !== undefined && JSON.stringify(newValue) !== JSON.stringify(oldValue)) {
+          changedSettings.push(label);
+        }
+      }
+    }
+
+    // Check scoringSettings (nested object)
+    if (updates.scoringSettings) {
+      const currentScoring = currentLeague.scoringSettings || {};
+      // Check if scoring settings actually changed
+      if (JSON.stringify(updates.scoringSettings) !== JSON.stringify(currentScoring)) {
+        changedSettings.push('Scoring Settings');
+      }
+    }
+
+    return changedSettings;
   }
 
   /**

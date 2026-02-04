@@ -2,6 +2,7 @@ import { Pool } from 'pg';
 import { LeagueRepository, RosterRepository } from './leagues.repository';
 import { UserRepository } from '../auth/auth.repository';
 import { RosterPlayersRepository } from '../rosters/rosters.repository';
+import { EventListenerService } from '../chat/event-listener.service';
 import { tryGetSocketService } from '../../socket/socket.service';
 import {
   NotFoundException,
@@ -16,7 +17,8 @@ export class RosterService {
     private readonly leagueRepo: LeagueRepository,
     private readonly rosterRepo: RosterRepository,
     private readonly userRepo?: UserRepository,
-    private readonly rosterPlayersRepo?: RosterPlayersRepository
+    private readonly rosterPlayersRepo?: RosterPlayersRepository,
+    private readonly eventListenerService?: EventListenerService
   ) {}
 
   /**
@@ -70,13 +72,21 @@ export class RosterService {
 
       await client.query('COMMIT');
 
+      // Get team name for notifications
+      const teamName = `Team ${roster.rosterId}`;
+
       // Emit socket event for real-time UI update
       const socketService = tryGetSocketService();
       socketService?.emitMemberJoined(leagueId, {
         rosterId: roster.rosterId,
-        teamName: `Team ${roster.rosterId}`,
+        teamName,
         userId,
       });
+
+      // Send system message to league chat
+      if (this.eventListenerService) {
+        await this.eventListenerService.handleMemberJoined(leagueId, teamName);
+      }
 
       // Emit draft order update for any not-started drafts so draft room shows updated team names
       if (socketService) {
@@ -342,6 +352,11 @@ async devBulkAddUsers(
       // Emit socket event
       const socketService = tryGetSocketService();
       socketService?.emitMemberKicked(leagueId, { rosterId: targetRosterId, teamName });
+
+      // Send system message to league chat
+      if (this.eventListenerService) {
+        await this.eventListenerService.handleMemberKicked(leagueId, teamName);
+      }
 
       return { message: `${teamName} has been removed from the league`, teamName };
     } catch (error) {

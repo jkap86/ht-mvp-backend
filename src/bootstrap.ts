@@ -134,6 +134,23 @@ function bootstrap(): void {
       )
   );
 
+  // System message services (must be registered before RosterService and LeagueService which depend on them)
+  container.register(
+    KEYS.SYSTEM_MESSAGE_SERVICE,
+    () => new SystemMessageService(container.resolve(KEYS.CHAT_REPO))
+  );
+
+  container.register(
+    KEYS.EVENT_LISTENER_SERVICE,
+    () =>
+      new EventListenerService(
+        container.resolve(KEYS.SYSTEM_MESSAGE_SERVICE),
+        container.resolve(KEYS.TRADES_REPO),
+        container.resolve(KEYS.ROSTER_REPO),
+        container.resolve(KEYS.LEAGUE_REPO)
+      )
+  );
+
   container.register(
     KEYS.ROSTER_SERVICE,
     () =>
@@ -142,7 +159,8 @@ function bootstrap(): void {
         container.resolve(KEYS.LEAGUE_REPO),
         container.resolve(KEYS.ROSTER_REPO),
         container.resolve(KEYS.USER_REPO),
-        container.resolve(KEYS.ROSTER_PLAYERS_REPO)
+        container.resolve(KEYS.ROSTER_PLAYERS_REPO),
+        container.resolve(KEYS.EVENT_LISTENER_SERVICE)
       )
   );
 
@@ -229,7 +247,8 @@ function bootstrap(): void {
         container.resolve(KEYS.LEAGUE_REPO),
         container.resolve(KEYS.ROSTER_REPO),
         container.resolve(KEYS.ROSTER_SERVICE),
-        container.resolve(KEYS.DRAFT_SERVICE)
+        container.resolve(KEYS.DRAFT_SERVICE),
+        container.resolve(KEYS.EVENT_LISTENER_SERVICE)
       )
   );
 
@@ -283,22 +302,6 @@ function bootstrap(): void {
   container.register(
     KEYS.CHAT_SERVICE,
     () => new ChatService(container.resolve(KEYS.CHAT_REPO), container.resolve(KEYS.LEAGUE_REPO))
-  );
-
-  container.register(
-    KEYS.SYSTEM_MESSAGE_SERVICE,
-    () => new SystemMessageService(container.resolve(KEYS.CHAT_REPO))
-  );
-
-  container.register(
-    KEYS.EVENT_LISTENER_SERVICE,
-    () =>
-      new EventListenerService(
-        container.resolve(KEYS.SYSTEM_MESSAGE_SERVICE),
-        container.resolve(KEYS.TRADES_REPO),
-        container.resolve(KEYS.ROSTER_REPO),
-        container.resolve(KEYS.LEAGUE_REPO)
-      )
   );
 
   container.register(
