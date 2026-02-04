@@ -27,6 +27,7 @@ const mockDraft: Draft = {
   currentRound: 1,
   currentRosterId: null,
   pickDeadline: null,
+  scheduledStart: null,
   startedAt: null,
   completedAt: null,
   settings: {},

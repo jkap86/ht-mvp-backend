@@ -64,6 +64,7 @@ export const updateDraftSettingsSchema = z.object({
     .optional(),
   auction_settings: auctionSettingsSchema.partial().optional(),
   player_pool: playerPoolSchema.optional(),
+  scheduled_start: z.string().datetime().nullable().optional(),
 });
 
 export const makePickSchema = z.object({

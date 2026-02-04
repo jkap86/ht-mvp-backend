@@ -97,7 +97,7 @@ export class DuesRepository {
     const result = await this.db.query(
       `SELECT
         dp.*,
-        r.id as roster_id,
+        r.roster_id as roster_id,
         COALESCE(r.settings->>'team_name', u.username, 'Team ' || r.roster_id) as team_name,
         u.username
        FROM rosters r

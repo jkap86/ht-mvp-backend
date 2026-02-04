@@ -24,6 +24,7 @@ const mockDraft: Draft = {
   currentRound: 1,
   currentRosterId: 1,
   pickDeadline: new Date(Date.now() + 90000),
+  scheduledStart: null,
   startedAt: new Date(),
   completedAt: null,
   settings: {},

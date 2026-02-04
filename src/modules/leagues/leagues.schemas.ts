@@ -11,6 +11,9 @@ export const draftTypeEnum = z.enum([
 ]);
 export const auctionModeEnum = z.enum(['live', 'slow']);
 
+// Roster type enum
+export const rosterTypeEnum = z.enum(['lineup', 'bestball']);
+
 // League settings structure
 export const leagueSettingsSchema = z
   .object({
@@ -18,6 +21,7 @@ export const leagueSettingsSchema = z
     auctionMode: auctionModeEnum.optional(),
     auctionBudget: z.number().int().min(1).max(10000).optional(),
     rosterSlots: z.number().int().min(5).max(30).optional(),
+    rosterType: rosterTypeEnum.optional(),
   })
   .passthrough();
 

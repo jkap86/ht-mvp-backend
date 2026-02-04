@@ -10,6 +10,7 @@ export interface LeagueSettings {
   auctionMode?: 'live' | 'slow';
   auctionBudget?: number;
   rosterSlots?: number;
+  rosterType?: 'lineup' | 'bestball';
 }
 
 export class League {

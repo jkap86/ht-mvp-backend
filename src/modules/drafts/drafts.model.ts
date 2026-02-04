@@ -49,6 +49,7 @@ export interface Draft {
   pickTimeSeconds: number;
   pickDeadline: Date | null;
   rounds: number;
+  scheduledStart: Date | null;
   startedAt: Date | null;
   completedAt: Date | null;
   settings: AuctionSettings | Record<string, any>;
@@ -95,6 +96,7 @@ export function draftFromDatabase(row: any): Draft {
     pickTimeSeconds: row.pick_time_seconds,
     pickDeadline: row.pick_deadline,
     rounds: row.rounds,
+    scheduledStart: row.scheduled_start,
     startedAt: row.started_at,
     completedAt: row.completed_at,
     settings: row.settings || {},
@@ -142,6 +144,7 @@ export function draftToResponse(draft: Draft) {
     pick_time_seconds: draft.pickTimeSeconds,
     pick_deadline: draft.pickDeadline,
     rounds: draft.rounds,
+    scheduled_start: draft.scheduledStart,
     started_at: draft.startedAt,
     completed_at: draft.completedAt,
     settings: draft.settings,

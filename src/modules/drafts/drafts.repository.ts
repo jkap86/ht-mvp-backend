@@ -13,7 +13,7 @@ export class DraftRepository {
 
   async findByLeagueId(leagueId: number): Promise<Draft[]> {
     const result = await this.db.query(
-      'SELECT * FROM drafts WHERE league_id = $1 ORDER BY created_at DESC',
+      'SELECT * FROM drafts WHERE league_id = $1 ORDER BY CASE WHEN scheduled_start IS NULL THEN 1 ELSE 0 END, scheduled_start ASC NULLS LAST, created_at DESC',
       [leagueId]
     );
     return result.rows.map(draftFromDatabase);
@@ -35,7 +35,7 @@ export class DraftRepository {
        FROM drafts d
        CROSS JOIN membership_check mc
        WHERE d.league_id = $1
-       ORDER BY d.created_at DESC`,
+       ORDER BY CASE WHEN d.scheduled_start IS NULL THEN 1 ELSE 0 END, d.scheduled_start ASC NULLS LAST, d.created_at DESC`,
       [leagueId, userId]
     );
 
@@ -61,13 +61,14 @@ export class DraftRepository {
     draftType: string,
     rounds: number,
     pickTimeSeconds: number,
-    settings?: Record<string, any>
+    settings?: Record<string, any>,
+    scheduledStart?: Date
   ): Promise<Draft> {
     const result = await this.db.query(
-      `INSERT INTO drafts (league_id, draft_type, rounds, pick_time_seconds, settings)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO drafts (league_id, draft_type, rounds, pick_time_seconds, settings, scheduled_start)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING *`,
-      [leagueId, draftType, rounds, pickTimeSeconds, settings ? JSON.stringify(settings) : null]
+      [leagueId, draftType, rounds, pickTimeSeconds, settings ? JSON.stringify(settings) : null, scheduledStart || null]
     );
     return draftFromDatabase(result.rows[0]);
   }
@@ -124,6 +125,10 @@ export class DraftRepository {
     if (updates.draftType !== undefined) {
       setClauses.push(`draft_type = $${paramIndex++}`);
       values.push(updates.draftType);
+    }
+    if (updates.scheduledStart !== undefined) {
+      setClauses.push(`scheduled_start = $${paramIndex++}`);
+      values.push(updates.scheduledStart);
     }
 
     if (setClauses.length === 0) {

@@ -80,7 +80,7 @@ export class DraftController {
       const userId = requireUserId(req);
       const leagueId = requireLeagueId(req);
 
-      const { draft_type, rounds, pick_time_seconds, auction_settings, player_pool } = req.body;
+      const { draft_type, rounds, pick_time_seconds, auction_settings, player_pool, scheduled_start } = req.body;
 
       const draft = await this.draftService.createDraft(leagueId, userId, {
         draftType: draft_type,
@@ -88,6 +88,7 @@ export class DraftController {
         pickTimeSeconds: pick_time_seconds,
         auctionSettings: auction_settings,
         playerPool: player_pool,
+        scheduledStart: scheduled_start ? new Date(scheduled_start) : undefined,
       });
       res.status(201).json(draft);
     } catch (error) {
@@ -457,7 +458,15 @@ export class DraftController {
       const leagueId = requireLeagueId(req);
       const draftId = requireDraftId(req);
 
-      const { draft_type, rounds, pick_time_seconds, auction_settings, player_pool } = req.body;
+      const { draft_type, rounds, pick_time_seconds, auction_settings, player_pool, scheduled_start } = req.body;
+
+      // Handle scheduled_start: parse date string, or pass null to clear it
+      let scheduledStart: Date | null | undefined;
+      if (scheduled_start === null) {
+        scheduledStart = null;
+      } else if (scheduled_start !== undefined) {
+        scheduledStart = new Date(scheduled_start);
+      }
 
       const draft = await this.draftService.updateDraftSettings(leagueId, draftId, userId, {
         draftType: draft_type,
@@ -465,6 +474,7 @@ export class DraftController {
         pickTimeSeconds: pick_time_seconds,
         auctionSettings: auction_settings,
         playerPool: player_pool,
+        scheduledStart,
       });
 
       res.status(200).json(draft);

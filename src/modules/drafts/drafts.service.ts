@@ -89,6 +89,7 @@ export class DraftService {
         min_increment?: number;
       };
       playerPool?: ('veteran' | 'rookie' | 'college')[];
+      scheduledStart?: Date;
     }
   ): Promise<any> {
     const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
@@ -149,7 +150,8 @@ export class DraftService {
       options.draftType || 'snake',
       options.rounds || defaultRounds,
       options.pickTimeSeconds || 90,
-      Object.keys(settings).length > 0 ? settings : undefined
+      Object.keys(settings).length > 0 ? settings : undefined,
+      options.scheduledStart
     );
 
     // Create initial draft order
@@ -395,6 +397,7 @@ export class DraftService {
         min_increment?: number;
       };
       playerPool?: ('veteran' | 'rookie' | 'college')[];
+      scheduledStart?: Date | null;
     }
   ): Promise<any> {
     // 1. Verify commissioner
@@ -487,6 +490,7 @@ export class DraftService {
       rounds: updates.rounds,
       pickTimeSeconds: updates.pickTimeSeconds,
       settings: Object.keys(mergedSettings).length > 0 ? mergedSettings : undefined,
+      scheduledStart: updates.scheduledStart,
     });
 
     // 7. If rounds changed and draft not started, regenerate pick assets
