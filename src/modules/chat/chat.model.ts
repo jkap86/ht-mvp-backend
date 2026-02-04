@@ -15,7 +15,9 @@ export type MessageType =
   | 'waiver_processed'
   | 'settings_updated'
   | 'member_joined'
-  | 'member_kicked';
+  | 'member_kicked'
+  | 'dues_paid'
+  | 'dues_unpaid';
 
 /**
  * Metadata for system messages - stores event-specific details

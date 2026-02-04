@@ -64,6 +64,8 @@ import { PlayoffRepository } from './modules/playoffs/playoff.repository';
 import { PlayoffService } from './modules/playoffs/playoff.service';
 import { InvitationsRepository } from './modules/invitations/invitations.repository';
 import { InvitationsService } from './modules/invitations/invitations.service';
+import { DuesRepository } from './modules/dues/dues.repository';
+import { DuesService } from './modules/dues/dues.service';
 
 // Engines
 import { DraftEngineFactory } from './engines';
@@ -472,6 +474,23 @@ function bootstrap(): void {
         container.resolve(KEYS.ROSTER_REPO),
         container.resolve(KEYS.USER_REPO),
         container.resolve(KEYS.ROSTER_SERVICE)
+      )
+  );
+
+  // Dues
+  container.register(
+    KEYS.DUES_REPO,
+    () => new DuesRepository(container.resolve(KEYS.POOL))
+  );
+
+  container.register(
+    KEYS.DUES_SERVICE,
+    () =>
+      new DuesService(
+        container.resolve(KEYS.DUES_REPO),
+        container.resolve(KEYS.LEAGUE_REPO),
+        container.resolve(KEYS.ROSTER_REPO),
+        container.resolve(KEYS.SYSTEM_MESSAGE_SERVICE)
       )
   );
 

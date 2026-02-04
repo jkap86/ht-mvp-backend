@@ -18,6 +18,7 @@ import {
   createLeagueInvitationRoutes,
   createUserSearchRoutes,
 } from '../invitations/invitations.routes';
+import { createDuesRoutes } from '../dues/dues.routes';
 import { WaiversController } from '../waivers/waivers.controller';
 import { WaiversService } from '../waivers/waivers.service';
 import { AuthorizationService } from '../auth/authorization.service';
@@ -139,6 +140,9 @@ router.use('/:leagueId/invitations', createLeagueInvitationRoutes());
 
 // Mount user search routes - /api/leagues/:leagueId/users/*
 router.use('/:leagueId/users', createUserSearchRoutes());
+
+// Mount dues routes - /api/leagues/:leagueId/dues/*
+router.use('/:leagueId/dues', createDuesRoutes());
 
 // Free agents - GET /api/leagues/:leagueId/free-agents
 router.get('/:leagueId/free-agents', apiReadLimiter, rostersController.getFreeAgents);
