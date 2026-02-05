@@ -1,6 +1,7 @@
 import { DraftRepository } from './drafts.repository';
 import { LeagueRepository } from '../leagues/leagues.repository';
-import { RosterPlayersRepository } from '../rosters/rosters.repository';
+import { RosterPlayersRepository, RosterTransactionsRepository } from '../rosters/rosters.repository';
+import { RosterMutationService } from '../rosters/roster-mutation.service';
 import { ScheduleGeneratorService } from '../matchups/schedule-generator.service';
 import { container, KEYS } from '../../container';
 import { logger } from '../../config/env.config';
@@ -9,6 +10,8 @@ export interface PopulateRostersContext {
   draftRepo: DraftRepository;
   leagueRepo: LeagueRepository;
   rosterPlayersRepo: RosterPlayersRepository;
+  transactionsRepo?: RosterTransactionsRepository;
+  rosterMutationService?: RosterMutationService;
 }
 
 export interface FinalizeDraftContext extends PopulateRostersContext {
@@ -23,6 +26,9 @@ export interface FinalizeDraftContext extends PopulateRostersContext {
  * - BaseDraftEngine (autopick completion)
  * - DraftPickService (manual pick completion)
  * - DraftStateService (commissioner completion)
+ *
+ * IMPORTANT: Now validates roster size via RosterMutationService.
+ * Uses skipOwnershipCheck because draft picks aren't in the roster system yet.
  */
 export async function populateRostersFromDraft(
   ctx: PopulateRostersContext,
@@ -40,18 +46,41 @@ export async function populateRostersFromDraft(
   const season = parseInt(league.season, 10);
   let addedCount = 0;
 
+  // Get mutation service from container if not provided in context
+  const mutationService =
+    ctx.rosterMutationService ?? container.resolve<RosterMutationService>(KEYS.ROSTER_MUTATION_SERVICE);
+
+  // Get transactions repo from container if not provided in context
+  const transactionsRepo =
+    ctx.transactionsRepo ?? container.resolve<RosterTransactionsRepository>(KEYS.ROSTER_TRANSACTIONS_REPO);
+
   for (const pick of picks) {
     // Skip picks without a player (shouldn't happen for completed picks)
     if (pick.playerId === null) continue;
 
     try {
-      await ctx.rosterPlayersRepo.addDraftedPlayer(
+      // Use mutation service with skipOwnershipCheck (player not in system yet)
+      // Roster size IS validated - this is the critical fix!
+      await mutationService.addPlayerToRoster(
+        {
+          rosterId: pick.rosterId,
+          playerId: pick.playerId,
+          leagueId,
+          acquiredType: 'draft',
+        },
+        { skipOwnershipCheck: true }
+      );
+
+      // Record transaction
+      await transactionsRepo.create(
+        leagueId,
         pick.rosterId,
         pick.playerId,
-        leagueId,
+        'add',
         season,
         0 // week 0 = draft
       );
+
       addedCount++;
     } catch (error: any) {
       // Player might already be on roster (e.g., if partial completion happened)

@@ -97,6 +97,7 @@ export const KEYS = {
   PLAYOFF_SERVICE: 'playoffService',
   INVITATIONS_SERVICE: 'invitationsService',
   DUES_SERVICE: 'duesService',
+  ROSTER_MUTATION_SERVICE: 'rosterMutationService',
 
   // Engines
   DRAFT_ENGINE_FACTORY: 'draftEngineFactory',

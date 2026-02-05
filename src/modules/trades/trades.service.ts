@@ -4,6 +4,7 @@ import {
   RosterPlayersRepository,
   RosterTransactionsRepository,
 } from '../rosters/rosters.repository';
+import { RosterMutationService } from '../rosters/roster-mutation.service';
 import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import { TradeWithDetails, ProposeTradeRequest, CounterTradeRequest } from './trades.model';
 import { EventListenerService } from '../chat/event-listener.service';
@@ -39,7 +40,8 @@ export class TradesService {
     private readonly rosterPlayersRepo: RosterPlayersRepository,
     private readonly transactionsRepo: RosterTransactionsRepository,
     private readonly leagueRepo: LeagueRepository,
-    private readonly eventListenerService?: EventListenerService
+    private readonly eventListenerService?: EventListenerService,
+    private readonly rosterMutationService?: RosterMutationService
   ) {}
 
   /**
@@ -86,6 +88,7 @@ export class TradesService {
         transactionsRepo: this.transactionsRepo,
         leagueRepo: this.leagueRepo,
         eventListenerService: this.eventListenerService,
+        rosterMutationService: this.rosterMutationService,
       },
       tradeId,
       userId
@@ -238,6 +241,7 @@ export class TradesService {
       transactionsRepo: this.transactionsRepo,
       leagueRepo: this.leagueRepo,
       eventListenerService: this.eventListenerService,
+      rosterMutationService: this.rosterMutationService,
     });
   }
 }

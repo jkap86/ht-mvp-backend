@@ -9,6 +9,7 @@ import {
   RosterPlayersRepository,
   RosterTransactionsRepository,
 } from '../../../modules/rosters/rosters.repository';
+import { RosterMutationService } from '../../../modules/rosters/roster-mutation.service';
 import { LeagueRepository, RosterRepository } from '../../../modules/leagues/leagues.repository';
 import {
   Trade,
@@ -213,6 +214,15 @@ const createMockLeagueRepo = (): jest.Mocked<LeagueRepository> =>
     isUserMember: jest.fn(),
   }) as unknown as jest.Mocked<LeagueRepository>;
 
+const createMockRosterMutationService = (): jest.Mocked<RosterMutationService> =>
+  ({
+    addPlayerToRoster: jest.fn(),
+    removePlayerFromRoster: jest.fn(),
+    swapPlayers: jest.fn(),
+    bulkRemovePlayers: jest.fn(),
+    bulkAddPlayers: jest.fn(),
+  }) as unknown as jest.Mocked<RosterMutationService>;
+
 describe('TradesService', () => {
   let tradesService: TradesService;
   let mockPool: jest.Mocked<Pool>;
@@ -224,6 +234,7 @@ describe('TradesService', () => {
   let mockRosterPlayersRepo: jest.Mocked<RosterPlayersRepository>;
   let mockTransactionsRepo: jest.Mocked<RosterTransactionsRepository>;
   let mockLeagueRepo: jest.Mocked<LeagueRepository>;
+  let mockRosterMutationService: jest.Mocked<RosterMutationService>;
 
   beforeEach(() => {
     mockPoolClient = createMockPoolClient();
@@ -235,6 +246,7 @@ describe('TradesService', () => {
     mockRosterPlayersRepo = createMockRosterPlayersRepo();
     mockTransactionsRepo = createMockTransactionsRepo();
     mockLeagueRepo = createMockLeagueRepo();
+    mockRosterMutationService = createMockRosterMutationService();
 
     tradesService = new TradesService(
       mockPool,
@@ -244,7 +256,9 @@ describe('TradesService', () => {
       mockRosterRepo,
       mockRosterPlayersRepo,
       mockTransactionsRepo,
-      mockLeagueRepo
+      mockLeagueRepo,
+      undefined, // eventListenerService
+      mockRosterMutationService
     );
   });
 
@@ -426,8 +440,9 @@ describe('TradesService', () => {
       const result = await tradesService.acceptTrade(1, 'user-456');
 
       expect(result.status).toBe('completed');
-      expect(mockRosterPlayersRepo.removePlayer).toHaveBeenCalled();
-      expect(mockRosterPlayersRepo.addPlayer).toHaveBeenCalled();
+      // Trade execution now uses RosterMutationService
+      expect(mockRosterMutationService.bulkRemovePlayers).toHaveBeenCalled();
+      expect(mockRosterMutationService.bulkAddPlayers).toHaveBeenCalled();
     });
 
     it('should set review period when enabled', async () => {

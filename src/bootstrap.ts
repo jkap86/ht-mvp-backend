@@ -53,6 +53,7 @@ import { PlayerService } from './modules/players/players.service';
 import { SleeperApiClient } from './modules/players/sleeper.client';
 import { CFBDApiClient } from './modules/players/cfbd.client';
 import { RosterService as RosterPlayerService } from './modules/rosters/rosters.service';
+import { RosterMutationService } from './modules/rosters/roster-mutation.service';
 import { LineupService } from './modules/lineups/lineups.service';
 import { ScoringService } from './modules/scoring/scoring.service';
 import { StatsService } from './modules/scoring/stats.service';
@@ -356,6 +357,16 @@ function bootstrap(): void {
   );
   container.register(KEYS.PLAYOFF_REPO, () => new PlayoffRepository(container.resolve(KEYS.POOL)));
 
+  // Roster mutation service (centralized validation for roster changes)
+  container.register(
+    KEYS.ROSTER_MUTATION_SERVICE,
+    () =>
+      new RosterMutationService(
+        container.resolve(KEYS.ROSTER_PLAYERS_REPO),
+        container.resolve(KEYS.LEAGUE_REPO)
+      )
+  );
+
   // Season management services
   container.register(
     KEYS.ROSTER_PLAYER_SERVICE,
@@ -366,7 +377,8 @@ function bootstrap(): void {
         container.resolve(KEYS.ROSTER_TRANSACTIONS_REPO),
         container.resolve(KEYS.ROSTER_REPO),
         container.resolve(KEYS.LEAGUE_REPO),
-        container.resolve(KEYS.WAIVER_WIRE_REPO)
+        container.resolve(KEYS.WAIVER_WIRE_REPO),
+        container.resolve(KEYS.ROSTER_MUTATION_SERVICE)
       )
   );
 
@@ -439,7 +451,8 @@ function bootstrap(): void {
         container.resolve(KEYS.ROSTER_PLAYERS_REPO),
         container.resolve(KEYS.ROSTER_TRANSACTIONS_REPO),
         container.resolve(KEYS.LEAGUE_REPO),
-        container.resolve(KEYS.EVENT_LISTENER_SERVICE)
+        container.resolve(KEYS.EVENT_LISTENER_SERVICE),
+        container.resolve(KEYS.ROSTER_MUTATION_SERVICE)
       )
   );
 
@@ -458,7 +471,8 @@ function bootstrap(): void {
         container.resolve(KEYS.ROSTER_TRANSACTIONS_REPO),
         container.resolve(KEYS.LEAGUE_REPO),
         container.resolve(KEYS.TRADES_REPO),
-        container.resolve(KEYS.EVENT_LISTENER_SERVICE)
+        container.resolve(KEYS.EVENT_LISTENER_SERVICE),
+        container.resolve(KEYS.ROSTER_MUTATION_SERVICE)
       )
   );
 

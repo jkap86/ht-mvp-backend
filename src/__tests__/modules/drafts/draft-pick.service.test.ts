@@ -1,7 +1,7 @@
 import { DraftPickService } from '../../../modules/drafts/draft-pick.service';
 import { DraftRepository } from '../../../modules/drafts/drafts.repository';
 import { LeagueRepository, RosterRepository } from '../../../modules/leagues/leagues.repository';
-import { RosterPlayersRepository } from '../../../modules/rosters/rosters.repository';
+import { RosterPlayersRepository, RosterTransactionsRepository } from '../../../modules/rosters/rosters.repository';
 import { PlayerRepository } from '../../../modules/players/players.repository';
 import { Draft, DraftOrderEntry } from '../../../modules/drafts/drafts.model';
 import { DraftEngineFactory, IDraftEngine } from '../../../engines';
@@ -11,6 +11,37 @@ import {
   ValidationException,
   ConflictException,
 } from '../../../utils/exceptions';
+import { container, KEYS } from '../../../container';
+
+// Mock container.resolve for services used by draft completion
+const mockRosterMutationService = {
+  addPlayerToRoster: jest.fn().mockResolvedValue({ id: 1, rosterId: 1, playerId: 100, acquiredType: 'draft', acquiredAt: new Date() }),
+  removePlayerFromRoster: jest.fn(),
+  swapPlayers: jest.fn(),
+  bulkRemovePlayers: jest.fn(),
+  bulkAddPlayers: jest.fn(),
+};
+
+const mockTransactionsRepo = {
+  create: jest.fn().mockResolvedValue({ id: 1 }),
+};
+
+const mockScheduleGeneratorService = {
+  generateScheduleSystem: jest.fn().mockResolvedValue(undefined),
+};
+
+jest.spyOn(container, 'resolve').mockImplementation((key: string) => {
+  if (key === KEYS.ROSTER_MUTATION_SERVICE) {
+    return mockRosterMutationService;
+  }
+  if (key === KEYS.ROSTER_TRANSACTIONS_REPO) {
+    return mockTransactionsRepo;
+  }
+  if (key === KEYS.SCHEDULE_GENERATOR_SERVICE) {
+    return mockScheduleGeneratorService;
+  }
+  throw new Error(`No mock registered for key: ${key}`);
+});
 
 // Mock draft data
 const mockDraft: Draft = {
@@ -187,6 +218,12 @@ describe('DraftPickService', () => {
       mockPlayerRepo,
       mockRosterPlayersRepo
     );
+
+    // Reset mocks for container-resolved services
+    mockRosterMutationService.addPlayerToRoster.mockClear();
+    mockRosterMutationService.addPlayerToRoster.mockResolvedValue({ id: 1, rosterId: 1, playerId: 100, acquiredType: 'draft', acquiredAt: new Date() });
+    mockTransactionsRepo.create.mockClear();
+    mockTransactionsRepo.create.mockResolvedValue({ id: 1 });
   });
 
   describe('getDraftPicks', () => {

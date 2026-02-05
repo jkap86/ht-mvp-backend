@@ -4,6 +4,7 @@ import {
   RosterPlayersRepository,
   RosterTransactionsRepository,
 } from '../../rosters/rosters.repository';
+import { RosterMutationService } from '../../rosters/roster-mutation.service';
 import { LeagueRepository, RosterRepository } from '../../leagues/leagues.repository';
 import { DraftPickAssetRepository } from '../../drafts/draft-pick-asset.repository';
 import { tryGetSocketService } from '../../../socket';
@@ -16,6 +17,7 @@ import {
 } from '../../../utils/exceptions';
 import { getTradeLockId } from '../../../utils/locks';
 import { EventListenerService } from '../../chat/event-listener.service';
+import { container, KEYS } from '../../../container';
 
 const DEFAULT_REVIEW_HOURS = 24;
 
@@ -29,6 +31,7 @@ export interface AcceptTradeContext {
   leagueRepo: LeagueRepository;
   pickAssetRepo?: DraftPickAssetRepository;
   eventListenerService?: EventListenerService;
+  rosterMutationService?: RosterMutationService;
 }
 
 /**
@@ -202,28 +205,17 @@ export async function executeTrade(
 ): Promise<PickTradedEvent[]> {
   const items = await ctx.tradeItemsRepo.findByTrade(trade.id);
 
-  const league = await ctx.leagueRepo.findById(trade.leagueId);
-  const maxRosterSize = league?.settings?.roster_size || 15;
-
   const pickTradedEvents: PickTradedEvent[] = [];
 
   // Separate player and pick items
   const playerItems = items.filter((item) => item.itemType === 'player' && item.playerId);
   const pickItems = items.filter((item) => item.itemType === 'draft_pick' && item.draftPickAssetId);
 
-  // Re-validate all players
-  for (const item of playerItems) {
-    const onRoster = await ctx.rosterPlayersRepo.findByRosterAndPlayer(
-      item.fromRosterId,
-      item.playerId!,
-      client
-    );
-    if (!onRoster) {
-      throw new ConflictException(`Player ${item.playerName} is no longer available`);
-    }
-  }
+  // Get mutation service from context or container
+  const mutationService =
+    ctx.rosterMutationService ?? container.resolve<RosterMutationService>(KEYS.ROSTER_MUTATION_SERVICE);
 
-  // Re-validate all picks
+  // Re-validate all picks before any mutations
   if (pickItems.length > 0) {
     if (!ctx.pickAssetRepo) {
       throw new ValidationException(
@@ -240,49 +232,60 @@ export async function executeTrade(
     }
   }
 
-  // Execute player movements
+  // Execute player movements using two-pass pattern via mutation service
   // CRITICAL: Two-pass execution allows for 1-for-1 swaps even when rosters are full.
-  // Pass 1: Remove all players from source rosters to free up space.
-  for (const item of playerItems) {
-    await ctx.rosterPlayersRepo.removePlayer(item.fromRosterId, item.playerId!, client);
-  }
+  if (playerItems.length > 0) {
+    // Pass 1: Remove all players from source rosters to free up space
+    // bulkRemovePlayers validates all exist before removing any
+    await mutationService.bulkRemovePlayers(
+      {
+        leagueId: trade.leagueId,
+        removals: playerItems.map((item) => ({
+          rosterId: item.fromRosterId,
+          playerId: item.playerId!,
+        })),
+      },
+      client
+    );
 
-  // Second pass: Add players to destination rosters and record transactions
-  for (const item of playerItems) {
-    // Validate Roster Limits
-    // Note: rosterSize here reflects the count AFTER removals from Pass 1
-    const rosterSize = await ctx.rosterPlayersRepo.getPlayerCount(item.toRosterId, client);
-    if (rosterSize >= maxRosterSize) {
-      throw new ValidationException(
-        `Roster is full. Cannot add player to roster ${item.toRosterId}.`
+    // Pass 2: Add players to destination rosters
+    // bulkAddPlayers validates roster size for each add
+    await mutationService.bulkAddPlayers(
+      {
+        leagueId: trade.leagueId,
+        additions: playerItems.map((item) => ({
+          rosterId: item.toRosterId,
+          playerId: item.playerId!,
+          acquiredType: 'trade' as const,
+        })),
+      },
+      client
+    );
+
+    // Record transactions for all player movements
+    for (const item of playerItems) {
+      const dropTx = await ctx.transactionsRepo.create(
+        trade.leagueId,
+        item.fromRosterId,
+        item.playerId!,
+        'trade',
+        trade.season,
+        trade.week,
+        undefined,
+        client
+      );
+
+      await ctx.transactionsRepo.create(
+        trade.leagueId,
+        item.toRosterId,
+        item.playerId!,
+        'trade',
+        trade.season,
+        trade.week,
+        dropTx.id,
+        client
       );
     }
-
-    // Add to destination
-    await ctx.rosterPlayersRepo.addPlayer(item.toRosterId, item.playerId!, 'trade', client);
-
-    // Record transactions
-    const dropTx = await ctx.transactionsRepo.create(
-      trade.leagueId,
-      item.fromRosterId,
-      item.playerId!,
-      'trade',
-      trade.season,
-      trade.week,
-      undefined,
-      client
-    );
-
-    await ctx.transactionsRepo.create(
-      trade.leagueId,
-      item.toRosterId,
-      item.playerId!,
-      'trade',
-      trade.season,
-      trade.week,
-      dropTx.id,
-      client
-    );
   }
 
   // Execute pick ownership transfers (collect events for after commit)

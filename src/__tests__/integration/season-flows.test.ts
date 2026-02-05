@@ -11,6 +11,7 @@ import {
   RosterPlayersRepository,
   RosterTransactionsRepository,
 } from '../../modules/rosters/rosters.repository';
+import { RosterMutationService } from '../../modules/rosters/roster-mutation.service';
 import {
   WaiverPriorityRepository,
   FaabBudgetRepository,
@@ -659,6 +660,7 @@ describe('Season Sanity Integration Tests', () => {
     let mockTransactionsRepo: jest.Mocked<RosterTransactionsRepository>;
     let mockLeagueRepo: jest.Mocked<LeagueRepository>;
     let mockTradesRepo: jest.Mocked<TradesRepository>;
+    let mockRosterMutationService: jest.Mocked<RosterMutationService>;
 
     const mockLeague = new League(
       1, // id
@@ -764,6 +766,14 @@ describe('Season Sanity Integration Tests', () => {
         updateStatus: jest.fn(),
       } as unknown as jest.Mocked<TradesRepository>;
 
+      mockRosterMutationService = {
+        addPlayerToRoster: jest.fn(),
+        removePlayerFromRoster: jest.fn(),
+        swapPlayers: jest.fn(),
+        bulkRemovePlayers: jest.fn(),
+        bulkAddPlayers: jest.fn(),
+      } as unknown as jest.Mocked<RosterMutationService>;
+
       waiversService = new WaiversService(
         mockPool,
         mockPriorityRepo,
@@ -774,7 +784,9 @@ describe('Season Sanity Integration Tests', () => {
         mockRosterPlayersRepo,
         mockTransactionsRepo,
         mockLeagueRepo,
-        mockTradesRepo
+        mockTradesRepo,
+        undefined, // eventListenerService
+        mockRosterMutationService
       );
     });
 
@@ -871,24 +883,23 @@ describe('Season Sanity Integration Tests', () => {
         }
       );
 
-      // Track roster updates
+      // Track roster updates via mutation service
       const addedPlayers: number[] = [];
       const removedPlayers: number[] = [];
 
-      mockRosterPlayersRepo.addPlayer.mockImplementation(async (rosterId, playerId) => {
-        addedPlayers.push(playerId);
+      mockRosterMutationService.addPlayerToRoster.mockImplementation(async (params) => {
+        addedPlayers.push(params.playerId);
         return {
           id: 99,
-          rosterId,
-          playerId,
-          acquiredType: 'waiver' as const,
+          rosterId: params.rosterId,
+          playerId: params.playerId,
+          acquiredType: params.acquiredType,
           acquiredAt: new Date(),
         };
       });
 
-      mockRosterPlayersRepo.removePlayer.mockImplementation(async (rosterId, playerId) => {
-        removedPlayers.push(playerId);
-        return true;
+      mockRosterMutationService.removePlayerFromRoster.mockImplementation(async (params) => {
+        removedPlayers.push(params.playerId);
       });
 
       // Mock no pending trades for the dropped player
@@ -901,20 +912,26 @@ describe('Season Sanity Integration Tests', () => {
       expect(result.processed).toBe(1);
       expect(result.successful).toBe(1);
 
-      // VERIFY: Player was added to roster
+      // VERIFY: Player was added to roster via mutation service
       expect(addedPlayers).toContain(addPlayerId);
-      expect(mockRosterPlayersRepo.addPlayer).toHaveBeenCalledWith(
-        1, // rosterId
-        addPlayerId,
-        'waiver',
+      expect(mockRosterMutationService.addPlayerToRoster).toHaveBeenCalledWith(
+        expect.objectContaining({
+          rosterId: 1,
+          playerId: addPlayerId,
+          leagueId: 1,
+          acquiredType: 'waiver',
+        }),
+        expect.anything(), // options
         expect.anything() // client
       );
 
-      // VERIFY: Drop player was removed from roster
+      // VERIFY: Drop player was removed from roster via mutation service
       expect(removedPlayers).toContain(dropPlayerId);
-      expect(mockRosterPlayersRepo.removePlayer).toHaveBeenCalledWith(
-        1, // rosterId
-        dropPlayerId,
+      expect(mockRosterMutationService.removePlayerFromRoster).toHaveBeenCalledWith(
+        expect.objectContaining({
+          rosterId: 1,
+          playerId: dropPlayerId,
+        }),
         expect.anything() // client
       );
 
@@ -957,6 +974,7 @@ describe('Season Sanity Integration Tests', () => {
     let mockRosterPlayersRepo: jest.Mocked<RosterPlayersRepository>;
     let mockTransactionsRepo: jest.Mocked<RosterTransactionsRepository>;
     let mockLeagueRepo: jest.Mocked<LeagueRepository>;
+    let mockRosterMutationService: jest.Mocked<RosterMutationService>;
 
     const mockLeague = new League(
       1, // id
@@ -1114,6 +1132,14 @@ describe('Season Sanity Integration Tests', () => {
         isUserMember: jest.fn(),
       } as unknown as jest.Mocked<LeagueRepository>;
 
+      mockRosterMutationService = {
+        addPlayerToRoster: jest.fn(),
+        removePlayerFromRoster: jest.fn(),
+        swapPlayers: jest.fn(),
+        bulkRemovePlayers: jest.fn(),
+        bulkAddPlayers: jest.fn(),
+      } as unknown as jest.Mocked<RosterMutationService>;
+
       tradesService = new TradesService(
         mockPool,
         mockTradesRepo,
@@ -1122,7 +1148,9 @@ describe('Season Sanity Integration Tests', () => {
         mockRosterRepo,
         mockRosterPlayersRepo,
         mockTransactionsRepo,
-        mockLeagueRepo
+        mockLeagueRepo,
+        undefined, // eventListenerService
+        mockRosterMutationService
       );
     });
 
@@ -1163,23 +1191,29 @@ describe('Season Sanity Integration Tests', () => {
       // Mock roster sizes
       mockRosterPlayersRepo.getPlayerCount.mockResolvedValue(10);
 
-      // Track all roster changes
+      // Track all roster changes via mutation service
       const rosterChanges: { action: string; rosterId: number; playerId: number }[] = [];
 
-      mockRosterPlayersRepo.addPlayer.mockImplementation(async (rosterId, playerId) => {
-        rosterChanges.push({ action: 'add', rosterId, playerId });
-        return {
-          id: 99,
-          rosterId,
-          playerId,
-          acquiredType: 'trade' as const,
-          acquiredAt: new Date(),
-        };
+      // Mock mutation service's bulk methods to track changes
+      mockRosterMutationService.bulkRemovePlayers.mockImplementation(async (params) => {
+        for (const { rosterId, playerId } of params.removals) {
+          rosterChanges.push({ action: 'remove', rosterId, playerId });
+        }
       });
 
-      mockRosterPlayersRepo.removePlayer.mockImplementation(async (rosterId, playerId) => {
-        rosterChanges.push({ action: 'remove', rosterId, playerId });
-        return true;
+      mockRosterMutationService.bulkAddPlayers.mockImplementation(async (params) => {
+        const results = [];
+        for (const { rosterId, playerId } of params.additions) {
+          rosterChanges.push({ action: 'add', rosterId, playerId });
+          results.push({
+            id: 99,
+            rosterId,
+            playerId,
+            acquiredType: 'trade' as const,
+            acquiredAt: new Date(),
+          });
+        }
+        return results;
       });
 
       // Track transaction log entries
@@ -1299,30 +1333,17 @@ describe('Season Sanity Integration Tests', () => {
       mockLeagueRepo.findById.mockResolvedValue(mockLeague);
       mockTradeItemsRepo.findByTrade.mockResolvedValue(mockTradeItems);
 
-      // Mock that player from A exists
-      mockRosterPlayersRepo.findByRosterAndPlayer.mockImplementation(async (rosterId, playerId) => {
-        if (rosterId === 1 && playerId === playerFromA) {
-          return {
-            id: 1,
-            rosterId: 1,
-            playerId: playerFromA,
-            acquiredType: 'draft' as const,
-            acquiredAt: new Date(),
-          };
-        }
-        // Player from B is NOT on their roster (simulating a data inconsistency)
-        if (rosterId === 2 && playerId === playerFromB) {
-          return null; // This should cause validation to fail
-        }
-        return null;
-      });
+      // Mock mutation service to throw when validating - simulates player B not being on roster
+      mockRosterMutationService.bulkRemovePlayers.mockRejectedValue(
+        new Error(`Player ${playerFromB} is no longer on roster 2`)
+      );
 
-      // The trade should fail because player validation fails
+      // The trade should fail because player validation fails in bulkRemovePlayers
       await expect(tradesService.acceptTrade(1, 'user-B')).rejects.toThrow();
 
       // VERIFY: No roster changes should have been committed
-      expect(mockRosterPlayersRepo.addPlayer).not.toHaveBeenCalled();
-      expect(mockRosterPlayersRepo.removePlayer).not.toHaveBeenCalled();
+      // Since mutation service validates all players before removing, bulkAddPlayers shouldn't be called
+      expect(mockRosterMutationService.bulkAddPlayers).not.toHaveBeenCalled();
       expect(mockTransactionsRepo.create).not.toHaveBeenCalled();
 
       // VERIFY: Trade status was not updated to completed

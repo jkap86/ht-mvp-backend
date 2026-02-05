@@ -9,6 +9,7 @@ import {
   RosterPlayersRepository,
   RosterTransactionsRepository,
 } from '../rosters/rosters.repository';
+import { RosterMutationService } from '../rosters/roster-mutation.service';
 import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import { TradesRepository } from '../trades/trades.repository';
 import { EventListenerService } from '../chat/event-listener.service';
@@ -54,7 +55,8 @@ export class WaiversService {
     private readonly transactionsRepo: RosterTransactionsRepository,
     private readonly leagueRepo: LeagueRepository,
     private readonly tradesRepo?: TradesRepository,
-    private readonly eventListenerService?: EventListenerService
+    private readonly eventListenerService?: EventListenerService,
+    private readonly rosterMutationService?: RosterMutationService
   ) {}
 
   // ==================== CLAIM MANAGEMENT ====================
@@ -285,6 +287,7 @@ export class WaiversService {
         leagueRepo: this.leagueRepo,
         tradesRepo: this.tradesRepo,
         eventListenerService: this.eventListenerService,
+        rosterMutationService: this.rosterMutationService,
       },
       leagueId
     );

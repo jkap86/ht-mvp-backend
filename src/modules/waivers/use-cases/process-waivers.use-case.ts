@@ -4,6 +4,7 @@ import {
   RosterPlayersRepository,
   RosterTransactionsRepository,
 } from '../../rosters/rosters.repository';
+import { RosterMutationService } from '../../rosters/roster-mutation.service';
 import { TradesRepository } from '../../trades/trades.repository';
 import { tryGetSocketService } from '../../../socket';
 import {
@@ -18,6 +19,7 @@ import { NotFoundException } from '../../../utils/exceptions';
 import { getWaiverLockId } from '../../../utils/locks';
 import { addToWaiverWire, WaiverInfoContext } from './waiver-info.use-case';
 import { EventListenerService } from '../../chat/event-listener.service';
+import { container, KEYS } from '../../../container';
 
 export interface ProcessWaiversContext extends WaiverInfoContext {
   claimsRepo: WaiverClaimsRepository;
@@ -25,6 +27,7 @@ export interface ProcessWaiversContext extends WaiverInfoContext {
   transactionsRepo: RosterTransactionsRepository;
   tradesRepo?: TradesRepository;
   eventListenerService?: EventListenerService;
+  rosterMutationService?: RosterMutationService;
 }
 
 /**
@@ -245,9 +248,16 @@ async function executeClaim(
   season: number,
   client: PoolClient
 ): Promise<void> {
+  // Get mutation service from context or container
+  const mutationService =
+    ctx.rosterMutationService ?? container.resolve<RosterMutationService>(KEYS.ROSTER_MUTATION_SERVICE);
+
   // Drop player first if specified
   if (claim.dropPlayerId) {
-    await ctx.rosterPlayersRepo.removePlayer(claim.rosterId, claim.dropPlayerId, client);
+    await mutationService.removePlayerFromRoster(
+      { rosterId: claim.rosterId, playerId: claim.dropPlayerId },
+      client
+    );
 
     // Record drop transaction
     await ctx.transactionsRepo.create(
@@ -265,8 +275,18 @@ async function executeClaim(
     await addToWaiverWire(ctx, claim.leagueId, claim.dropPlayerId, claim.rosterId, client);
   }
 
-  // Add player to roster
-  await ctx.rosterPlayersRepo.addPlayer(claim.rosterId, claim.playerId, 'waiver', client);
+  // Add player to roster (skipOwnershipCheck since we validated in canExecuteClaim)
+  // Roster size check IS enforced - this is important!
+  await mutationService.addPlayerToRoster(
+    {
+      rosterId: claim.rosterId,
+      playerId: claim.playerId,
+      leagueId: claim.leagueId,
+      acquiredType: 'waiver',
+    },
+    { skipOwnershipCheck: true }, // Already validated in canExecuteClaim
+    client
+  );
 
   // Record add transaction
   await ctx.transactionsRepo.create(

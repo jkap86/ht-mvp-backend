@@ -4,11 +4,10 @@ import { RosterRepository, LeagueRepository } from '../leagues/leagues.repositor
 import { RosterPlayer, RosterPlayerWithDetails, RosterTransaction } from './rosters.model';
 import { WaiverWireRepository } from '../waivers/waivers.repository';
 import { parseWaiverSettings } from '../waivers/waivers.model';
+import { RosterMutationService } from './roster-mutation.service';
 import {
   NotFoundException,
   ForbiddenException,
-  ValidationException,
-  ConflictException,
 } from '../../utils/exceptions';
 
 export class RosterService {
@@ -18,7 +17,8 @@ export class RosterService {
     private readonly transactionsRepo: RosterTransactionsRepository,
     private readonly rosterRepo: RosterRepository,
     private readonly leagueRepo: LeagueRepository,
-    private readonly waiverWireRepo?: WaiverWireRepository
+    private readonly waiverWireRepo?: WaiverWireRepository,
+    private readonly rosterMutationService?: RosterMutationService
   ) {}
 
   /**
@@ -106,29 +106,21 @@ export class RosterService {
       // Advisory lock on league to prevent concurrent free agent claims
       await client.query('SELECT pg_advisory_xact_lock($1)', [leagueId]);
 
-      // Check if player is already owned (inside transaction)
-      const owner = await this.rosterPlayersRepo.findOwner(leagueId, playerId, client);
-      if (owner) {
-        throw new ConflictException('Player is already on a roster');
-      }
-
-      // Check roster size limit (inside transaction)
+      // Get league for transaction recording
       const league = await this.leagueRepo.findById(leagueId);
       if (!league) {
         throw new NotFoundException('League not found');
       }
 
-      const rosterSize = await this.rosterPlayersRepo.getPlayerCount(globalRosterId, client);
-      const maxRosterSize = league.settings?.roster_size || 15;
-
-      if (rosterSize >= maxRosterSize) {
-        throw new ValidationException(`Roster is full (${maxRosterSize} players max)`);
-      }
-
-      const rosterPlayer = await this.rosterPlayersRepo.addPlayer(
-        globalRosterId,
-        playerId,
-        'free_agent',
+      // Use mutation service for validation and add
+      const rosterPlayer = await this.rosterMutationService!.addPlayerToRoster(
+        {
+          rosterId: globalRosterId,
+          playerId,
+          leagueId,
+          acquiredType: 'free_agent',
+        },
+        {},
         client
       );
 
@@ -176,12 +168,6 @@ export class RosterService {
     // Use the global id for all subsequent operations
     const globalRosterId = roster.id;
 
-    // Check player is on roster
-    const existing = await this.rosterPlayersRepo.findByRosterAndPlayer(globalRosterId, playerId);
-    if (!existing) {
-      throw new NotFoundException('Player is not on this roster');
-    }
-
     const league = await this.leagueRepo.findById(leagueId);
     if (!league) {
       throw new NotFoundException('League not found');
@@ -193,7 +179,11 @@ export class RosterService {
       await client.query('BEGIN');
       await client.query('SELECT pg_advisory_xact_lock($1)', [leagueId]);
 
-      await this.rosterPlayersRepo.removePlayer(globalRosterId, playerId, client);
+      // Use mutation service for validation and remove
+      await this.rosterMutationService!.removePlayerFromRoster(
+        { rosterId: globalRosterId, playerId },
+        client
+      );
 
       // Record transaction
       await this.transactionsRepo.create(
@@ -249,35 +239,20 @@ export class RosterService {
       // Advisory lock on league to prevent concurrent free agent claims
       await client.query('SELECT pg_advisory_xact_lock($1)', [leagueId]);
 
-      // Check player to add is not owned (inside transaction)
-      const owner = await this.rosterPlayersRepo.findOwner(leagueId, addPlayerId, client);
-      if (owner) {
-        throw new ConflictException('Player is already on a roster');
-      }
-
-      // Check player to drop is on roster (inside transaction)
-      const existing = await this.rosterPlayersRepo.findByRosterAndPlayer(
-        globalRosterId,
-        dropPlayerId,
-        client
-      );
-      if (!existing) {
-        throw new NotFoundException('Player to drop is not on this roster');
-      }
-
       const league = await this.leagueRepo.findById(leagueId);
       if (!league) {
         throw new NotFoundException('League not found');
       }
 
-      // Drop first
-      await this.rosterPlayersRepo.removePlayer(globalRosterId, dropPlayerId, client);
-
-      // Then add
-      const rosterPlayer = await this.rosterPlayersRepo.addPlayer(
-        globalRosterId,
-        addPlayerId,
-        'free_agent',
+      // Use mutation service for validation and swap
+      const rosterPlayer = await this.rosterMutationService!.swapPlayers(
+        {
+          rosterId: globalRosterId,
+          addPlayerId,
+          dropPlayerId,
+          leagueId,
+          acquiredType: 'free_agent',
+        },
         client
       );
 
