@@ -722,6 +722,18 @@ export class RosterRepository {
   }
 
   /**
+   * Delete all empty rosters (no user assigned) for a league.
+   * Used to clean up before re-randomizing draft order.
+   */
+  async deleteEmptyRosters(leagueId: number, client?: PoolClient): Promise<void> {
+    const db = client || this.db;
+    await db.query(
+      'DELETE FROM rosters WHERE league_id = $1 AND user_id IS NULL',
+      [leagueId]
+    );
+  }
+
+  /**
    * Create an empty roster (no user assigned) for unfilled league slots.
    * Used when randomizing draft order to include all roster positions.
    */

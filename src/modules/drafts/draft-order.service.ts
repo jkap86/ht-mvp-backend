@@ -65,33 +65,32 @@ export class DraftOrderService {
       throw new NotFoundException('League not found');
     }
 
-    // Get existing rosters
-    const existingRosters = await this.rosterRepo.findByLeagueId(leagueId);
-    const existingCount = existingRosters.length;
     const targetCount = league.totalRosters;
 
-    // Create empty rosters for unfilled slots (in a transaction)
-    if (existingCount < targetCount) {
-      const client = await this.db.connect();
-      try {
-        await client.query('BEGIN');
-        // Advisory lock to prevent concurrent roster creation
-        await client.query('SELECT pg_advisory_xact_lock($1)', [leagueId]);
+    // Clean up and recreate empty rosters in a transaction
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+      // Advisory lock to prevent concurrent roster operations
+      await client.query('SELECT pg_advisory_xact_lock($1)', [leagueId]);
 
-        // Re-check roster count inside transaction (count ALL rosters including empty ones)
-        const currentCount = await this.rosterRepo.getTotalRosterCount(leagueId, client);
+      // Delete all empty rosters first (cleans up any duplicates from previous bugs)
+      await this.rosterRepo.deleteEmptyRosters(leagueId, client);
 
-        for (let i = currentCount + 1; i <= targetCount; i++) {
-          await this.rosterRepo.createEmptyRoster(leagueId, i, client);
-        }
+      // Count rosters with actual users
+      const userRosterCount = await this.rosterRepo.getRosterCount(leagueId, client);
 
-        await client.query('COMMIT');
-      } catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
-      } finally {
-        client.release();
+      // Create fresh empty rosters to fill remaining slots
+      for (let i = userRosterCount + 1; i <= targetCount; i++) {
+        await this.rosterRepo.createEmptyRoster(leagueId, i, client);
       }
+
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
 
     // Now get ALL rosters (including newly created empty ones)
@@ -173,33 +172,32 @@ export class DraftOrderService {
       return;
     }
 
-    // Get existing rosters
-    const existingRosters = await this.rosterRepo.findByLeagueId(leagueId);
-    const existingCount = existingRosters.length;
     const targetCount = league.totalRosters;
 
-    // Create empty rosters for unfilled slots (in a transaction)
-    if (existingCount < targetCount) {
-      const client = await this.db.connect();
-      try {
-        await client.query('BEGIN');
-        // Advisory lock to prevent concurrent roster creation
-        await client.query('SELECT pg_advisory_xact_lock($1)', [leagueId]);
+    // Clean up and create empty rosters in a transaction
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+      // Advisory lock to prevent concurrent roster operations
+      await client.query('SELECT pg_advisory_xact_lock($1)', [leagueId]);
 
-        // Re-check roster count inside transaction (count ALL rosters including empty ones)
-        const currentCount = await this.rosterRepo.getTotalRosterCount(leagueId, client);
+      // Delete any existing empty rosters first
+      await this.rosterRepo.deleteEmptyRosters(leagueId, client);
 
-        for (let i = currentCount + 1; i <= targetCount; i++) {
-          await this.rosterRepo.createEmptyRoster(leagueId, i, client);
-        }
+      // Count rosters with actual users
+      const userRosterCount = await this.rosterRepo.getRosterCount(leagueId, client);
 
-        await client.query('COMMIT');
-      } catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
-      } finally {
-        client.release();
+      // Create fresh empty rosters to fill remaining slots
+      for (let i = userRosterCount + 1; i <= targetCount; i++) {
+        await this.rosterRepo.createEmptyRoster(leagueId, i, client);
       }
+
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
 
     // Now get ALL rosters (including newly created empty ones)
