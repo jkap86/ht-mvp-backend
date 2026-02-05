@@ -618,9 +618,9 @@ export class RosterRepository {
 
   async getRosterCount(leagueId: number, client?: PoolClient): Promise<number> {
     const db = client || this.db;
-    // Only count active (non-benched) members
+    // Only count rosters with actual users (exclude empty roster slots)
     const result = await db.query(
-      'SELECT COUNT(*) as count FROM rosters WHERE league_id = $1 AND is_benched = false',
+      'SELECT COUNT(*) as count FROM rosters WHERE league_id = $1 AND is_benched = false AND user_id IS NOT NULL',
       [leagueId]
     );
     return parseInt(result.rows[0].count, 10);
