@@ -465,7 +465,8 @@ export class RosterRepository {
       `WITH membership_check AS (
          SELECT EXISTS(SELECT 1 FROM rosters WHERE league_id = $1 AND user_id = $2) as is_member
        )
-       SELECT r.*, u.username, mc.is_member
+       SELECT r.*, u.username, mc.is_member,
+              COALESCE(r.settings->>'team_name', u.username, 'Team ' || r.roster_id) as team_name
        FROM rosters r
        LEFT JOIN users u ON r.user_id = u.id
        CROSS JOIN membership_check mc
@@ -500,6 +501,7 @@ export class RosterRepository {
       updatedAt: row.updated_at,
       username: row.username,
       isBenched: row.is_benched || false,
+      teamName: row.team_name,
     }));
   }
 

@@ -1,5 +1,5 @@
 import { DraftRepository } from './drafts.repository';
-import { draftToResponse, DraftType } from './drafts.model';
+import { draftToResponse, DraftType, DraftOrderEntry } from './drafts.model';
 import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import { NotFoundException, ForbiddenException, ValidationException } from '../../utils/exceptions';
 import { DraftOrderService } from './draft-order.service';
@@ -169,10 +169,16 @@ export class DraftService {
 
     // Generate draft pick assets for trading
     if (this.pickAssetRepo && league) {
-      const rosters = await this.rosterRepo.findByLeagueId(leagueId);
-      const rosterIds = rosters.map((r) => r.id);
       const season = parseInt(league.season, 10);
       const rounds = options.rounds || defaultRounds;
+
+      // Get draft order to extract positions
+      const draftOrder = await this.draftRepo.getDraftOrder(draft.id);
+      const orderData = draftOrder.map((entry: DraftOrderEntry) => ({
+        rosterId: entry.rosterId,
+        draftPosition: entry.draftPosition,
+      }));
+      const rosterIds = orderData.map((entry) => entry.rosterId);
 
       // Generate pick assets for this draft
       await this.pickAssetRepo.generatePickAssetsForDraft(
@@ -180,7 +186,7 @@ export class DraftService {
         leagueId,
         season,
         rounds,
-        rosterIds
+        orderData
       );
 
       // For dynasty and devy leagues, also generate future pick assets
@@ -542,9 +548,14 @@ export class DraftService {
     ) {
       const league = await this.leagueRepo.findById(leagueId);
       if (league) {
-        const rosters = await this.rosterRepo.findByLeagueId(leagueId);
-        const rosterIds = rosters.map((r) => r.id);
         const season = parseInt(league.season, 10);
+
+        // Get draft order to extract positions
+        const draftOrder = await this.draftRepo.getDraftOrder(draftId);
+        const orderData = draftOrder.map((entry: DraftOrderEntry) => ({
+          rosterId: entry.rosterId,
+          draftPosition: entry.draftPosition,
+        }));
 
         // Delete existing pick assets for this draft
         await this.pickAssetRepo.deleteByDraftId(draftId);
@@ -555,7 +566,7 @@ export class DraftService {
           leagueId,
           season,
           updates.rounds,
-          rosterIds
+          orderData
         );
 
         logger.info(`Regenerated pick assets for draft ${draftId} with ${updates.rounds} rounds`);

@@ -175,7 +175,7 @@ export class DraftPickAssetRepository {
     leagueId: number,
     season: number,
     rounds: number,
-    rosterIds: number[],
+    draftOrder: Array<{ rosterId: number; draftPosition: number }>,
     client?: PoolClient
   ): Promise<DraftPickAsset[]> {
     const queryRunner = client || this.db;
@@ -184,13 +184,13 @@ export class DraftPickAssetRepository {
     const placeholders: string[] = [];
     let paramIndex = 1;
 
-    for (const rosterId of rosterIds) {
-      for (let round = 1; round <= rounds; round++) {
+    for (let round = 1; round <= rounds; round++) {
+      for (const entry of draftOrder) {
         placeholders.push(
-          `($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, $${paramIndex + 3}, $${paramIndex + 4}, $${paramIndex + 5})`
+          `($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, $${paramIndex + 3}, $${paramIndex + 4}, $${paramIndex + 5}, $${paramIndex + 6})`
         );
-        values.push(leagueId, draftId, season, round, rosterId, rosterId);
-        paramIndex += 6;
+        values.push(leagueId, draftId, season, round, entry.rosterId, entry.rosterId, entry.draftPosition);
+        paramIndex += 7;
       }
     }
 
@@ -200,7 +200,7 @@ export class DraftPickAssetRepository {
 
     const result = await queryRunner.query(
       `INSERT INTO draft_pick_assets
-        (league_id, draft_id, season, round, original_roster_id, current_owner_roster_id)
+        (league_id, draft_id, season, round, original_roster_id, current_owner_roster_id, original_pick_position)
        VALUES ${placeholders.join(', ')}
        ON CONFLICT (league_id, season, round, original_roster_id) DO NOTHING
        RETURNING *`,

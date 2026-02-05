@@ -305,21 +305,29 @@ async devBulkAddUsers(
           continue;
         }
 
-        // Check if league is full
-        const rosterCount = await this.rosterRepo.getRosterCount(leagueId);
-        if (rosterCount >= league.totalRosters) {
-          results.push({ username, success: false, error: 'League is full' });
-          continue;
-        }
+        // Try to claim an empty roster first (preserves draft position)
+        const emptyRoster = await this.rosterRepo.findEmptyRoster(leagueId);
+        let rosterId: number;
 
-        // Get next roster ID and create roster
-        const nextRosterId = await this.rosterRepo.getNextRosterId(leagueId);
-        await this.rosterRepo.create(leagueId, user.userId, nextRosterId);
+        if (emptyRoster) {
+          await this.rosterRepo.assignUserToRoster(emptyRoster.id, user.userId);
+          rosterId = emptyRoster.rosterId;
+        } else {
+          // Check if league is full
+          const rosterCount = await this.rosterRepo.getRosterCount(leagueId);
+          if (rosterCount >= league.totalRosters) {
+            results.push({ username, success: false, error: 'League is full' });
+            continue;
+          }
+          // Create new roster only if no empty slots
+          rosterId = await this.rosterRepo.getNextRosterId(leagueId);
+          await this.rosterRepo.create(leagueId, user.userId, rosterId);
+        }
 
         // Emit socket event for real-time UI update
         const socketService = tryGetSocketService();
         socketService?.emitMemberJoined(leagueId, {
-          rosterId: nextRosterId,
+          rosterId: rosterId,
           teamName: username,
           userId: user.userId,
         });
