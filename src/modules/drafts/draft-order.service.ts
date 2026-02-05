@@ -78,8 +78,8 @@ export class DraftOrderService {
         // Advisory lock to prevent concurrent roster creation
         await client.query('SELECT pg_advisory_xact_lock($1)', [leagueId]);
 
-        // Re-check roster count inside transaction
-        const currentCount = await this.rosterRepo.getRosterCount(leagueId, client);
+        // Re-check roster count inside transaction (count ALL rosters including empty ones)
+        const currentCount = await this.rosterRepo.getTotalRosterCount(leagueId, client);
 
         for (let i = currentCount + 1; i <= targetCount; i++) {
           await this.rosterRepo.createEmptyRoster(leagueId, i, client);
@@ -186,8 +186,8 @@ export class DraftOrderService {
         // Advisory lock to prevent concurrent roster creation
         await client.query('SELECT pg_advisory_xact_lock($1)', [leagueId]);
 
-        // Re-check roster count inside transaction
-        const currentCount = await this.rosterRepo.getRosterCount(leagueId, client);
+        // Re-check roster count inside transaction (count ALL rosters including empty ones)
+        const currentCount = await this.rosterRepo.getTotalRosterCount(leagueId, client);
 
         for (let i = currentCount + 1; i <= targetCount; i++) {
           await this.rosterRepo.createEmptyRoster(leagueId, i, client);
