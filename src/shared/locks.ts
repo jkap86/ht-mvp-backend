@@ -86,6 +86,8 @@ export enum LockDomain {
   WAIVER = 4,
   AUCTION = 5,
   LINEUP = 6,
+  DRAFT = 7,
+  JOB = 9,
 }
 
 /**
@@ -107,6 +109,8 @@ const LOCK_NAMESPACE_OFFSET: Record<LockDomain, number> = {
   [LockDomain.WAIVER]: 400_000_000,
   [LockDomain.AUCTION]: 500_000_000,
   [LockDomain.LINEUP]: 600_000_000,
+  [LockDomain.DRAFT]: 700_000_000,
+  [LockDomain.JOB]: 900_000_000,
 };
 
 /**
@@ -247,6 +251,58 @@ export async function lockLineup<T>(
 }
 
 /**
+ * Helper: Lock a draft.
+ */
+export async function lockDraft<T>(
+  client: PoolClient,
+  draftId: number,
+  fn: () => Promise<T>
+): Promise<T> {
+  return withLocks(client, [{ domain: LockDomain.DRAFT, id: draftId }], fn);
+}
+
+/**
+ * Helper: Acquire a job-level lock (for singleton jobs like autopick, waiver processing).
+ * Uses session-level advisory lock (not transaction-level) for long-running jobs.
+ */
+export async function lockJob<T>(
+  client: PoolClient,
+  jobId: number,
+  fn: () => Promise<T>
+): Promise<T> {
+  return withLocks(client, [{ domain: LockDomain.JOB, id: jobId }], fn);
+}
+
+/**
+ * Run a function within a draft transaction with advisory lock.
+ * Acquires lock, begins transaction, executes function, commits or rolls back.
+ *
+ * @param pool - PostgreSQL pool
+ * @param draftId - Draft to lock
+ * @param fn - Async function receiving the client, to execute within transaction
+ * @returns Result of the callback function
+ */
+export async function runInDraftTransaction<T>(
+  pool: { connect: () => Promise<PoolClient> },
+  draftId: number,
+  fn: (client: PoolClient) => Promise<T>
+): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock($1)', [getLockId(LockDomain.DRAFT, draftId)]);
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
  * Lock helper service for dependency injection.
  */
 export class LockHelper {
@@ -304,5 +360,19 @@ export class LockHelper {
    */
   async lockLineup<T>(client: PoolClient, lineupId: number, fn: () => Promise<T>): Promise<T> {
     return lockLineup(client, lineupId, fn);
+  }
+
+  /**
+   * Lock a draft.
+   */
+  async lockDraft<T>(client: PoolClient, draftId: number, fn: () => Promise<T>): Promise<T> {
+    return lockDraft(client, draftId, fn);
+  }
+
+  /**
+   * Lock a job.
+   */
+  async lockJob<T>(client: PoolClient, jobId: number, fn: () => Promise<T>): Promise<T> {
+    return lockJob(client, jobId, fn);
   }
 }

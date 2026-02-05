@@ -873,6 +873,270 @@ export class DraftRepository {
       client.release();
     }
   }
+
+  /**
+   * Atomically make a pick asset selection and advance the draft state in a single transaction.
+   * This prevents race conditions where selection is created but draft state doesn't advance.
+   *
+   * @returns The created selection ID and updated draft
+   */
+  async makePickAssetSelectionTx(params: {
+    draftId: number;
+    expectedPickNumber: number;
+    draftPickAssetId: number;
+    rosterId: number;
+    nextPickState: {
+      currentPick: number | null;
+      currentRound: number | null;
+      currentRosterId: number | null;
+      pickDeadline: Date | null;
+      status?: 'in_progress' | 'completed';
+      completedAt?: Date | null;
+    };
+    idempotencyKey?: string;
+  }): Promise<{
+    selectionId: number;
+    selectedAt: Date;
+    draft: Draft;
+  }> {
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+
+      // 1. Acquire advisory lock on draft to prevent concurrent picks
+      await client.query('SELECT pg_advisory_xact_lock($1)', [getDraftLockId(params.draftId)]);
+
+      // 2. Re-read draft row FOR UPDATE and validate current state
+      const draftResult = await client.query('SELECT * FROM drafts WHERE id = $1 FOR UPDATE', [
+        params.draftId,
+      ]);
+      if (draftResult.rows.length === 0) {
+        await client.query('ROLLBACK');
+        throw new ConflictException('Draft not found');
+      }
+      const currentDraft = draftFromDatabase(draftResult.rows[0]);
+
+      // 3. Validate draft is in correct state
+      if (currentDraft.status !== 'in_progress') {
+        await client.query('ROLLBACK');
+        throw new ConflictException('Draft is not in progress');
+      }
+
+      // 4. Check idempotency FIRST - return existing selection if found
+      if (params.idempotencyKey) {
+        const existing = await client.query(
+          `SELECT * FROM vet_draft_pick_selections
+           WHERE draft_id = $1 AND roster_id = $2 AND pick_number = $3`,
+          [params.draftId, params.rosterId, params.expectedPickNumber]
+        );
+        if (existing.rows.length > 0) {
+          await client.query('COMMIT');
+          const row = existing.rows[0];
+          return {
+            selectionId: row.id,
+            selectedAt: row.selected_at,
+            draft: currentDraft,
+          };
+        }
+      }
+
+      // 5. Critical: Validate expected pick number matches current state
+      if (currentDraft.currentPick !== params.expectedPickNumber) {
+        await client.query('ROLLBACK');
+        throw new ConflictException(
+          `Pick already made. Expected pick ${params.expectedPickNumber}, but draft is at pick ${currentDraft.currentPick}`
+        );
+      }
+
+      // 6. Validate it's the correct roster's turn
+      if (currentDraft.currentRosterId !== params.rosterId) {
+        await client.query('ROLLBACK');
+        throw new ConflictException('It is not your turn to pick');
+      }
+
+      // 7. Validate pick asset not already selected in this draft
+      const alreadySelected = await client.query(
+        `SELECT 1 FROM vet_draft_pick_selections WHERE draft_id = $1 AND draft_pick_asset_id = $2`,
+        [params.draftId, params.draftPickAssetId]
+      );
+      if (alreadySelected.rows.length > 0) {
+        await client.query('ROLLBACK');
+        throw new ConflictException('This pick asset has already been drafted');
+      }
+
+      // 8. Insert the selection
+      const selectionResult = await client.query(
+        `INSERT INTO vet_draft_pick_selections (draft_id, draft_pick_asset_id, pick_number, roster_id)
+         VALUES ($1, $2, $3, $4)
+         RETURNING *`,
+        [params.draftId, params.draftPickAssetId, params.expectedPickNumber, params.rosterId]
+      );
+
+      // 9. Transfer ownership of the pick asset to the drafter
+      await client.query(
+        `UPDATE draft_pick_assets
+         SET current_owner_roster_id = $1, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $2`,
+        [params.rosterId, params.draftPickAssetId]
+      );
+
+      // 10. Update draft state atomically
+      const updateClauses: string[] = [];
+      const updateValues: any[] = [];
+      let paramIndex = 1;
+
+      if (params.nextPickState.status) {
+        updateClauses.push(`status = $${paramIndex++}`);
+        updateValues.push(params.nextPickState.status);
+      }
+      if (params.nextPickState.currentPick !== undefined) {
+        updateClauses.push(`current_pick = $${paramIndex++}`);
+        updateValues.push(params.nextPickState.currentPick);
+      }
+      if (params.nextPickState.currentRound !== undefined) {
+        updateClauses.push(`current_round = $${paramIndex++}`);
+        updateValues.push(params.nextPickState.currentRound);
+      }
+      if (params.nextPickState.currentRosterId !== undefined) {
+        updateClauses.push(`current_roster_id = $${paramIndex++}`);
+        updateValues.push(params.nextPickState.currentRosterId);
+      }
+      if (params.nextPickState.pickDeadline !== undefined) {
+        updateClauses.push(`pick_deadline = $${paramIndex++}`);
+        updateValues.push(params.nextPickState.pickDeadline);
+      }
+      if (params.nextPickState.completedAt !== undefined) {
+        updateClauses.push(`completed_at = $${paramIndex++}`);
+        updateValues.push(params.nextPickState.completedAt);
+      }
+
+      updateValues.push(params.draftId);
+      const updatedDraftResult = await client.query(
+        `UPDATE drafts SET ${updateClauses.join(', ')}, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $${paramIndex}
+         RETURNING *`,
+        updateValues
+      );
+
+      await client.query('COMMIT');
+
+      const selectionRow = selectionResult.rows[0];
+      return {
+        selectionId: selectionRow.id,
+        selectedAt: selectionRow.selected_at,
+        draft: draftFromDatabase(updatedDraftResult.rows[0]),
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Atomically undo the last pick and update draft state in a single transaction.
+   * This prevents race conditions where pick is deleted but draft state isn't reverted.
+   *
+   * @returns The deleted pick info and updated draft
+   */
+  async undoLastPickTx(params: {
+    draftId: number;
+    prevPickState: {
+      currentPick: number;
+      currentRound: number;
+      currentRosterId: number | null;
+      pickDeadline: Date | null;
+      status: 'in_progress' | 'paused';
+      completedAt: null;
+    };
+  }): Promise<{ undonePick: DraftPick | null; draft: Draft }> {
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+
+      // 1. Acquire advisory lock on draft
+      await client.query('SELECT pg_advisory_xact_lock($1)', [getDraftLockId(params.draftId)]);
+
+      // 2. Re-read draft row FOR UPDATE
+      const draftResult = await client.query('SELECT * FROM drafts WHERE id = $1 FOR UPDATE', [
+        params.draftId,
+      ]);
+      if (draftResult.rows.length === 0) {
+        await client.query('ROLLBACK');
+        throw new ConflictException('Draft not found');
+      }
+
+      // 3. Get most recent pick with player info
+      const lastPick = await client.query(
+        `SELECT dp.*, p.full_name as player_name, p.position as player_position, p.team as player_team, u.username
+         FROM draft_picks dp
+         LEFT JOIN players p ON dp.player_id = p.id
+         LEFT JOIN rosters r ON dp.roster_id = r.id
+         LEFT JOIN users u ON r.user_id = u.id
+         WHERE dp.draft_id = $1
+         ORDER BY dp.pick_number DESC LIMIT 1`,
+        [params.draftId]
+      );
+
+      if (lastPick.rows.length === 0) {
+        await client.query('COMMIT');
+        return {
+          undonePick: null,
+          draft: draftFromDatabase(draftResult.rows[0]),
+        };
+      }
+
+      const row = lastPick.rows[0];
+
+      // 4. Delete the pick
+      await client.query('DELETE FROM draft_picks WHERE id = $1', [row.id]);
+
+      // 5. Update draft state atomically
+      const updatedDraftResult = await client.query(
+        `UPDATE drafts
+         SET current_pick = $1, current_round = $2, current_roster_id = $3,
+             pick_deadline = $4, status = $5, completed_at = $6, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $7
+         RETURNING *`,
+        [
+          params.prevPickState.currentPick,
+          params.prevPickState.currentRound,
+          params.prevPickState.currentRosterId,
+          params.prevPickState.pickDeadline,
+          params.prevPickState.status,
+          params.prevPickState.completedAt,
+          params.draftId,
+        ]
+      );
+
+      await client.query('COMMIT');
+
+      return {
+        undonePick: {
+          id: row.id,
+          draftId: row.draft_id,
+          pickNumber: row.pick_number,
+          round: row.round,
+          pickInRound: row.pick_in_round,
+          rosterId: row.roster_id,
+          playerId: row.player_id,
+          isAutoPick: row.is_auto_pick,
+          pickedAt: row.picked_at,
+          playerName: row.player_name,
+          playerPosition: row.player_position,
+          playerTeam: row.player_team,
+          username: row.username,
+        },
+        draft: draftFromDatabase(updatedDraftResult.rows[0]),
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
 }
 
 export interface QueueEntry {

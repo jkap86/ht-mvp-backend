@@ -283,30 +283,19 @@ export class DraftPickService {
     // Pre-compute the next pick state
     const nextPickState = this.computeNextPickState(draft, draftOrder, engine, pickAssets);
 
-    // Record the selection and transfer ownership atomically
-    // Create the selection record
-    const selection = await this.vetPickSelectionRepo.create(
-      draftId,
-      draftPickAssetId,
-      draft.currentPick,
-      userRoster.id
-    );
+    // Record the selection, transfer ownership, and update draft state atomically
+    // This prevents race conditions where selection is created but draft state doesn't advance
+    const { selectionId, selectedAt, draft: updatedDraft } =
+      await this.draftRepo.makePickAssetSelectionTx({
+        draftId,
+        expectedPickNumber: draft.currentPick,
+        draftPickAssetId,
+        rosterId: userRoster.id,
+        nextPickState,
+        idempotencyKey,
+      });
 
-    // Transfer ownership of the pick asset to the drafter
-    await this.pickAssetRepo.transferOwnership(draftPickAssetId, userRoster.id);
-
-    // Update draft state
-    // When draft is completed, currentPick/currentRound become null but the repo handles this
-    await this.draftRepo.update(draftId, {
-      currentPick: nextPickState.currentPick ?? undefined,
-      currentRound: nextPickState.currentRound ?? undefined,
-      currentRosterId: nextPickState.currentRosterId,
-      pickDeadline: nextPickState.pickDeadline,
-      status: nextPickState.status,
-      completedAt: nextPickState.completedAt,
-    } as Partial<Draft>);
-
-    // If draft completed, run unified finalization
+    // If draft completed, run unified finalization (rosters, league status, schedule)
     if (nextPickState.status === 'completed') {
       await finalizeDraftCompletion(
         {
@@ -321,7 +310,7 @@ export class DraftPickService {
 
     // Build response with pick asset info
     const response = {
-      id: selection.id,
+      id: selectionId,
       draft_id: draftId,
       pick_number: draft.currentPick,
       round: draft.currentRound,
@@ -329,7 +318,7 @@ export class DraftPickService {
       roster_id: userRoster.id,
       player_id: null,
       is_auto_pick: false,
-      picked_at: selection.selectedAt,
+      picked_at: selectedAt,
       // Pick asset specific fields
       draft_pick_asset_id: draftPickAssetId,
       pick_asset_season: pickAsset.season,
@@ -338,11 +327,9 @@ export class DraftPickService {
       is_pick_asset: true,
     };
 
-    // Emit socket events
+    // Emit socket events AFTER transaction commits
     const socket = tryGetSocketService();
     socket?.emitDraftPick(draftId, response);
-
-    const updatedDraft = await this.draftRepo.findById(draftId);
 
     if (nextPickState.status !== 'completed') {
       socket?.emitNextPick(draftId, {
@@ -353,7 +340,8 @@ export class DraftPickService {
         isTraded: nextPickState.isTraded,
         pickDeadline: nextPickState.pickDeadline,
       });
-    } else if (updatedDraft) {
+    } else {
+      // Draft completed
       socket?.emitDraftCompleted(draftId, draftToResponse(updatedDraft));
     }
 

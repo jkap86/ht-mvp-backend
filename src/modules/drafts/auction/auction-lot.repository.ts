@@ -131,8 +131,16 @@ export class AuctionLotRepository {
 
   /**
    * Generic update for a lot
+   * @param lotId - The lot ID to update
+   * @param updates - The fields to update
+   * @param expectedCurrentBid - Optional CAS check: only update if current_bid matches this value
+   *                             If provided and the check fails, throws an error
    */
-  async updateLot(lotId: number, updates: Partial<AuctionLot>): Promise<AuctionLot> {
+  async updateLot(
+    lotId: number,
+    updates: Partial<AuctionLot>,
+    expectedCurrentBid?: number
+  ): Promise<AuctionLot> {
     const setClauses: string[] = [];
     const values: any[] = [];
     let paramIndex = 1;
@@ -173,14 +181,26 @@ export class AuctionLotRepository {
     }
 
     values.push(lotId);
+    let whereClause = `id = $${paramIndex}`;
+
+    // Add CAS check if expectedCurrentBid is provided
+    if (expectedCurrentBid !== undefined) {
+      paramIndex++;
+      whereClause += ` AND current_bid = $${paramIndex}`;
+      values.push(expectedCurrentBid);
+    }
+
     const result = await this.db.query(
       `UPDATE auction_lots SET ${setClauses.join(', ')}, updated_at = CURRENT_TIMESTAMP
-       WHERE id = $${paramIndex}
+       WHERE ${whereClause}
        RETURNING *`,
       values
     );
 
     if (result.rows.length === 0) {
+      if (expectedCurrentBid !== undefined) {
+        throw new Error('Lot state changed - stale update detected (CAS check failed)');
+      }
       throw new Error('Auction lot not found');
     }
 

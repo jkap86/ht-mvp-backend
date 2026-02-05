@@ -91,8 +91,13 @@ export class VetDraftPickSelectionRepository {
   /**
    * Check if a pick asset has already been selected in a vet draft
    */
-  async isAssetSelected(draftId: number, draftPickAssetId: number): Promise<boolean> {
-    const result = await this.db.query(
+  async isAssetSelected(
+    draftId: number,
+    draftPickAssetId: number,
+    client?: PoolClient
+  ): Promise<boolean> {
+    const queryRunner = client || this.db;
+    const result = await queryRunner.query(
       `SELECT EXISTS(
         SELECT 1 FROM vet_draft_pick_selections
         WHERE draft_id = $1 AND draft_pick_asset_id = $2

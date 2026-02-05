@@ -458,6 +458,8 @@ export class SlowAuctionService {
   }
 
   // Resolve price based on proxy bids (second-price auction) - non-transactional version
+  // NOTE: This method is DEPRECATED. Prefer using resolvePriceWithClient in a transaction
+  // for better concurrency safety.
   async resolvePrice(
     lot: AuctionLot,
     settings: SlowAuctionSettings
@@ -510,7 +512,9 @@ export class SlowAuctionService {
         }
       }
 
-      updatedLot = await this.lotRepo.updateLot(lot.id, updates);
+      // Use CAS-style update to prevent race conditions
+      // If the lot's current_bid changed since we read it, this will throw
+      updatedLot = await this.lotRepo.updateLot(lot.id, updates, lot.currentBid);
 
       // Record bid history
       await this.lotRepo.recordBidHistory(lot.id, newLeader, newPrice, true);

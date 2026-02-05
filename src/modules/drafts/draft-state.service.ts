@@ -295,19 +295,21 @@ export class DraftStateService {
 
     const wasCompleted = draft.status === 'completed';
 
-    // Delete the most recent pick
-    const undonePick = await this.draftRepo.undoLastPick(draftId);
-    if (!undonePick) {
-      throw new ValidationException('No picks to undo');
-    }
-
-    // Calculate previous state using engine
+    // Pre-compute the previous state using engine
     const draftOrder = await this.draftRepo.getDraftOrder(draftId);
     const engine = this.engineFactory.createEngine(draft.draftType);
     const totalRosters = draftOrder.length;
 
-    // The undone pick tells us what the "current" pick should now be
-    const prevPick = undonePick.pickNumber;
+    // Get the last pick number to determine what state to revert to
+    // (We need to know this before the atomic transaction to compute the state)
+    const picks = await this.draftRepo.getDraftPicks(draftId, 1);
+    if (picks.length === 0) {
+      throw new ValidationException('No picks to undo');
+    }
+    const lastPick = draft.status === 'completed'
+      ? totalRosters * draft.rounds  // If completed, last pick was the final one
+      : draft.currentPick - 1;       // Otherwise, it's one before current
+    const prevPick = lastPick;       // After undo, this becomes the current pick
     const prevRound = engine.getRound(prevPick, totalRosters);
 
     // Fetch pick assets to account for traded picks
@@ -330,20 +332,29 @@ export class DraftStateService {
       pickDeadline.setSeconds(pickDeadline.getSeconds() + draft.pickTimeSeconds);
     }
 
-    // Update draft state - revert to previous pick
-    const updatedDraft = await this.draftRepo.update(draftId, {
-      currentPick: prevPick,
-      currentRound: prevRound,
-      currentRosterId: prevPickerRosterId,
-      pickDeadline,
-      // If draft was completed, revert to in_progress
-      status: wasCompleted ? 'in_progress' : draft.status,
-      completedAt: wasCompleted ? null : draft.completedAt,
+    // Determine the target status after undo
+    const targetStatus = wasCompleted ? 'in_progress' : (draft.status as 'in_progress' | 'paused');
+
+    // Delete the most recent pick and update draft state atomically
+    const { undonePick, draft: updatedDraft } = await this.draftRepo.undoLastPickTx({
+      draftId,
+      prevPickState: {
+        currentPick: prevPick,
+        currentRound: prevRound,
+        currentRosterId: prevPickerRosterId,
+        pickDeadline,
+        status: targetStatus,
+        completedAt: null,
+      },
     });
+
+    if (!undonePick) {
+      throw new ValidationException('No picks to undo');
+    }
 
     const response = draftToResponse(updatedDraft);
 
-    // Emit socket events
+    // Emit socket events AFTER transaction commits
     const socket = tryGetSocketService();
     socket?.emitPickUndone(draftId, { pick: undonePick, draft: response });
     if (updatedDraft.status === 'in_progress') {
