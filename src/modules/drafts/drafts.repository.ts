@@ -783,38 +783,68 @@ export class DraftRepository {
   // Draft Queue
   async getQueue(draftId: number, rosterId: number): Promise<QueueEntry[]> {
     const result = await this.db.query(
-      `SELECT dq.*, p.full_name as player_name, p.position as player_position, p.team as player_team
+      `SELECT dq.*,
+              p.full_name as player_name, p.position as player_position, p.team as player_team,
+              dpa.season as pick_asset_season, dpa.round as pick_asset_round,
+              COALESCE(orig_r.settings->>'team_name', orig_u.username, 'Team ' || orig_r.id) as original_team_name
        FROM draft_queue dq
        LEFT JOIN players p ON dq.player_id = p.id
+       LEFT JOIN draft_pick_assets dpa ON dq.pick_asset_id = dpa.id
+       LEFT JOIN rosters orig_r ON dpa.original_roster_id = orig_r.id
+       LEFT JOIN users orig_u ON orig_r.user_id = orig_u.id
        WHERE dq.draft_id = $1 AND dq.roster_id = $2
        ORDER BY dq.queue_position`,
       [draftId, rosterId]
     );
-    return result.rows.map((row) => ({
-      id: row.id,
-      draftId: row.draft_id,
-      rosterId: row.roster_id,
-      playerId: row.player_id,
-      queuePosition: row.queue_position,
-      playerName: row.player_name,
-      playerPosition: row.player_position,
-      playerTeam: row.player_team,
-    }));
+    return result.rows.map((row) => {
+      // Build pick asset display name if this is a pick asset entry
+      let pickAssetDisplayName: string | undefined;
+      if (row.pick_asset_id) {
+        pickAssetDisplayName = `${row.pick_asset_season} Round ${row.pick_asset_round} - ${row.original_team_name}`;
+      }
+      return {
+        id: row.id,
+        draftId: row.draft_id,
+        rosterId: row.roster_id,
+        playerId: row.player_id,
+        queuePosition: row.queue_position,
+        playerName: row.player_name,
+        playerPosition: row.player_position,
+        playerTeam: row.player_team,
+        pickAssetId: row.pick_asset_id,
+        pickAssetSeason: row.pick_asset_season,
+        pickAssetRound: row.pick_asset_round,
+        pickAssetDisplayName,
+        originalTeamName: row.original_team_name,
+      };
+    });
   }
 
-  async addToQueue(draftId: number, rosterId: number, playerId: number): Promise<QueueEntry> {
+  async addToQueue(
+    draftId: number,
+    rosterId: number,
+    playerId?: number,
+    pickAssetId?: number
+  ): Promise<QueueEntry> {
+    if (!playerId && !pickAssetId) {
+      throw new Error('Either playerId or pickAssetId must be provided');
+    }
+    if (playerId && pickAssetId) {
+      throw new Error('Cannot provide both playerId and pickAssetId');
+    }
+
     // Single query: calculate position and insert atomically
     const result = await this.db.query(
-      `INSERT INTO draft_queue (draft_id, roster_id, player_id, queue_position)
-       SELECT $1, $2, $3, COALESCE(MAX(queue_position), 0) + 1
+      `INSERT INTO draft_queue (draft_id, roster_id, player_id, pick_asset_id, queue_position)
+       SELECT $1, $2, $3, $4, COALESCE(MAX(queue_position), 0) + 1
        FROM draft_queue WHERE draft_id = $1 AND roster_id = $2
-       ON CONFLICT (draft_id, roster_id, player_id) DO NOTHING
+       ON CONFLICT DO NOTHING
        RETURNING *`,
-      [draftId, rosterId, playerId]
+      [draftId, rosterId, playerId || null, pickAssetId || null]
     );
 
     if (result.rows.length === 0) {
-      throw new Error('Player already in queue');
+      throw new Error(playerId ? 'Player already in queue' : 'Pick asset already in queue');
     }
 
     const row = result.rows[0];
@@ -824,6 +854,7 @@ export class DraftRepository {
       rosterId: row.roster_id,
       playerId: row.player_id,
       queuePosition: row.queue_position,
+      pickAssetId: row.pick_asset_id,
     };
   }
 
@@ -849,22 +880,62 @@ export class DraftRepository {
     ]);
   }
 
-  async reorderQueue(draftId: number, rosterId: number, playerIds: number[]): Promise<void> {
+  async removeFromQueueByPickAsset(
+    draftId: number,
+    rosterId: number,
+    pickAssetId: number
+  ): Promise<void> {
+    await this.db.query(
+      'DELETE FROM draft_queue WHERE draft_id = $1 AND roster_id = $2 AND pick_asset_id = $3',
+      [draftId, rosterId, pickAssetId]
+    );
+  }
+
+  async removePickAssetFromAllQueues(draftId: number, pickAssetId: number): Promise<void> {
+    await this.db.query('DELETE FROM draft_queue WHERE draft_id = $1 AND pick_asset_id = $2', [
+      draftId,
+      pickAssetId,
+    ]);
+  }
+
+  /**
+   * Reorder queue using entry IDs (supports mixed player + pick asset queues).
+   * Falls back to legacy player-only behavior if entryIds not provided.
+   */
+  async reorderQueue(
+    draftId: number,
+    rosterId: number,
+    playerIds: number[],
+    entryIds?: number[]
+  ): Promise<void> {
     const client = await this.db.connect();
     try {
       await client.query('BEGIN');
-      // Delete existing queue entries for this user
-      await client.query('DELETE FROM draft_queue WHERE draft_id = $1 AND roster_id = $2', [
-        draftId,
-        rosterId,
-      ]);
-      // Insert in new order
-      for (let i = 0; i < playerIds.length; i++) {
-        await client.query(
-          'INSERT INTO draft_queue (draft_id, roster_id, player_id, queue_position) VALUES ($1, $2, $3, $4)',
-          [draftId, rosterId, playerIds[i], i + 1]
-        );
+
+      if (entryIds && entryIds.length > 0) {
+        // New behavior: reorder by entry IDs (supports mixed queue)
+        for (let i = 0; i < entryIds.length; i++) {
+          await client.query(
+            'UPDATE draft_queue SET queue_position = $1 WHERE id = $2 AND draft_id = $3 AND roster_id = $4',
+            [i + 1, entryIds[i], draftId, rosterId]
+          );
+        }
+      } else {
+        // Legacy behavior: reorder by player IDs only
+        // Delete existing queue entries for this user
+        await client.query('DELETE FROM draft_queue WHERE draft_id = $1 AND roster_id = $2', [
+          draftId,
+          rosterId,
+        ]);
+        // Insert in new order
+        for (let i = 0; i < playerIds.length; i++) {
+          await client.query(
+            'INSERT INTO draft_queue (draft_id, roster_id, player_id, queue_position) VALUES ($1, $2, $3, $4)',
+            [draftId, rosterId, playerIds[i], i + 1]
+          );
+        }
       }
+
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK');
@@ -979,6 +1050,12 @@ export class DraftRepository {
          WHERE id = $2`,
         [params.rosterId, params.draftPickAssetId]
       );
+
+      // 9b. Remove pick asset from all queues in this draft
+      await client.query('DELETE FROM draft_queue WHERE draft_id = $1 AND pick_asset_id = $2', [
+        params.draftId,
+        params.draftPickAssetId,
+      ]);
 
       // 10. Update draft state atomically
       const updateClauses: string[] = [];
@@ -1143,9 +1220,15 @@ export interface QueueEntry {
   id: number;
   draftId: number;
   rosterId: number;
-  playerId: number;
+  playerId: number | null;
   queuePosition: number;
   playerName?: string;
   playerPosition?: string;
   playerTeam?: string;
+  // Pick asset fields
+  pickAssetId: number | null;
+  pickAssetSeason?: number;
+  pickAssetRound?: number;
+  pickAssetDisplayName?: string;
+  originalTeamName?: string;
 }

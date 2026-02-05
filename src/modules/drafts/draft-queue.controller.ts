@@ -27,8 +27,8 @@ export class DraftQueueController {
 
   /**
    * POST /api/leagues/:leagueId/drafts/:draftId/queue
-   * Add a player to the current user's queue
-   * Body: { player_id: number }
+   * Add a player or pick asset to the current user's queue
+   * Body: { player_id: number } OR { pick_asset_id: number }
    */
   addToQueue = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
@@ -36,10 +36,24 @@ export class DraftQueueController {
       const leagueId = requireLeagueId(req);
       const draftId = requireDraftId(req);
       const playerId = req.body.player_id;
+      const pickAssetId = req.body.pick_asset_id;
+
+      if (!playerId && !pickAssetId) {
+        throw new ValidationException('Either player_id or pick_asset_id is required');
+      }
+      if (playerId && pickAssetId) {
+        throw new ValidationException('Cannot provide both player_id and pick_asset_id');
+      }
 
       const roster = await this.queueService.resolveUserRoster(leagueId, userId);
       await this.queueService.requireDraftInProgress(draftId);
-      const entry = await this.queueService.addToQueue(draftId, roster.id, playerId);
+
+      let entry;
+      if (playerId) {
+        entry = await this.queueService.addToQueue(draftId, roster.id, playerId);
+      } else {
+        entry = await this.queueService.addPickAssetToQueue(draftId, roster.id, pickAssetId);
+      }
       res.status(201).json(entry);
     } catch (error) {
       next(error);
@@ -70,24 +84,53 @@ export class DraftQueueController {
   };
 
   /**
+   * DELETE /api/leagues/:leagueId/drafts/:draftId/queue/pick-asset/:pickAssetId
+   * Remove a pick asset from the current user's queue
+   */
+  removePickAssetFromQueue = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const userId = requireUserId(req);
+      const leagueId = requireLeagueId(req);
+      const draftId = requireDraftId(req);
+      const pickAssetId = parseInt(req.params.pickAssetId as string, 10);
+
+      if (isNaN(pickAssetId)) {
+        throw new ValidationException('Invalid pick asset ID');
+      }
+
+      const roster = await this.queueService.resolveUserRoster(leagueId, userId);
+      await this.queueService.removeFromQueueByPickAsset(draftId, roster.id, pickAssetId);
+      res.status(200).json({ message: 'Pick asset removed from queue' });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  /**
    * PUT /api/leagues/:leagueId/drafts/:draftId/queue
    * Reorder the current user's queue
-   * Body: { player_ids: number[] }
+   * Body: { player_ids: number[] } OR { queue_entry_ids: number[] }
    */
   reorderQueue = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const userId = requireUserId(req);
       const leagueId = requireLeagueId(req);
       const draftId = requireDraftId(req);
-      const { player_ids } = req.body;
+      const { player_ids, queue_entry_ids } = req.body;
 
-      if (!Array.isArray(player_ids)) {
-        throw new ValidationException('player_ids must be an array');
+      // Accept either queue_entry_ids (new) or player_ids (legacy)
+      if (!Array.isArray(queue_entry_ids) && !Array.isArray(player_ids)) {
+        throw new ValidationException('Either queue_entry_ids or player_ids must be an array');
       }
 
       const roster = await this.queueService.resolveUserRoster(leagueId, userId);
       await this.queueService.requireDraftInProgress(draftId);
-      await this.queueService.reorderQueue(draftId, roster.id, player_ids);
+      await this.queueService.reorderQueue(
+        draftId,
+        roster.id,
+        player_ids || [],
+        queue_entry_ids
+      );
       const queue = await this.queueService.getQueue(draftId, roster.id);
       res.status(200).json(queue);
     } catch (error) {

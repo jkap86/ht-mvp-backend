@@ -327,8 +327,11 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     let playerId: number | null = null;
     let usedQueue = false;
 
-    // Try to pick from queue first
+    // Try to pick from queue first (only players, not pick assets - autopick doesn't support pick assets)
     for (const queueItem of queue) {
+      // Skip pick asset entries - autopick only handles players
+      if (queueItem.playerId === null) continue;
+
       if (!draftedPlayerIds.has(queueItem.playerId)) {
         playerId = queueItem.playerId;
         usedQueue = true;

@@ -62,6 +62,19 @@ export class DraftQueueService {
   }
 
   /**
+   * Add a pick asset to a user's queue
+   */
+  async addPickAssetToQueue(
+    draftId: number,
+    rosterId: number,
+    pickAssetId: number
+  ): Promise<QueueEntry> {
+    // Check if pick asset is already drafted (selected in vet_draft_pick_selections)
+    // This is validated at the repository level during insert
+    return this.draftRepo.addToQueue(draftId, rosterId, undefined, pickAssetId);
+  }
+
+  /**
    * Remove a player from a user's queue by queue entry ID
    */
   async removeFromQueue(queueId: number): Promise<void> {
@@ -80,6 +93,17 @@ export class DraftQueueService {
   }
 
   /**
+   * Remove a pick asset from a user's queue
+   */
+  async removeFromQueueByPickAsset(
+    draftId: number,
+    rosterId: number,
+    pickAssetId: number
+  ): Promise<void> {
+    return this.draftRepo.removeFromQueueByPickAsset(draftId, rosterId, pickAssetId);
+  }
+
+  /**
    * Remove a player from ALL users' queues in a draft
    * (Used when a player is drafted)
    */
@@ -88,34 +112,68 @@ export class DraftQueueService {
   }
 
   /**
-   * Reorder a user's queue
+   * Remove a pick asset from ALL users' queues in a draft
+   * (Used when a pick asset is drafted)
    */
-  async reorderQueue(draftId: number, rosterId: number, playerIds: number[]): Promise<void> {
-    return this.draftRepo.reorderQueue(draftId, rosterId, playerIds);
+  async removePickAssetFromAllQueues(draftId: number, pickAssetId: number): Promise<void> {
+    return this.draftRepo.removePickAssetFromAllQueues(draftId, pickAssetId);
   }
 
   /**
-   * Pick the first available player from queue.
-   * Iterates through queue, skipping already-drafted players (and cleaning them up).
-   * Returns the first available player, or null if queue is exhausted.
+   * Reorder a user's queue
+   * @param entryIds - Optional array of queue entry IDs (for mixed player + pick asset queues)
+   * @param playerIds - Legacy array of player IDs (for backwards compatibility)
+   */
+  async reorderQueue(
+    draftId: number,
+    rosterId: number,
+    playerIds: number[],
+    entryIds?: number[]
+  ): Promise<void> {
+    return this.draftRepo.reorderQueue(draftId, rosterId, playerIds, entryIds);
+  }
+
+  /**
+   * Pick the first available item from queue (player or pick asset).
+   * Iterates through queue, skipping already-drafted items (and cleaning them up).
+   * Returns the first available item, or null if queue is exhausted.
    */
   async pickFirstAvailableFromQueue(
     draftId: number,
-    rosterId: number
-  ): Promise<{ playerId: number; player: Player | null } | null> {
+    rosterId: number,
+    draftedPickAssetIds?: Set<number>
+  ): Promise<
+    | { type: 'player'; playerId: number; player: Player | null }
+    | { type: 'pickAsset'; pickAssetId: number }
+    | null
+  > {
     const queue = await this.getQueue(draftId, rosterId);
     const draftedPlayerIds = await this.draftRepo.getDraftedPlayerIds(draftId);
 
     for (const queueItem of queue) {
-      if (!draftedPlayerIds.has(queueItem.playerId)) {
-        // Found an available player
-        const player = await this.playerRepo.findById(queueItem.playerId);
-        // Remove from this user's queue (they're picking this player)
-        await this.removeFromQueue(queueItem.id);
-        return { playerId: queueItem.playerId, player };
-      } else {
-        // Player already drafted - clean up stale queue entry
-        await this.removeFromQueue(queueItem.id);
+      if (queueItem.playerId !== null) {
+        // Player entry
+        if (!draftedPlayerIds.has(queueItem.playerId)) {
+          // Found an available player
+          const player = await this.playerRepo.findById(queueItem.playerId);
+          // Remove from this user's queue (they're picking this player)
+          await this.removeFromQueue(queueItem.id);
+          return { type: 'player', playerId: queueItem.playerId, player };
+        } else {
+          // Player already drafted - clean up stale queue entry
+          await this.removeFromQueue(queueItem.id);
+        }
+      } else if (queueItem.pickAssetId !== null) {
+        // Pick asset entry
+        if (!draftedPickAssetIds || !draftedPickAssetIds.has(queueItem.pickAssetId)) {
+          // Found an available pick asset
+          // Remove from this user's queue
+          await this.removeFromQueue(queueItem.id);
+          return { type: 'pickAsset', pickAssetId: queueItem.pickAssetId };
+        } else {
+          // Pick asset already drafted - clean up stale queue entry
+          await this.removeFromQueue(queueItem.id);
+        }
       }
     }
 
@@ -132,15 +190,26 @@ export class DraftQueueService {
 
   /**
    * Clean up all stale queue entries for a user.
-   * Removes any queued players that have already been drafted.
+   * Removes any queued players or pick assets that have already been drafted.
    */
-  async cleanupStaleEntries(draftId: number, rosterId: number): Promise<number> {
+  async cleanupStaleEntries(
+    draftId: number,
+    rosterId: number,
+    draftedPickAssetIds?: Set<number>
+  ): Promise<number> {
     const queue = await this.getQueue(draftId, rosterId);
     const draftedPlayerIds = await this.draftRepo.getDraftedPlayerIds(draftId);
     let removedCount = 0;
 
     for (const queueItem of queue) {
-      if (draftedPlayerIds.has(queueItem.playerId)) {
+      if (queueItem.playerId !== null && draftedPlayerIds.has(queueItem.playerId)) {
+        await this.removeFromQueue(queueItem.id);
+        removedCount++;
+      } else if (
+        queueItem.pickAssetId !== null &&
+        draftedPickAssetIds &&
+        draftedPickAssetIds.has(queueItem.pickAssetId)
+      ) {
         await this.removeFromQueue(queueItem.id);
         removedCount++;
       }

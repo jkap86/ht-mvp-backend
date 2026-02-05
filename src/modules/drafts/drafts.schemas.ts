@@ -80,14 +80,24 @@ export const makePickSchema = z.object({
 });
 
 export const addToQueueSchema = z.object({
-  player_id: z.number().int().positive('Player ID must be a positive integer'),
-});
+  player_id: z.number().int().positive('Player ID must be a positive integer').optional(),
+  pick_asset_id: z.number().int().positive('Pick asset ID must be a positive integer').optional(),
+}).refine(
+  (data) => (data.player_id !== undefined) !== (data.pick_asset_id !== undefined),
+  { message: 'Must provide either player_id or pick_asset_id, but not both' }
+);
 
 export const reorderQueueSchema = z.object({
   player_ids: z
     .array(z.number().int().positive('Each player ID must be a positive integer'))
-    .min(1, 'Player IDs array cannot be empty'),
-});
+    .optional(),
+  queue_entry_ids: z
+    .array(z.number().int().positive('Each entry ID must be a positive integer'))
+    .optional(),
+}).refine(
+  (data) => Array.isArray(data.player_ids) || Array.isArray(data.queue_entry_ids),
+  { message: 'Must provide either player_ids or queue_entry_ids' }
+);
 
 // Unified action schema supporting state changes, picks, and queue operations
 export const draftActionSchema = z.discriminatedUnion('action', [

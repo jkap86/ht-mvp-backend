@@ -167,6 +167,9 @@ router.put(
 // DELETE /api/leagues/:leagueId/drafts/:draftId/queue/:playerId
 router.delete('/:draftId/queue/:playerId', queueLimiter, queueController.removeFromQueue);
 
+// DELETE /api/leagues/:leagueId/drafts/:draftId/queue/pick-asset/:pickAssetId
+router.delete('/:draftId/queue/pick-asset/:pickAssetId', queueLimiter, queueController.removePickAssetFromQueue);
+
 // PATCH /api/leagues/:leagueId/drafts/:draftId/autodraft
 router.patch('/:draftId/autodraft', draftController.toggleAutodraft);
 
