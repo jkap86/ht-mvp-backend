@@ -316,6 +316,14 @@ async devBulkAddUsers(
         const nextRosterId = await this.rosterRepo.getNextRosterId(leagueId);
         await this.rosterRepo.create(leagueId, user.userId, nextRosterId);
 
+        // Emit socket event for real-time UI update
+        const socketService = tryGetSocketService();
+        socketService?.emitMemberJoined(leagueId, {
+          rosterId: nextRosterId,
+          teamName: username,
+          userId: user.userId,
+        });
+
         results.push({ username, success: true });
       } catch (error: any) {
         results.push({ username, success: false, error: error.message || 'Unknown error' });
