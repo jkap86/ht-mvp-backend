@@ -165,6 +165,64 @@ export class DraftOrderService {
     return draftOrder;
   }
 
+  /**
+   * Set draft order based on Round 1 pick ownership from existing pick assets.
+   * Used when a rookie draft is created after a vet draft distributed the picks.
+   */
+  async setOrderFromPickOwnership(
+    leagueId: number,
+    draftId: number,
+    userId: string
+  ): Promise<any[]> {
+    const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
+    if (!isCommissioner) {
+      throw new ForbiddenException('Only the commissioner can set draft order');
+    }
+
+    const draft = await this.draftRepo.findById(draftId);
+    if (!draft || draft.status !== 'not_started') {
+      throw new ValidationException('Can only set order before draft starts');
+    }
+
+    // Get Round 1 ownership order
+    if (!this.pickAssetRepo) {
+      throw new ValidationException('Pick asset repository not available');
+    }
+
+    // Get the season from pick assets linked to this draft
+    const pickAssets = await this.pickAssetRepo.findByDraftId(draftId);
+    if (pickAssets.length === 0) {
+      throw new ValidationException('No pick assets linked to this draft. Cannot use vet draft results.');
+    }
+    const season = pickAssets[0].season;
+
+    const rosterIds = await this.pickAssetRepo.getRound1OwnershipOrder(leagueId, season);
+    if (rosterIds.length === 0) {
+      throw new ValidationException('No Round 1 pick assets found for this season.');
+    }
+
+    // Update draft order based on pick ownership
+    await this.draftRepo.updateDraftOrderAtomic(draftId, rosterIds);
+
+    // Update pick asset positions to match new draft order
+    await this.pickAssetRepo.updatePickPositions(draftId);
+
+    // Mark order as confirmed
+    await this.draftRepo.setOrderConfirmed(draftId, true);
+
+    // Fetch the final draft order
+    const finalOrder = await this.draftRepo.getDraftOrder(draftId);
+
+    // Emit socket event to notify all users viewing the draft room
+    const socket = tryGetSocketService();
+    socket?.emitDraftSettingsUpdated(draftId, {
+      order_confirmed: true,
+      draft_order: finalOrder,
+    });
+
+    return finalOrder;
+  }
+
   async createInitialOrder(draftId: number, leagueId: number): Promise<void> {
     // Get league to know total roster count
     const league = await this.leagueRepo.findById(leagueId);

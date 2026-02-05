@@ -27,6 +27,8 @@ export interface DraftSettings extends Partial<AuctionSettings> {
   includeRookiePicks?: boolean;
   /** The season for which rookie draft picks should be included */
   rookiePicksSeason?: number;
+  /** Number of rounds for generated rookie picks (1-5, default 5) */
+  rookiePicksRounds?: number;
 }
 
 /** Default auction settings */

@@ -49,6 +49,8 @@ export const createDraftSchema = z.object({
   include_rookie_picks: z.boolean().optional(),
   /** The season for which rookie draft picks should be included */
   rookie_picks_season: z.number().int().min(2020).max(2100).optional(),
+  /** Number of rounds for generated rookie picks (1-5, default 5) */
+  rookie_picks_rounds: z.number().int().min(1).max(5).optional(),
 });
 
 /** Schema for updating draft settings (commissioner only) */
@@ -73,6 +75,8 @@ export const updateDraftSettingsSchema = z.object({
   include_rookie_picks: z.boolean().optional(),
   /** The season for which rookie draft picks should be included */
   rookie_picks_season: z.number().int().min(2020).max(2100).optional(),
+  /** Number of rounds for generated rookie picks (1-5, default 5) */
+  rookie_picks_rounds: z.number().int().min(1).max(5).optional(),
 });
 
 export const makePickSchema = z.object({

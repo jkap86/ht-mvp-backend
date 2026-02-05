@@ -218,7 +218,7 @@ export class DraftPickAssetRepository {
     leagueId: number,
     season: number,
     rounds: number,
-    rosterIds: number[],
+    draftOrder: Array<{ rosterId: number; draftPosition: number }>,
     client?: PoolClient
   ): Promise<DraftPickAsset[]> {
     const queryRunner = client || this.db;
@@ -227,14 +227,14 @@ export class DraftPickAssetRepository {
     const placeholders: string[] = [];
     let paramIndex = 1;
 
-    for (const rosterId of rosterIds) {
+    for (const entry of draftOrder) {
       for (let round = 1; round <= rounds; round++) {
         // draft_id is NULL for future picks
         placeholders.push(
-          `($${paramIndex}, NULL, $${paramIndex + 1}, $${paramIndex + 2}, $${paramIndex + 3}, $${paramIndex + 4})`
+          `($${paramIndex}, NULL, $${paramIndex + 1}, $${paramIndex + 2}, $${paramIndex + 3}, $${paramIndex + 4}, $${paramIndex + 5})`
         );
-        values.push(leagueId, season, round, rosterId, rosterId);
-        paramIndex += 5;
+        values.push(leagueId, season, round, entry.rosterId, entry.rosterId, entry.draftPosition);
+        paramIndex += 6;
       }
     }
 
@@ -244,7 +244,7 @@ export class DraftPickAssetRepository {
 
     const result = await queryRunner.query(
       `INSERT INTO draft_pick_assets
-        (league_id, draft_id, season, round, original_roster_id, current_owner_roster_id)
+        (league_id, draft_id, season, round, original_roster_id, current_owner_roster_id, original_pick_position)
        VALUES ${placeholders.join(', ')}
        ON CONFLICT (league_id, season, round, original_roster_id) DO NOTHING
        RETURNING *`,
@@ -496,5 +496,58 @@ export class DraftPickAssetRepository {
       [leagueId]
     );
     return result.rows.map((row) => row.season);
+  }
+
+  /**
+   * Check if pick assets exist for a league and season
+   */
+  async existsForLeagueSeason(leagueId: number, season: number): Promise<boolean> {
+    const result = await this.db.query(
+      `SELECT EXISTS(
+        SELECT 1 FROM draft_pick_assets
+        WHERE league_id = $1 AND season = $2
+      )`,
+      [leagueId, season]
+    );
+    return result.rows[0].exists;
+  }
+
+  /**
+   * Delete pick assets for a league/season that aren't linked to any draft.
+   * Used when regenerating future pick assets with a different round count.
+   */
+  async deleteUnlinkedPicksForSeason(
+    leagueId: number,
+    season: number,
+    client?: PoolClient
+  ): Promise<void> {
+    const queryRunner = client || this.db;
+    await queryRunner.query(
+      `DELETE FROM draft_pick_assets
+       WHERE league_id = $1 AND season = $2 AND draft_id IS NULL`,
+      [leagueId, season]
+    );
+  }
+
+  /**
+   * Get Round 1 pick ownership for building draft order.
+   * Returns roster IDs ordered by their earliest Round 1 pick position.
+   */
+  async getRound1OwnershipOrder(leagueId: number, season: number): Promise<number[]> {
+    const result = await this.db.query(
+      `WITH round1_ownership AS (
+        SELECT
+          current_owner_roster_id as roster_id,
+          MIN(original_pick_position) as earliest_pick
+        FROM draft_pick_assets
+        WHERE league_id = $1 AND season = $2 AND round = 1
+        GROUP BY current_owner_roster_id
+      )
+      SELECT roster_id
+      FROM round1_ownership
+      ORDER BY earliest_pick`,
+      [leagueId, season]
+    );
+    return result.rows.map((row) => row.roster_id);
   }
 }

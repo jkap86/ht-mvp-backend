@@ -92,6 +92,7 @@ export class DraftService {
       scheduledStart?: Date;
       includeRookiePicks?: boolean;
       rookiePicksSeason?: number;
+      rookiePicksRounds?: number;
     }
   ): Promise<any> {
     const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
@@ -142,6 +143,9 @@ export class DraftService {
     if (options.rookiePicksSeason !== undefined) {
       settings.rookiePicksSeason = options.rookiePicksSeason;
     }
+    if (options.rookiePicksRounds !== undefined) {
+      settings.rookiePicksRounds = options.rookiePicksRounds;
+    }
 
     // Get league for validation and roster config
     const league = await this.leagueRepo.findById(leagueId);
@@ -167,44 +171,63 @@ export class DraftService {
     // Create initial draft order
     await this.orderService.createInitialOrder(draft.id, leagueId);
 
-    // Generate draft pick assets for trading
+    // Handle draft pick assets
     if (this.pickAssetRepo && league) {
       const season = parseInt(league.season, 10);
       const rounds = options.rounds || defaultRounds;
 
-      // Get draft order to extract positions
-      const draftOrder = await this.draftRepo.getDraftOrder(draft.id);
-      const orderData = draftOrder.map((entry: DraftOrderEntry) => ({
-        rosterId: entry.rosterId,
-        draftPosition: entry.draftPosition,
-      }));
-      const rosterIds = orderData.map((entry) => entry.rosterId);
+      // Check if this is a rookie draft with existing pick assets (from vet draft)
+      const isRookieDraft =
+        settings.playerPool?.length === 1 && settings.playerPool[0] === 'rookie';
+      const pickAssetsExist = await this.pickAssetRepo.existsForLeagueSeason(leagueId, season);
 
-      // Generate pick assets for this draft
-      await this.pickAssetRepo.generatePickAssetsForDraft(
-        draft.id,
-        leagueId,
-        season,
-        rounds,
-        orderData
-      );
+      if (isRookieDraft && pickAssetsExist) {
+        // Link existing pick assets to this rookie draft instead of generating new ones
+        await this.pickAssetRepo.linkAssetsToDraft(leagueId, season, draft.id);
 
-      // For dynasty and devy leagues, also generate future pick assets
-      if (league.mode === 'dynasty' || league.mode === 'devy') {
-        for (let futureYear = season + 1; futureYear <= season + 3; futureYear++) {
-          await this.pickAssetRepo.generateFuturePickAssets(
-            leagueId,
-            futureYear,
-            rounds,
-            rosterIds
+        // Update pick positions based on current draft order
+        await this.pickAssetRepo.updatePickPositions(draft.id);
+
+        logger.info(
+          `Linked existing pick assets to rookie draft ${draft.id} for season ${season}. ` +
+            `Commissioner can use "Set Order from Vet Draft" or randomize.`
+        );
+      } else {
+        // Standard flow: generate new pick assets
+        // Get draft order to extract positions
+        const draftOrder = await this.draftRepo.getDraftOrder(draft.id);
+        const orderData = draftOrder.map((entry: DraftOrderEntry) => ({
+          rosterId: entry.rosterId,
+          draftPosition: entry.draftPosition,
+        }));
+        const rosterIds = orderData.map((entry) => entry.rosterId);
+
+        // Generate pick assets for this draft
+        await this.pickAssetRepo.generatePickAssetsForDraft(
+          draft.id,
+          leagueId,
+          season,
+          rounds,
+          orderData
+        );
+
+        // For dynasty and devy leagues, also generate future pick assets
+        if (league.mode === 'dynasty' || league.mode === 'devy') {
+          for (let futureYear = season + 1; futureYear <= season + 3; futureYear++) {
+            await this.pickAssetRepo.generateFuturePickAssets(
+              leagueId,
+              futureYear,
+              rounds,
+              orderData
+            );
+          }
+          logger.info(
+            `Generated future pick assets for ${league.mode} league ${leagueId} (seasons ${season + 1}-${season + 3})`
           );
         }
-        logger.info(
-          `Generated future pick assets for ${league.mode} league ${leagueId} (seasons ${season + 1}-${season + 3})`
-        );
-      }
 
-      logger.info(`Generated ${rosterIds.length * rounds} pick assets for draft ${draft.id}`);
+        logger.info(`Generated ${rosterIds.length * rounds} pick assets for draft ${draft.id}`);
+      }
     }
 
     const response = draftToResponse(draft);
@@ -303,6 +326,14 @@ export class DraftService {
 
   async confirmDraftOrder(leagueId: number, draftId: number, userId: string): Promise<any[]> {
     return this.orderService.confirmDraftOrder(leagueId, draftId, userId);
+  }
+
+  async setOrderFromPickOwnership(
+    leagueId: number,
+    draftId: number,
+    userId: string
+  ): Promise<any[]> {
+    return this.orderService.setOrderFromPickOwnership(leagueId, draftId, userId);
   }
 
   // Delegate to state service
@@ -436,6 +467,7 @@ export class DraftService {
       scheduledStart?: Date | null;
       includeRookiePicks?: boolean;
       rookiePicksSeason?: number;
+      rookiePicksRounds?: number;
     }
   ): Promise<any> {
     // 1. Verify commissioner
@@ -528,6 +560,9 @@ export class DraftService {
     if (updates.rookiePicksSeason !== undefined) {
       mergedSettings.rookiePicksSeason = updates.rookiePicksSeason;
     }
+    if (updates.rookiePicksRounds !== undefined) {
+      mergedSettings.rookiePicksRounds = updates.rookiePicksRounds;
+    }
 
     // 6. Perform the update
     // Cast draftType to DraftType since schema validation already ensures it's valid
@@ -573,9 +608,56 @@ export class DraftService {
       }
     }
 
+    // 8. Generate rookie pick assets if includeRookiePicks is enabled
+    if (
+      mergedSettings.includeRookiePicks === true &&
+      mergedSettings.rookiePicksSeason &&
+      draft.status === 'not_started' &&
+      this.pickAssetRepo
+    ) {
+      const season = mergedSettings.rookiePicksSeason;
+      const rounds = mergedSettings.rookiePicksRounds || 5; // Default 5 rounds
+
+      // Get all active rosters in the league for future picks
+      // NOTE: We use all active rosters (not the vet draft's order) because future
+      // rookie picks should exist for every team, regardless of vet draft participation
+      const rosters = await this.rosterRepo.findByLeagueId(leagueId);
+      const activeRosters = rosters.filter((r) => !r.isBenched);
+      const orderData = activeRosters.map((r, index) => ({
+        rosterId: r.id,
+        draftPosition: index + 1,
+      }));
+
+      // Check if picks already exist for this season
+      const existingPicks = await this.pickAssetRepo.findByLeagueAndSeason(leagueId, season);
+
+      // Calculate expected pick count
+      const expectedPickCount = orderData.length * rounds;
+
+      // Check if we need to regenerate (wrong count or no picks)
+      if (existingPicks.length !== expectedPickCount) {
+        // Delete existing picks for this season that don't have a draft_id
+        // (future picks, not picks already linked to a draft)
+        await this.pickAssetRepo.deleteUnlinkedPicksForSeason(leagueId, season);
+
+        // Generate future pick assets with correct round count
+        await this.pickAssetRepo.generateFuturePickAssets(
+          leagueId,
+          season,
+          rounds,
+          orderData
+        );
+
+        logger.info(
+          `Generated ${orderData.length * rounds} rookie pick assets for vet draft ${draftId}, ` +
+            `season ${season}, ${rounds} rounds`
+        );
+      }
+    }
+
     const response = draftToResponse(updatedDraft);
 
-    // 8. Emit socket event for real-time updates
+    // 9. Emit socket event for real-time updates
     const socketService = tryGetSocketService();
     socketService?.emitDraftSettingsUpdated(draftId, response);
 

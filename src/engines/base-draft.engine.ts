@@ -4,7 +4,7 @@ import {
   NextPickDetails,
   ActualPickerInfo,
 } from './draft-engine.interface';
-import { Draft, DraftOrderEntry, DraftPick, draftToResponse } from '../modules/drafts/drafts.model';
+import { Draft, DraftOrderEntry, DraftPick, DraftSettings, draftToResponse } from '../modules/drafts/drafts.model';
 import { DraftRepository } from '../modules/drafts/drafts.repository';
 import { DraftPickAsset } from '../modules/drafts/draft-pick-asset.model';
 import { PlayerRepository } from '../modules/players/players.repository';
@@ -15,6 +15,7 @@ import { logger } from '../config/env.config';
 import { finalizeDraftCompletion } from '../modules/drafts/draft-completion.utils';
 import { container, KEYS } from '../container';
 import { DraftPickAssetRepository } from '../modules/drafts/draft-pick-asset.repository';
+import { VetDraftPickSelectionRepository } from '../modules/drafts/vet-draft-pick-selection.repository';
 import { getDraftLockId } from '../utils/locks';
 import { Pool } from 'pg';
 
@@ -310,41 +311,70 @@ export abstract class BaseDraftEngine implements IDraftEngine {
   }
 
   /**
-   * Perform an autopick for the current picker
+   * Perform an autopick for the current picker.
+   * Supports both player picks and pick asset selections (for vet drafts with includeRookiePicks).
    */
-  protected async performAutoPick(draft: Draft): Promise<DraftPick> {
+  protected async performAutoPick(draft: Draft): Promise<DraftPick | any> {
     if (!draft.currentRosterId) {
       throw new Error('No current roster to pick for');
     }
 
     const draftOrder = await this.draftRepo.getDraftOrder(draft.id);
-    const totalRosters = draftOrder.length;
+    const settings = draft.settings as DraftSettings;
+    const includeRookiePicks = settings?.includeRookiePicks ?? false;
 
-    // Get the user's queue
+    // Get selected pick asset IDs if this draft includes rookie picks
+    let draftedPickAssetIds: Set<number> | undefined;
+    if (includeRookiePicks) {
+      const vetPickSelectionRepo = container.resolve<VetDraftPickSelectionRepository>(
+        KEYS.VET_PICK_SELECTION_REPO
+      );
+      draftedPickAssetIds = await vetPickSelectionRepo.getSelectedAssetIds(draft.id);
+    }
+
+    // Get the user's queue and drafted player IDs
     const queue = await this.draftRepo.getQueue(draft.id, draft.currentRosterId);
     const draftedPlayerIds = await this.draftRepo.getDraftedPlayerIds(draft.id);
 
-    let playerId: number | null = null;
-    let usedQueue = false;
-
-    // Try to pick from queue first (only players, not pick assets - autopick doesn't support pick assets)
+    // Find first available queue item (player or pick asset)
     for (const queueItem of queue) {
-      // Skip pick asset entries - autopick only handles players
-      if (queueItem.playerId === null) continue;
-
-      if (!draftedPlayerIds.has(queueItem.playerId)) {
-        playerId = queueItem.playerId;
-        usedQueue = true;
-        // Remove this player from the user's queue after picking
-        await this.draftRepo.removeFromQueue(queueItem.id);
-        break;
-      } else {
+      if (queueItem.playerId !== null) {
+        // Player entry
+        if (!draftedPlayerIds.has(queueItem.playerId)) {
+          // Found available player - use player pick flow
+          await this.draftRepo.removeFromQueue(queueItem.id);
+          return await this.performAutoPickPlayer(draft, draftOrder, queueItem.playerId, true);
+        }
         // Player already drafted - remove from queue
+        await this.draftRepo.removeFromQueue(queueItem.id);
+      } else if (queueItem.pickAssetId !== null && includeRookiePicks) {
+        // Pick asset entry (only if draft allows)
+        if (!draftedPickAssetIds?.has(queueItem.pickAssetId)) {
+          // Found available pick asset - use pick asset flow
+          await this.draftRepo.removeFromQueue(queueItem.id);
+          return await this.performAutoPickAsset(draft, draftOrder, queueItem.pickAssetId);
+        }
+        // Pick asset already drafted - remove from queue
         await this.draftRepo.removeFromQueue(queueItem.id);
       }
     }
 
-    // Fall back to best available if queue exhausted
+    // Fall back to best available player
+    return await this.performAutoPickPlayer(draft, draftOrder, null, false);
+  }
+
+  /**
+   * Perform an autopick for a player.
+   */
+  protected async performAutoPickPlayer(
+    draft: Draft,
+    draftOrder: DraftOrderEntry[],
+    playerId: number | null,
+    usedQueue: boolean
+  ): Promise<DraftPick> {
+    const totalRosters = draftOrder.length;
+
+    // If no playerId, get best available
     if (!playerId) {
       const playerPool = (draft.settings as any)?.playerPool || ['veteran', 'rookie'];
       playerId = await this.draftRepo.getBestAvailablePlayer(draft.id, playerPool);
@@ -362,7 +392,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
       draft.currentPick,
       draft.currentRound,
       pickInRound,
-      draft.currentRosterId,
+      draft.currentRosterId!,
       playerId,
       idempotencyKey
     );
@@ -371,25 +401,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     await this.draftRepo.markPickAsAutoPick(pick.id);
 
     // Check if user had autodraft disabled - if so, force-enable it
-    const currentPicker = draftOrder.find((o) => o.rosterId === draft.currentRosterId);
-    if (currentPicker && !currentPicker.isAutodraftEnabled) {
-      // Force-enable autodraft since they timed out
-      await this.draftRepo.setAutodraftEnabled(draft.id, draft.currentRosterId, true);
-
-      // Emit socket event to notify the user (and others) that autodraft was force-enabled
-      const socket = tryGetSocketService();
-      socket?.emitAutodraftToggled(draft.id, {
-        rosterId: draft.currentRosterId,
-        enabled: true,
-        forced: true,
-      });
-
-      logger.info(
-        `Autodraft force-enabled for roster ${draft.currentRosterId} in draft ${draft.id} due to timeout`
-      );
-    }
-
-    // Queue cleanup is now handled atomically by createDraftPickWithCleanup
+    await this.handleAutodraftForceEnable(draft, draftOrder);
 
     // Advance to next pick
     const nextPickInfo = await this.advanceToNextPick(draft, draftOrder);
@@ -402,6 +414,185 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     );
 
     return pick;
+  }
+
+  /**
+   * Perform an autopick for a pick asset (rookie draft pick).
+   * Used in vet drafts with includeRookiePicks enabled.
+   */
+  protected async performAutoPickAsset(
+    draft: Draft,
+    draftOrder: DraftOrderEntry[],
+    pickAssetId: number
+  ): Promise<any> {
+    const totalRosters = draftOrder.length;
+    const pickInRound = this.getPickInRound(draft.currentPick, totalRosters);
+
+    // Load pick assets for computing next pick state
+    const pickAssetRepo = container.resolve<DraftPickAssetRepository>(KEYS.PICK_ASSET_REPO);
+    const pickAssets = await pickAssetRepo.findByDraftId(draft.id);
+
+    // Compute next pick state
+    const nextPickState = this.computeNextPickState(draft, draftOrder, pickAssets);
+
+    // Record selection atomically
+    const result = await this.draftRepo.makePickAssetSelectionTx({
+      draftId: draft.id,
+      expectedPickNumber: draft.currentPick,
+      draftPickAssetId: pickAssetId,
+      rosterId: draft.currentRosterId!,
+      nextPickState,
+      idempotencyKey: `autopick-asset-${draft.id}-${draft.currentPick}`,
+    });
+
+    // Handle draft completion
+    if (nextPickState.status === 'completed') {
+      await finalizeDraftCompletion(
+        {
+          draftRepo: this.draftRepo,
+          leagueRepo: this.leagueRepo,
+          rosterPlayersRepo: this.rosterPlayersRepo,
+        },
+        draft.id,
+        draft.leagueId
+      );
+    }
+
+    // Check if user had autodraft disabled - if so, force-enable it
+    await this.handleAutodraftForceEnable(draft, draftOrder);
+
+    // Get pick asset details for socket event
+    const pickAsset = await pickAssetRepo.findByIdWithDetails(pickAssetId);
+
+    // Build response with pick asset info
+    const response = {
+      id: result.selectionId,
+      draft_id: draft.id,
+      pick_number: draft.currentPick,
+      round: draft.currentRound,
+      pick_in_round: pickInRound,
+      roster_id: draft.currentRosterId,
+      player_id: null,
+      is_auto_pick: true,
+      picked_at: result.selectedAt,
+      // Pick asset specific fields
+      draft_pick_asset_id: pickAssetId,
+      pick_asset_season: pickAsset?.season,
+      pick_asset_round: pickAsset?.round,
+      pick_asset_original_team: pickAsset?.originalTeamName,
+      is_pick_asset: true,
+    };
+
+    // Emit socket events AFTER transaction commits
+    const socket = tryGetSocketService();
+    socket?.emitDraftPick(draft.id, response);
+
+    if (nextPickState.status !== 'completed') {
+      socket?.emitNextPick(draft.id, {
+        currentPick: nextPickState.currentPick,
+        currentRound: nextPickState.currentRound,
+        currentRosterId: nextPickState.currentRosterId,
+        originalRosterId: nextPickState.originalRosterId,
+        isTraded: nextPickState.isTraded,
+        pickDeadline: nextPickState.pickDeadline,
+      });
+    } else {
+      // Draft completed
+      const completedDraft = await this.draftRepo.findById(draft.id);
+      if (completedDraft) {
+        socket?.emitDraftCompleted(draft.id, draftToResponse(completedDraft));
+      }
+    }
+
+    logger.info(
+      `Auto-pick made in draft ${draft.id}: pick asset ${pickAssetId} for roster ${draft.currentRosterId} (from queue)`
+    );
+
+    return response;
+  }
+
+  /**
+   * Force-enable autodraft if user timed out with it disabled.
+   */
+  protected async handleAutodraftForceEnable(
+    draft: Draft,
+    draftOrder: DraftOrderEntry[]
+  ): Promise<void> {
+    const currentPicker = draftOrder.find((o) => o.rosterId === draft.currentRosterId);
+    if (currentPicker && !currentPicker.isAutodraftEnabled) {
+      // Force-enable autodraft since they timed out
+      await this.draftRepo.setAutodraftEnabled(draft.id, draft.currentRosterId!, true);
+
+      // Emit socket event to notify the user (and others) that autodraft was force-enabled
+      const socket = tryGetSocketService();
+      socket?.emitAutodraftToggled(draft.id, {
+        rosterId: draft.currentRosterId!,
+        enabled: true,
+        forced: true,
+      });
+
+      logger.info(
+        `Autodraft force-enabled for roster ${draft.currentRosterId} in draft ${draft.id} due to timeout`
+      );
+    }
+  }
+
+  /**
+   * Pre-compute the next pick state without making any DB changes.
+   * Used for pick asset selections where we need to pass the next state to the atomic transaction.
+   */
+  protected computeNextPickState(
+    draft: Draft,
+    draftOrder: DraftOrderEntry[],
+    pickAssets: DraftPickAsset[] = []
+  ): {
+    currentPick: number | null;
+    currentRound: number | null;
+    currentRosterId: number | null;
+    originalRosterId: number | null;
+    isTraded: boolean;
+    pickDeadline: Date | null;
+    status?: 'in_progress' | 'completed';
+    completedAt?: Date | null;
+  } {
+    const totalRosters = draftOrder.length;
+    const totalPicks = totalRosters * draft.rounds;
+    const nextPick = draft.currentPick + 1;
+
+    if (nextPick > totalPicks) {
+      // Draft complete
+      return {
+        currentPick: null,
+        currentRound: null,
+        currentRosterId: null,
+        originalRosterId: null,
+        isTraded: false,
+        pickDeadline: null,
+        status: 'completed',
+        completedAt: new Date(),
+      };
+    }
+
+    const nextRound = this.getRound(nextPick, totalRosters);
+
+    // Use getActualPickerForPickNumber to account for traded picks
+    const actualPicker = this.getActualPickerForPickNumber(draft, draftOrder, pickAssets, nextPick);
+
+    // Fall back to original picker logic if traded picks not calculated
+    const originalPicker = this.getPickerForPickNumber(draft, draftOrder, nextPick);
+    const nextPickerRosterId = actualPicker?.rosterId ?? originalPicker?.rosterId ?? null;
+
+    const pickDeadline = this.calculatePickDeadline(draft);
+
+    return {
+      currentPick: nextPick,
+      currentRound: nextRound,
+      currentRosterId: nextPickerRosterId,
+      originalRosterId: actualPicker?.originalRosterId ?? originalPicker?.rosterId ?? null,
+      isTraded: actualPicker?.isTraded ?? false,
+      pickDeadline,
+      status: 'in_progress',
+    };
   }
 
   /**

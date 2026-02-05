@@ -89,6 +89,7 @@ export class DraftController {
         scheduled_start,
         include_rookie_picks,
         rookie_picks_season,
+        rookie_picks_rounds,
       } = req.body;
 
       const draft = await this.draftService.createDraft(leagueId, userId, {
@@ -100,6 +101,7 @@ export class DraftController {
         scheduledStart: scheduled_start ? new Date(scheduled_start) : undefined,
         includeRookiePicks: include_rookie_picks,
         rookiePicksSeason: rookie_picks_season,
+        rookiePicksRounds: rookie_picks_rounds,
       });
       res.status(201).json(draft);
     } catch (error) {
@@ -152,6 +154,19 @@ export class DraftController {
       const draftId = requireDraftId(req);
 
       const order = await this.draftService.confirmDraftOrder(leagueId, draftId, userId);
+      res.status(200).json(order);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  setOrderFromPickOwnership = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const userId = requireUserId(req);
+      const leagueId = requireLeagueId(req);
+      const draftId = requireDraftId(req);
+
+      const order = await this.draftService.setOrderFromPickOwnership(leagueId, draftId, userId);
       res.status(200).json(order);
     } catch (error) {
       next(error);
@@ -491,6 +506,7 @@ export class DraftController {
         scheduled_start,
         include_rookie_picks,
         rookie_picks_season,
+        rookie_picks_rounds,
       } = req.body;
 
       // Handle scheduled_start: parse date string, or pass null to clear it
@@ -510,6 +526,7 @@ export class DraftController {
         scheduledStart,
         includeRookiePicks: include_rookie_picks,
         rookiePicksSeason: rookie_picks_season,
+        rookiePicksRounds: rookie_picks_rounds,
       });
 
       res.status(200).json(draft);

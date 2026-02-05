@@ -101,6 +101,10 @@ router.post('/:draftId/randomize', draftModifyLimiter, draftController.randomize
 // POST /api/leagues/:leagueId/drafts/:draftId/order/confirm
 router.post('/:draftId/order/confirm', draftModifyLimiter, draftController.confirmDraftOrder);
 
+// POST /api/leagues/:leagueId/drafts/:draftId/order/from-pick-ownership
+// Sets draft order based on Round 1 pick ownership from vet draft selections
+router.post('/:draftId/order/from-pick-ownership', draftModifyLimiter, draftController.setOrderFromPickOwnership);
+
 // POST /api/leagues/:leagueId/drafts/:draftId/start
 router.post('/:draftId/start', draftModifyLimiter, draftController.startDraft);
 

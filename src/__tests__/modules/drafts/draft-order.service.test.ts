@@ -1,8 +1,10 @@
 import { Pool, PoolClient } from 'pg';
 import { DraftOrderService } from '../../../modules/drafts/draft-order.service';
 import { DraftRepository } from '../../../modules/drafts/drafts.repository';
+import { DraftPickAssetRepository } from '../../../modules/drafts/draft-pick-asset.repository';
 import { LeagueRepository, RosterRepository } from '../../../modules/leagues/leagues.repository';
 import { Draft, DraftOrderEntry } from '../../../modules/drafts/drafts.model';
+import { DraftPickAssetWithDetails } from '../../../modules/drafts/draft-pick-asset.model';
 import { ForbiddenException, ValidationException } from '../../../utils/exceptions';
 
 // Mock Pool
@@ -101,7 +103,66 @@ const createMockRosterRepo = (): jest.Mocked<RosterRepository> =>
     findByLeagueId: jest.fn(),
     getRosterCount: jest.fn(),
     createEmptyRoster: jest.fn(),
+    deleteEmptyRosters: jest.fn(),
   }) as unknown as jest.Mocked<RosterRepository>;
+
+const createMockPickAssetRepo = (): jest.Mocked<DraftPickAssetRepository> =>
+  ({
+    findByDraftId: jest.fn(),
+    getRound1OwnershipOrder: jest.fn(),
+    updatePickPositions: jest.fn(),
+  }) as unknown as jest.Mocked<DraftPickAssetRepository>;
+
+const mockPickAssets: DraftPickAssetWithDetails[] = [
+  {
+    id: 1,
+    leagueId: 1,
+    draftId: 1,
+    season: 2024,
+    round: 1,
+    originalRosterId: 1,
+    currentOwnerRosterId: 2,
+    originalPickPosition: 1,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    originalTeamName: 'Team 1',
+    originalUsername: 'user1',
+    currentOwnerTeamName: 'Team 2',
+    currentOwnerUsername: 'user2',
+  },
+  {
+    id: 2,
+    leagueId: 1,
+    draftId: 1,
+    season: 2024,
+    round: 1,
+    originalRosterId: 2,
+    currentOwnerRosterId: 3,
+    originalPickPosition: 2,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    originalTeamName: 'Team 2',
+    originalUsername: 'user2',
+    currentOwnerTeamName: 'Team 3',
+    currentOwnerUsername: 'user3',
+  },
+  {
+    id: 3,
+    leagueId: 1,
+    draftId: 1,
+    season: 2024,
+    round: 1,
+    originalRosterId: 3,
+    currentOwnerRosterId: 1,
+    originalPickPosition: 3,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    originalTeamName: 'Team 3',
+    originalUsername: 'user3',
+    currentOwnerTeamName: 'Team 1',
+    currentOwnerUsername: 'user1',
+  },
+];
 
 describe('DraftOrderService', () => {
   let draftOrderService: DraftOrderService;
@@ -109,17 +170,20 @@ describe('DraftOrderService', () => {
   let mockDraftRepo: jest.Mocked<DraftRepository>;
   let mockLeagueRepo: jest.Mocked<LeagueRepository>;
   let mockRosterRepo: jest.Mocked<RosterRepository>;
+  let mockPickAssetRepo: jest.Mocked<DraftPickAssetRepository>;
 
   beforeEach(() => {
     mockPool = createMockPool();
     mockDraftRepo = createMockDraftRepo();
     mockLeagueRepo = createMockLeagueRepo();
     mockRosterRepo = createMockRosterRepo();
+    mockPickAssetRepo = createMockPickAssetRepo();
     draftOrderService = new DraftOrderService(
       mockPool,
       mockDraftRepo,
       mockLeagueRepo,
-      mockRosterRepo
+      mockRosterRepo,
+      mockPickAssetRepo
     );
   });
 
@@ -217,6 +281,69 @@ describe('DraftOrderService', () => {
       // Should have created one empty roster
       expect(mockRosterRepo.createEmptyRoster).toHaveBeenCalledWith(1, 3, expect.anything());
       expect(mockDraftRepo.updateDraftOrderAtomic).toHaveBeenCalledWith(1, [1, 2, 3]);
+    });
+  });
+
+  describe('setOrderFromPickOwnership', () => {
+    it('should set order based on Round 1 pick ownership', async () => {
+      // Pick ownership order: Roster 2 owns pick 1, Roster 3 owns pick 2, Roster 1 owns pick 3
+      const ownershipOrder = [2, 3, 1];
+
+      mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockDraftRepo.findById.mockResolvedValue(mockDraft);
+      mockPickAssetRepo.findByDraftId.mockResolvedValue(mockPickAssets);
+      mockPickAssetRepo.getRound1OwnershipOrder.mockResolvedValue(ownershipOrder);
+      mockDraftRepo.updateDraftOrderAtomic.mockResolvedValue(undefined);
+      mockPickAssetRepo.updatePickPositions.mockResolvedValue(undefined);
+      mockDraftRepo.setOrderConfirmed.mockResolvedValue(undefined);
+      mockDraftRepo.getDraftOrder.mockResolvedValue(mockDraftOrder);
+
+      const result = await draftOrderService.setOrderFromPickOwnership(1, 1, 'user-123');
+
+      expect(mockPickAssetRepo.findByDraftId).toHaveBeenCalledWith(1);
+      expect(mockPickAssetRepo.getRound1OwnershipOrder).toHaveBeenCalledWith(1, 2024);
+      expect(mockDraftRepo.updateDraftOrderAtomic).toHaveBeenCalledWith(1, ownershipOrder);
+      expect(mockPickAssetRepo.updatePickPositions).toHaveBeenCalledWith(1);
+      expect(mockDraftRepo.setOrderConfirmed).toHaveBeenCalledWith(1, true);
+      expect(result).toEqual(mockDraftOrder);
+    });
+
+    it('should throw ForbiddenException when user is not commissioner', async () => {
+      mockLeagueRepo.isCommissioner.mockResolvedValue(false);
+
+      await expect(draftOrderService.setOrderFromPickOwnership(1, 1, 'user-123')).rejects.toThrow(
+        ForbiddenException
+      );
+    });
+
+    it('should throw ValidationException when draft already started', async () => {
+      mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockDraftRepo.findById.mockResolvedValue({ ...mockDraft, status: 'in_progress' });
+
+      await expect(draftOrderService.setOrderFromPickOwnership(1, 1, 'user-123')).rejects.toThrow(
+        ValidationException
+      );
+    });
+
+    it('should throw ValidationException when no pick assets are linked', async () => {
+      mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockDraftRepo.findById.mockResolvedValue(mockDraft);
+      mockPickAssetRepo.findByDraftId.mockResolvedValue([]);
+
+      await expect(draftOrderService.setOrderFromPickOwnership(1, 1, 'user-123')).rejects.toThrow(
+        'No pick assets linked to this draft'
+      );
+    });
+
+    it('should throw ValidationException when no Round 1 picks found', async () => {
+      mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockDraftRepo.findById.mockResolvedValue(mockDraft);
+      mockPickAssetRepo.findByDraftId.mockResolvedValue(mockPickAssets);
+      mockPickAssetRepo.getRound1OwnershipOrder.mockResolvedValue([]);
+
+      await expect(draftOrderService.setOrderFromPickOwnership(1, 1, 'user-123')).rejects.toThrow(
+        'No Round 1 pick assets found'
+      );
     });
   });
 });
