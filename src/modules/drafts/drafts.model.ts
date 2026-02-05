@@ -23,6 +23,10 @@ export type PlayerPoolType = 'veteran' | 'rookie' | 'college';
 /** Draft settings that extend auction settings with player pool filtering */
 export interface DraftSettings extends Partial<AuctionSettings> {
   playerPool?: PlayerPoolType[];  // default: ['veteran', 'rookie']
+  /** For vet-only drafts: include rookie draft picks as draftable items */
+  includeRookiePicks?: boolean;
+  /** The season for which rookie draft picks should be included */
+  rookiePicksSeason?: number;
 }
 
 /** Default auction settings */

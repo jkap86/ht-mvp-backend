@@ -80,7 +80,16 @@ export class DraftController {
       const userId = requireUserId(req);
       const leagueId = requireLeagueId(req);
 
-      const { draft_type, rounds, pick_time_seconds, auction_settings, player_pool, scheduled_start } = req.body;
+      const {
+        draft_type,
+        rounds,
+        pick_time_seconds,
+        auction_settings,
+        player_pool,
+        scheduled_start,
+        include_rookie_picks,
+        rookie_picks_season,
+      } = req.body;
 
       const draft = await this.draftService.createDraft(leagueId, userId, {
         draftType: draft_type,
@@ -89,6 +98,8 @@ export class DraftController {
         auctionSettings: auction_settings,
         playerPool: player_pool,
         scheduledStart: scheduled_start ? new Date(scheduled_start) : undefined,
+        includeRookiePicks: include_rookie_picks,
+        rookiePicksSeason: rookie_picks_season,
       });
       res.status(201).json(draft);
     } catch (error) {
@@ -202,6 +213,19 @@ export class DraftController {
 
       const picks = await this.draftService.getDraftPicks(leagueId, draftId, userId);
       res.status(200).json(picks);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getAvailablePickAssets = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const userId = requireUserId(req);
+      const leagueId = requireLeagueId(req);
+      const draftId = requireDraftId(req);
+
+      const assets = await this.draftService.getAvailablePickAssets(leagueId, draftId, userId);
+      res.status(200).json({ pick_assets: assets });
     } catch (error) {
       next(error);
     }
@@ -458,7 +482,16 @@ export class DraftController {
       const leagueId = requireLeagueId(req);
       const draftId = requireDraftId(req);
 
-      const { draft_type, rounds, pick_time_seconds, auction_settings, player_pool, scheduled_start } = req.body;
+      const {
+        draft_type,
+        rounds,
+        pick_time_seconds,
+        auction_settings,
+        player_pool,
+        scheduled_start,
+        include_rookie_picks,
+        rookie_picks_season,
+      } = req.body;
 
       // Handle scheduled_start: parse date string, or pass null to clear it
       let scheduledStart: Date | null | undefined;
@@ -475,6 +508,8 @@ export class DraftController {
         auctionSettings: auction_settings,
         playerPool: player_pool,
         scheduledStart,
+        includeRookiePicks: include_rookie_picks,
+        rookiePicksSeason: rookie_picks_season,
       });
 
       res.status(200).json(draft);

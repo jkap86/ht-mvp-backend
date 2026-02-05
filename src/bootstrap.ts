@@ -42,6 +42,7 @@ import { DraftStateService } from './modules/drafts/draft-state.service';
 import { DraftQueueService } from './modules/drafts/draft-queue.service';
 import { AuctionLotRepository } from './modules/drafts/auction/auction-lot.repository';
 import { DraftPickAssetRepository } from './modules/drafts/draft-pick-asset.repository';
+import { VetDraftPickSelectionRepository } from './modules/drafts/vet-draft-pick-selection.repository';
 import { SlowAuctionService } from './modules/drafts/auction/slow-auction.service';
 import { FastAuctionService } from './modules/drafts/auction/fast-auction.service';
 import { ChatService } from './modules/chat/chat.service';
@@ -207,7 +208,9 @@ function bootstrap(): void {
         container.resolve(KEYS.ROSTER_REPO),
         container.resolve(KEYS.DRAFT_ENGINE_FACTORY),
         container.resolve(KEYS.PLAYER_REPO),
-        container.resolve(KEYS.ROSTER_PLAYERS_REPO)
+        container.resolve(KEYS.ROSTER_PLAYERS_REPO),
+        container.resolve(KEYS.PICK_ASSET_REPO),
+        container.resolve(KEYS.VET_PICK_SELECTION_REPO)
       )
   );
 
@@ -245,7 +248,8 @@ function bootstrap(): void {
         container.resolve(KEYS.ROSTER_REPO),
         container.resolve(KEYS.DRAFT_ORDER_SERVICE),
         container.resolve(KEYS.DRAFT_PICK_SERVICE),
-        container.resolve(KEYS.DRAFT_STATE_SERVICE)
+        container.resolve(KEYS.DRAFT_STATE_SERVICE),
+        container.resolve(KEYS.PICK_ASSET_REPO)
       )
   );
 
@@ -279,6 +283,11 @@ function bootstrap(): void {
   container.register(
     KEYS.PICK_ASSET_REPO,
     () => new DraftPickAssetRepository(container.resolve(KEYS.POOL))
+  );
+
+  container.register(
+    KEYS.VET_PICK_SELECTION_REPO,
+    () => new VetDraftPickSelectionRepository(container.resolve(KEYS.POOL))
   );
 
   container.register(

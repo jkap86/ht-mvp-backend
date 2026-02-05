@@ -90,6 +90,8 @@ export class DraftService {
       };
       playerPool?: ('veteran' | 'rookie' | 'college')[];
       scheduledStart?: Date;
+      includeRookiePicks?: boolean;
+      rookiePicksSeason?: number;
     }
   ): Promise<any> {
     const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
@@ -131,6 +133,14 @@ export class DraftService {
     // Add player pool setting (defaults handled by schema)
     if (options.playerPool) {
       settings.playerPool = options.playerPool;
+    }
+
+    // Add rookie picks settings for vet-only drafts
+    if (options.includeRookiePicks !== undefined) {
+      settings.includeRookiePicks = options.includeRookiePicks;
+    }
+    if (options.rookiePicksSeason !== undefined) {
+      settings.rookiePicksSeason = options.rookiePicksSeason;
     }
 
     // Get league for validation and roster config
@@ -329,6 +339,26 @@ export class DraftService {
     return this.pickService.makePick(leagueId, draftId, userId, playerId, idempotencyKey);
   }
 
+  async getAvailablePickAssets(leagueId: number, draftId: number, userId: string): Promise<any[]> {
+    return this.pickService.getAvailablePickAssets(leagueId, draftId, userId);
+  }
+
+  async makePickAssetSelection(
+    leagueId: number,
+    draftId: number,
+    userId: string,
+    draftPickAssetId: number,
+    idempotencyKey?: string
+  ): Promise<any> {
+    return this.pickService.makePickAssetSelection(
+      leagueId,
+      draftId,
+      userId,
+      draftPickAssetId,
+      idempotencyKey
+    );
+  }
+
   /**
    * Toggle autodraft for the current user in a draft.
    * When enabled, the system will automatically pick from the user's queue when their timer expires.
@@ -398,6 +428,8 @@ export class DraftService {
       };
       playerPool?: ('veteran' | 'rookie' | 'college')[];
       scheduledStart?: Date | null;
+      includeRookiePicks?: boolean;
+      rookiePicksSeason?: number;
     }
   ): Promise<any> {
     // 1. Verify commissioner
@@ -481,6 +513,14 @@ export class DraftService {
         throw new ValidationException('College players can only be included in Devy leagues');
       }
       mergedSettings.playerPool = updates.playerPool;
+    }
+
+    // Handle rookie picks settings
+    if (updates.includeRookiePicks !== undefined) {
+      mergedSettings.includeRookiePicks = updates.includeRookiePicks;
+    }
+    if (updates.rookiePicksSeason !== undefined) {
+      mergedSettings.rookiePicksSeason = updates.rookiePicksSeason;
     }
 
     // 6. Perform the update

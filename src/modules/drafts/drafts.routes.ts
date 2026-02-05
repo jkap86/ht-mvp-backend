@@ -118,6 +118,9 @@ router.post('/:draftId/undo', draftModifyLimiter, draftController.undoPick);
 // GET /api/leagues/:leagueId/drafts/:draftId/picks
 router.get('/:draftId/picks', apiReadLimiter, draftController.getDraftPicks);
 
+// GET /api/leagues/:leagueId/drafts/:draftId/available-pick-assets
+router.get('/:draftId/available-pick-assets', apiReadLimiter, draftController.getAvailablePickAssets);
+
 // POST /api/leagues/:leagueId/drafts/:draftId/pick
 router.post(
   '/:draftId/pick',

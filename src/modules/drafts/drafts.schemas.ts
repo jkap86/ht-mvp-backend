@@ -45,6 +45,10 @@ export const createDraftSchema = z.object({
     .default(90),
   auction_settings: auctionSettingsSchema.optional(),
   player_pool: playerPoolSchema.optional(),
+  /** For vet-only drafts: include rookie draft picks as draftable items */
+  include_rookie_picks: z.boolean().optional(),
+  /** The season for which rookie draft picks should be included */
+  rookie_picks_season: z.number().int().min(2020).max(2100).optional(),
 });
 
 /** Schema for updating draft settings (commissioner only) */
@@ -65,6 +69,10 @@ export const updateDraftSettingsSchema = z.object({
   auction_settings: auctionSettingsSchema.partial().optional(),
   player_pool: playerPoolSchema.optional(),
   scheduled_start: z.string().datetime().nullable().optional(),
+  /** For vet-only drafts: include rookie draft picks as draftable items */
+  include_rookie_picks: z.boolean().optional(),
+  /** The season for which rookie draft picks should be included */
+  rookie_picks_season: z.number().int().min(2020).max(2100).optional(),
 });
 
 export const makePickSchema = z.object({
@@ -89,11 +97,15 @@ export const draftActionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('resume') }),
   z.object({ action: z.literal('complete') }),
 
-  // Pick action
+  // Pick action - either a player OR a pick asset (for vet drafts with rookie picks)
   z.object({
     action: z.literal('pick'),
-    playerId: z.number().int().positive('Player ID must be a positive integer'),
-  }),
+    playerId: z.number().int().positive('Player ID must be a positive integer').optional(),
+    draftPickAssetId: z.number().int().positive('Draft pick asset ID must be a positive integer').optional(),
+  }).refine(
+    (data) => (data.playerId !== undefined) !== (data.draftPickAssetId !== undefined),
+    { message: 'Must provide either playerId or draftPickAssetId, but not both' }
+  ),
 
   // Queue actions
   z.object({

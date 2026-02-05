@@ -445,6 +445,47 @@ export class DraftPickAssetRepository {
   }
 
   /**
+   * Get available pick assets for a vet draft that has includeRookiePicks enabled.
+   * Returns pick assets for the specified season that haven't been selected in this vet draft.
+   */
+  async getAvailablePickAssetsForVetDraft(
+    leagueId: number,
+    vetDraftId: number,
+    season: number
+  ): Promise<DraftPickAssetWithDetails[]> {
+    const result = await this.db.query(
+      `SELECT
+        dpa.*,
+        orig_u.username as original_username,
+        owner_u.username as current_owner_username,
+        COALESCE(orig_r.settings->>'teamName', orig_u.username) as original_team_name,
+        COALESCE(owner_r.settings->>'teamName', owner_u.username) as current_owner_team_name
+       FROM draft_pick_assets dpa
+       JOIN rosters orig_r ON dpa.original_roster_id = orig_r.id
+       JOIN users orig_u ON orig_r.user_id = orig_u.id
+       JOIN rosters owner_r ON dpa.current_owner_roster_id = owner_r.id
+       JOIN users owner_u ON owner_r.user_id = owner_u.id
+       WHERE dpa.league_id = $1
+         AND dpa.season = $2
+         -- Exclude picks already selected in this vet draft
+         AND NOT EXISTS (
+           SELECT 1 FROM vet_draft_pick_selections vdps
+           WHERE vdps.draft_id = $3 AND vdps.draft_pick_asset_id = dpa.id
+         )
+       ORDER BY dpa.round, dpa.original_pick_position`,
+      [leagueId, season, vetDraftId]
+    );
+
+    return result.rows.map((row) => ({
+      ...draftPickAssetFromDatabase(row),
+      originalTeamName: row.original_team_name,
+      originalUsername: row.original_username,
+      currentOwnerTeamName: row.current_owner_team_name,
+      currentOwnerUsername: row.current_owner_username,
+    }));
+  }
+
+  /**
    * Get distinct seasons that have pick assets for a league
    */
   async getSeasons(leagueId: number): Promise<number[]> {
