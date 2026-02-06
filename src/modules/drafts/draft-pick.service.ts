@@ -29,7 +29,51 @@ export class DraftPickService {
       throw new ForbiddenException('You are not a member of this league');
     }
 
-    return this.draftRepo.getDraftPicks(draftId);
+    // Get regular player picks
+    const playerPicks = await this.draftRepo.getDraftPicks(draftId);
+
+    // Check if this draft has pick asset selections enabled
+    const draft = await this.draftRepo.findById(draftId);
+    const settings = draft?.settings as DraftSettings;
+
+    if (!settings?.includeRookiePicks || !this.vetPickSelectionRepo) {
+      return playerPicks;
+    }
+
+    // Get pick asset selections and transform to match DraftPick shape
+    const pickAssetSelections = await this.vetPickSelectionRepo.findByDraftId(draftId);
+
+    if (pickAssetSelections.length === 0) {
+      return playerPicks;
+    }
+
+    // Calculate total rosters to determine round from pick number
+    const draftOrder = await this.draftRepo.getDraftOrder(draftId);
+    const totalRosters = draftOrder.length;
+
+    const transformedSelections = pickAssetSelections.map(selection => ({
+      id: selection.id,
+      draft_id: selection.draftId,
+      pick_number: selection.pickNumber,
+      round: totalRosters > 0 ? Math.ceil(selection.pickNumber / totalRosters) : 1,
+      pick_in_round: totalRosters > 0 ? ((selection.pickNumber - 1) % totalRosters) + 1 : selection.pickNumber,
+      roster_id: selection.rosterId,
+      player_id: null,
+      is_auto_pick: false,
+      picked_at: selection.selectedAt,
+      // Pick asset specific fields
+      draft_pick_asset_id: selection.draftPickAssetId,
+      pick_asset_season: selection.pickAsset.season,
+      pick_asset_round: selection.pickAsset.round,
+      pick_asset_original_team: selection.originalTeamName,
+      is_pick_asset: true,
+    }));
+
+    // Merge and sort by pick number
+    const allPicks = [...playerPicks, ...transformedSelections];
+    allPicks.sort((a, b) => a.pick_number - b.pick_number);
+
+    return allPicks;
   }
 
   async makePick(
