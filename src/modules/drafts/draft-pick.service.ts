@@ -117,13 +117,6 @@ export class DraftPickService {
       throw new ForbiddenException('You are not in this league');
     }
 
-    // Validate player eligibility early (before lock) - player data doesn't change during draft
-    // We'll re-fetch draft inside lock, but we need a draft to check settings
-    const draftForValidation = await this.draftRepo.findById(draftId);
-    if (draftForValidation) {
-      await this.validatePlayerPoolEligibility(draftForValidation, playerId);
-    }
-
     // Get the pool for running the transaction
     const pool = container.resolve<Pool>(KEYS.POOL);
 
@@ -136,6 +129,9 @@ export class DraftPickService {
         // Read fresh draft state inside lock
         const draft = await this.draftRepo.findByIdWithClient(client, draftId);
         if (!draft) throw new NotFoundException('Draft not found');
+
+        // Validate player eligibility with fresh draft settings inside lock
+        await this.validatePlayerPoolEligibility(draft, playerId);
 
         // Verify draft belongs to the league
         if (draft.leagueId !== leagueId) {
