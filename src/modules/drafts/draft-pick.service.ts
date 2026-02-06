@@ -1,4 +1,4 @@
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import { DraftRepository } from './drafts.repository';
 import { Draft, DraftOrderEntry, DraftSettings, PlayerPoolType, draftToResponse } from './drafts.model';
 import { DraftPickAssetRepository } from './draft-pick-asset.repository';
@@ -131,7 +131,7 @@ export class DraftPickService {
         if (!draft) throw new NotFoundException('Draft not found');
 
         // Validate player eligibility with fresh draft settings inside lock
-        await this.validatePlayerPoolEligibility(draft, playerId);
+        await this.validatePlayerPoolEligibility(client, draft, playerId);
 
         // Verify draft belongs to the league
         if (draft.leagueId !== leagueId) {
@@ -210,8 +210,8 @@ export class DraftPickService {
           );
         }
 
-        // Fetch player info for socket event (inside transaction for consistency)
-        const playerData = await this.playerRepo.findById(playerId);
+        // Fetch player info for socket event (inside transaction using same client)
+        const playerData = await this.playerRepo.findByIdWithClient(client, playerId);
 
         return {
           pick: result.pick,
@@ -541,8 +541,13 @@ export class DraftPickService {
 
   /**
    * Validate that a player is eligible for this draft's player pool.
+   * Uses the transaction client to avoid connection churn during peak drafts.
    */
-  private async validatePlayerPoolEligibility(draft: Draft, playerId: number): Promise<void> {
+  private async validatePlayerPoolEligibility(
+    client: PoolClient,
+    draft: Draft,
+    playerId: number
+  ): Promise<void> {
     const settings = draft.settings as DraftSettings;
     const playerPool = settings?.playerPool;
 
@@ -551,7 +556,7 @@ export class DraftPickService {
       return;
     }
 
-    const player = await this.playerRepo.findById(playerId);
+    const player = await this.playerRepo.findByIdWithClient(client, playerId);
     if (!player) {
       throw new NotFoundException('Player not found');
     }

@@ -1,10 +1,19 @@
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import { Player, playerFromDatabase } from './players.model';
 import { SleeperPlayer } from './sleeper.client';
 import { CFBDPlayer } from './cfbd.client';
 
 export class PlayerRepository {
   constructor(private readonly db: Pool) {}
+
+  /**
+   * Find a player by ID using an existing transaction client.
+   * Use this inside transactions to avoid connection churn.
+   */
+  async findByIdWithClient(client: PoolClient, id: number): Promise<Player | null> {
+    const result = await client.query('SELECT * FROM players WHERE id = $1', [id]);
+    return result.rows.length > 0 ? playerFromDatabase(result.rows[0]) : null;
+  }
 
   async findAll(limit = 100, offset = 0): Promise<Player[]> {
     const result = await this.db.query(

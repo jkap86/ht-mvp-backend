@@ -138,8 +138,8 @@ export class FastAuctionService {
           throw new ValidationException('There is already an active lot - wait for it to complete');
         }
 
-        // Validate player
-        const player = await this.playerRepo.findById(playerId);
+        // Validate player (using client to avoid connection churn)
+        const player = await this.playerRepo.findByIdWithClient(client, playerId);
         if (!player) {
           throw new NotFoundException('Player not found');
         }
