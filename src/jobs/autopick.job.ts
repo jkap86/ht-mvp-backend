@@ -4,14 +4,15 @@ import { DraftEngineFactory } from '../engines';
 import { DraftRepository } from '../modules/drafts/drafts.repository';
 import { logger } from '../config/logger.config';
 import { ValidationException } from '../utils/exceptions';
+import { getLockId, LockDomain } from '../shared/locks';
 
 let intervalId: NodeJS.Timeout | null = null;
 
-// Check for expired picks every 5 seconds
-const AUTOPICK_INTERVAL_MS = 5000;
+// Check for expired picks every 2 seconds for better UX (reduced from 5s)
+const AUTOPICK_INTERVAL_MS = 2000;
 
-// Fixed advisory lock ID for autopick job (prevents multiple instances processing same drafts)
-const AUTOPICK_LOCK_ID = 999999;
+// Use LockDomain.JOB for consistent lock management
+const AUTOPICK_LOCK_ID = getLockId(LockDomain.JOB, 1);
 
 /**
  * Process autopicks with distributed lock protection.

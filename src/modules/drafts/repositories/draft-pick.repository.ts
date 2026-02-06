@@ -229,7 +229,37 @@ export class DraftPickRepository {
     idempotencyKey?: string;
     isAutoPick?: boolean;
   }): Promise<{ pick: DraftPick; draft: Draft }> {
-    return runWithLock(this.db, LockDomain.DRAFT, params.draftId, async (client) => {
+    return runWithLock(this.db, LockDomain.DRAFT, params.draftId, (client) =>
+      this.makePickAndAdvanceTxWithClient(client, params)
+    );
+  }
+
+  /**
+   * Make a pick using an existing client that already holds the draft lock.
+   * Use this when the caller has already acquired the lock and read fresh data.
+   */
+  async makePickAndAdvanceTxWithClient(
+    client: PoolClient,
+    params: {
+      draftId: number;
+      expectedPickNumber: number;
+      round: number;
+      pickInRound: number;
+      rosterId: number;
+      playerId: number;
+      nextPickState: {
+        currentPick: number | null;
+        currentRound: number | null;
+        currentRosterId: number | null;
+        pickDeadline: Date | null;
+        status?: 'in_progress' | 'completed';
+        completedAt?: Date | null;
+      };
+      idempotencyKey?: string;
+      isAutoPick?: boolean;
+    }
+  ): Promise<{ pick: DraftPick; draft: Draft }> {
+    return (async () => {
       // Re-read draft row FOR UPDATE and validate current state
       const draftResult = await client.query('SELECT * FROM drafts WHERE id = $1 FOR UPDATE', [
         params.draftId,
@@ -314,7 +344,7 @@ export class DraftPickRepository {
         pick: DraftPickMapper.fromRow(pickResult.rows[0]),
         draft: updatedDraft,
       };
-    });
+    })();
   }
 
   /**
@@ -339,7 +369,38 @@ export class DraftPickRepository {
     selectedAt: Date;
     draft: Draft;
   }> {
-    return runWithLock(this.db, LockDomain.DRAFT, params.draftId, async (client) => {
+    return runWithLock(this.db, LockDomain.DRAFT, params.draftId, (client) =>
+      this.makePickAssetSelectionTxWithClient(client, params)
+    );
+  }
+
+  /**
+   * Make a pick asset selection using an existing client that already holds the draft lock.
+   * Use this when the caller has already acquired the lock and read fresh data.
+   */
+  async makePickAssetSelectionTxWithClient(
+    client: PoolClient,
+    params: {
+      draftId: number;
+      expectedPickNumber: number;
+      draftPickAssetId: number;
+      rosterId: number;
+      nextPickState: {
+        currentPick: number | null;
+        currentRound: number | null;
+        currentRosterId: number | null;
+        pickDeadline: Date | null;
+        status?: 'in_progress' | 'completed';
+        completedAt?: Date | null;
+      };
+      idempotencyKey?: string;
+    }
+  ): Promise<{
+    selectionId: number;
+    selectedAt: Date;
+    draft: Draft;
+  }> {
+    return (async () => {
       // Re-read draft row FOR UPDATE and validate current state
       const draftResult = await client.query('SELECT * FROM drafts WHERE id = $1 FOR UPDATE', [
         params.draftId,
@@ -439,7 +500,7 @@ export class DraftPickRepository {
         selectedAt: selectionRow.selected_at,
         draft: updatedDraft,
       };
-    });
+    })();
   }
 
   /**
@@ -462,7 +523,35 @@ export class DraftPickRepository {
     undoneSelection?: { id: number; draftPickAssetId: number; pickNumber: number; rosterId: number } | null;
     draft: Draft;
   }> {
-    return runWithLock(this.db, LockDomain.DRAFT, params.draftId, async (client) => {
+    return runWithLock(this.db, LockDomain.DRAFT, params.draftId, (client) =>
+      this.undoLastPickTxWithClient(client, params)
+    );
+  }
+
+  /**
+   * Undo the last pick using an existing client that already holds the draft lock.
+   * Use this when the caller has already acquired the lock and read fresh data.
+   */
+  async undoLastPickTxWithClient(
+    client: PoolClient,
+    params: {
+      draftId: number;
+      prevPickState: {
+        currentPick: number;
+        currentRound: number;
+        currentRosterId: number | null;
+        pickDeadline: Date | null;
+        status: 'in_progress' | 'paused';
+        completedAt: null;
+      };
+      includeRookiePicks?: boolean;
+    }
+  ): Promise<{
+    undonePick: DraftPick | null;
+    undoneSelection?: { id: number; draftPickAssetId: number; pickNumber: number; rosterId: number } | null;
+    draft: Draft;
+  }> {
+    return (async () => {
       // Re-read draft row FOR UPDATE
       const draftResult = await client.query('SELECT * FROM drafts WHERE id = $1 FOR UPDATE', [
         params.draftId,
@@ -550,7 +639,7 @@ export class DraftPickRepository {
         undoneSelection,
         draft: draftFromDatabase(updatedDraftResult.rows[0]),
       };
-    });
+    })();
   }
 
   /**

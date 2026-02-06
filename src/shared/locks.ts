@@ -75,6 +75,7 @@
  */
 
 import type { PoolClient } from 'pg';
+import { logger } from '../config/logger.config';
 
 /**
  * Lock domain enum with priority values.
@@ -138,12 +139,28 @@ function sortLocks(locks: LockSpec[]): LockSpec[] {
 }
 
 /**
+ * Default threshold for slow lock detection (5 seconds).
+ */
+const DEFAULT_SLOW_LOCK_THRESHOLD_MS = 5000;
+
+/**
+ * Options for lock acquisition.
+ */
+export interface LockOptions {
+  /** Threshold in ms before logging a slow lock warning (default: 5000ms) */
+  slowThresholdMs?: number;
+}
+
+/**
  * Acquires multiple advisory locks in consistent order and executes the callback.
  * Uses pg_advisory_xact_lock for transactional locks (auto-released on commit/rollback).
+ *
+ * Logs a warning if any lock acquisition takes longer than the slow threshold (default 5s).
  *
  * @param client - PostgreSQL pool client (must be in a transaction)
  * @param locks - Array of lock specifications to acquire
  * @param fn - Async function to execute while holding locks
+ * @param options - Optional configuration for lock behavior
  * @returns Result of the callback function
  *
  * @example
@@ -158,15 +175,26 @@ function sortLocks(locks: LockSpec[]): LockSpec[] {
 export async function withLocks<T>(
   client: PoolClient,
   locks: LockSpec[],
-  fn: () => Promise<T>
+  fn: () => Promise<T>,
+  options?: LockOptions
 ): Promise<T> {
   // Sort locks to ensure consistent ordering
   const sortedLocks = sortLocks(locks);
+  const slowThreshold = options?.slowThresholdMs ?? DEFAULT_SLOW_LOCK_THRESHOLD_MS;
 
   // Acquire all locks in order
   for (const lock of sortedLocks) {
     const lockId = getLockId(lock.domain, lock.id);
+    const start = Date.now();
+
     await client.query('SELECT pg_advisory_xact_lock($1)', [lockId]);
+
+    const elapsed = Date.now() - start;
+    if (elapsed > slowThreshold) {
+      logger.warn(
+        `Slow lock acquisition: domain=${LockDomain[lock.domain]} id=${lock.id} lockId=${lockId} took ${elapsed}ms`
+      );
+    }
   }
 
   // Execute the callback
@@ -278,20 +306,38 @@ export async function lockJob<T>(
  * Run a function within a draft transaction with advisory lock.
  * Acquires lock, begins transaction, executes function, commits or rolls back.
  *
+ * Logs a warning if lock acquisition takes longer than the slow threshold (default 5s).
+ *
  * @param pool - PostgreSQL pool
  * @param draftId - Draft to lock
  * @param fn - Async function receiving the client, to execute within transaction
+ * @param options - Optional configuration for lock behavior
  * @returns Result of the callback function
  */
 export async function runInDraftTransaction<T>(
   pool: { connect: () => Promise<PoolClient> },
   draftId: number,
-  fn: (client: PoolClient) => Promise<T>
+  fn: (client: PoolClient) => Promise<T>,
+  options?: LockOptions
 ): Promise<T> {
   const client = await pool.connect();
+  const slowThreshold = options?.slowThresholdMs ?? DEFAULT_SLOW_LOCK_THRESHOLD_MS;
+
   try {
     await client.query('BEGIN');
-    await client.query('SELECT pg_advisory_xact_lock($1)', [getLockId(LockDomain.DRAFT, draftId)]);
+
+    const lockId = getLockId(LockDomain.DRAFT, draftId);
+    const start = Date.now();
+
+    await client.query('SELECT pg_advisory_xact_lock($1)', [lockId]);
+
+    const elapsed = Date.now() - start;
+    if (elapsed > slowThreshold) {
+      logger.warn(
+        `Slow lock acquisition: domain=DRAFT draftId=${draftId} lockId=${lockId} took ${elapsed}ms`
+      );
+    }
+
     const result = await fn(client);
     await client.query('COMMIT');
     return result;

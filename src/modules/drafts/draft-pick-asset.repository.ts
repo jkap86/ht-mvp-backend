@@ -113,6 +113,39 @@ export class DraftPickAssetRepository {
   }
 
   /**
+   * Find all pick assets for a specific draft using an existing client (for transactions)
+   */
+  async findByDraftIdWithClient(
+    client: PoolClient,
+    draftId: number
+  ): Promise<DraftPickAssetWithDetails[]> {
+    const result = await client.query(
+      `SELECT
+        dpa.*,
+        orig_u.username as original_username,
+        owner_u.username as current_owner_username,
+        COALESCE(orig_r.settings->>'teamName', orig_u.username) as original_team_name,
+        COALESCE(owner_r.settings->>'teamName', owner_u.username) as current_owner_team_name
+       FROM draft_pick_assets dpa
+       JOIN rosters orig_r ON dpa.original_roster_id = orig_r.id
+       JOIN users orig_u ON orig_r.user_id = orig_u.id
+       JOIN rosters owner_r ON dpa.current_owner_roster_id = owner_r.id
+       JOIN users owner_u ON owner_r.user_id = owner_u.id
+       WHERE dpa.draft_id = $1
+       ORDER BY dpa.round, dpa.original_pick_position`,
+      [draftId]
+    );
+
+    return result.rows.map((row) => ({
+      ...draftPickAssetFromDatabase(row),
+      originalTeamName: row.original_team_name,
+      originalUsername: row.original_username,
+      currentOwnerTeamName: row.current_owner_team_name,
+      currentOwnerUsername: row.current_owner_username,
+    }));
+  }
+
+  /**
    * Find all pick assets owned by a specific roster
    */
   async findByOwner(rosterId: number, leagueId?: number): Promise<DraftPickAssetWithDetails[]> {

@@ -108,6 +108,13 @@ export class DraftRepository {
     return this.order.getDraftOrder(draftId, limit, offset);
   }
 
+  async getDraftOrderWithClient(
+    client: PoolClient,
+    draftId: number
+  ): Promise<DraftOrderEntry[]> {
+    return this.order.getDraftOrderWithClient(client, draftId);
+  }
+
   async setAutodraftEnabled(draftId: number, rosterId: number, enabled: boolean): Promise<void> {
     return this.order.setAutodraftEnabled(draftId, rosterId, enabled);
   }
@@ -216,6 +223,30 @@ export class DraftRepository {
     return this.pick.makePickAndAdvanceTx(params);
   }
 
+  async makePickAndAdvanceTxWithClient(
+    client: PoolClient,
+    params: {
+      draftId: number;
+      expectedPickNumber: number;
+      round: number;
+      pickInRound: number;
+      rosterId: number;
+      playerId: number;
+      nextPickState: {
+        currentPick: number | null;
+        currentRound: number | null;
+        currentRosterId: number | null;
+        pickDeadline: Date | null;
+        status?: 'in_progress' | 'completed';
+        completedAt?: Date | null;
+      };
+      idempotencyKey?: string;
+      isAutoPick?: boolean;
+    }
+  ): Promise<{ pick: DraftPick; draft: Draft }> {
+    return this.pick.makePickAndAdvanceTxWithClient(client, params);
+  }
+
   async makePickAssetSelectionTx(params: {
     draftId: number;
     expectedPickNumber: number;
@@ -238,6 +269,31 @@ export class DraftRepository {
     return this.pick.makePickAssetSelectionTx(params);
   }
 
+  async makePickAssetSelectionTxWithClient(
+    client: PoolClient,
+    params: {
+      draftId: number;
+      expectedPickNumber: number;
+      draftPickAssetId: number;
+      rosterId: number;
+      nextPickState: {
+        currentPick: number | null;
+        currentRound: number | null;
+        currentRosterId: number | null;
+        pickDeadline: Date | null;
+        status?: 'in_progress' | 'completed';
+        completedAt?: Date | null;
+      };
+      idempotencyKey?: string;
+    }
+  ): Promise<{
+    selectionId: number;
+    selectedAt: Date;
+    draft: Draft;
+  }> {
+    return this.pick.makePickAssetSelectionTxWithClient(client, params);
+  }
+
   async undoLastPickTx(params: {
     draftId: number;
     prevPickState: {
@@ -255,6 +311,28 @@ export class DraftRepository {
     draft: Draft;
   }> {
     return this.pick.undoLastPickTx(params);
+  }
+
+  async undoLastPickTxWithClient(
+    client: PoolClient,
+    params: {
+      draftId: number;
+      prevPickState: {
+        currentPick: number;
+        currentRound: number;
+        currentRosterId: number | null;
+        pickDeadline: Date | null;
+        status: 'in_progress' | 'paused';
+        completedAt: null;
+      };
+      includeRookiePicks?: boolean;
+    }
+  ): Promise<{
+    undonePick: DraftPick | null;
+    undoneSelection?: { id: number; draftPickAssetId: number; pickNumber: number; rosterId: number } | null;
+    draft: Draft;
+  }> {
+    return this.pick.undoLastPickTxWithClient(client, params);
   }
 
   // ============================================

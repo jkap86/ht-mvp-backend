@@ -1,3 +1,4 @@
+import { Pool } from 'pg';
 import { DraftRepository } from './drafts.repository';
 import { DraftSettings, draftToResponse } from './drafts.model';
 import { LeagueRepository } from '../leagues/leagues.repository';
@@ -9,6 +10,7 @@ import { finalizeDraftCompletion } from './draft-completion.utils';
 import { ScheduleGeneratorService } from '../matchups/schedule-generator.service';
 import { DraftPickAssetRepository } from './draft-pick-asset.repository';
 import { container, KEYS } from '../../container';
+import { runInDraftTransaction } from '../../shared/locks';
 
 export class DraftStateService {
   constructor(
@@ -294,97 +296,110 @@ export class DraftStateService {
   }
 
   async undoPick(draftId: number, userId: string): Promise<{ draft: any; undone: any }> {
-    const draft = await this.draftRepo.findById(draftId);
-    if (!draft) throw new NotFoundException('Draft not found');
+    // Get the pool for running the transaction
+    const pool = container.resolve<Pool>(KEYS.POOL);
 
-    const isCommissioner = await this.leagueRepo.isCommissioner(draft.leagueId, userId);
-    if (!isCommissioner) {
-      throw new ForbiddenException('Only the commissioner can undo picks');
-    }
+    // Run all state reads and the undo operation inside a single transaction with lock
+    const { undoneItem, response, prevPick, prevRound, prevPickerRosterId, pickDeadline, updatedDraftStatus } =
+      await runInDraftTransaction(pool, draftId, async (client) => {
+        // Read fresh draft state inside lock
+        const draft = await this.draftRepo.findByIdWithClient(client, draftId);
+        if (!draft) throw new NotFoundException('Draft not found');
 
-    if (draft.status === 'not_started') {
-      throw new ValidationException('Cannot undo picks on a draft that has not started');
-    }
+        const isCommissioner = await this.leagueRepo.isCommissioner(draft.leagueId, userId);
+        if (!isCommissioner) {
+          throw new ForbiddenException('Only the commissioner can undo picks');
+        }
 
-    const wasCompleted = draft.status === 'completed';
+        if (draft.status === 'not_started') {
+          throw new ValidationException('Cannot undo picks on a draft that has not started');
+        }
 
-    // Check if this draft has includeRookiePicks enabled
-    const settings = draft.settings as DraftSettings;
-    const includeRookiePicks = settings?.includeRookiePicks ?? false;
+        const wasCompleted = draft.status === 'completed';
 
-    // Pre-compute the previous state using engine
-    const draftOrder = await this.draftRepo.getDraftOrder(draftId);
-    const engine = this.engineFactory.createEngine(draft.draftType);
-    const totalRosters = draftOrder.length;
+        // Check if this draft has includeRookiePicks enabled
+        const settings = draft.settings as DraftSettings;
+        const includeRookiePicks = settings?.includeRookiePicks ?? false;
 
-    // Get the last pick number to determine what state to revert to
-    // (We need to know this before the atomic transaction to compute the state)
-    const picks = await this.draftRepo.getDraftPicks(draftId, 1);
-    if (picks.length === 0 && !includeRookiePicks) {
-      throw new ValidationException('No picks to undo');
-    }
-    const lastPick = draft.status === 'completed'
-      ? totalRosters * draft.rounds  // If completed, last pick was the final one
-      : draft.currentPick - 1;       // Otherwise, it's one before current
-    const prevPick = lastPick;       // After undo, this becomes the current pick
-    const prevRound = engine.getRound(prevPick, totalRosters);
+        // Read fresh draft order inside lock
+        const draftOrder = await this.draftRepo.getDraftOrderWithClient(client, draftId);
+        const engine = this.engineFactory.createEngine(draft.draftType);
+        const totalRosters = draftOrder.length;
 
-    // Fetch pick assets to account for traded picks
-    let prevPickerRosterId: number | null = null;
-    try {
-      const pickAssetRepo = container.resolve<DraftPickAssetRepository>(KEYS.PICK_ASSET_REPO);
-      const pickAssets = await pickAssetRepo.findByDraftId(draftId);
-      const actualPicker = engine.getActualPickerForPickNumber(draft, draftOrder, pickAssets, prevPick);
-      prevPickerRosterId = actualPicker?.rosterId || null;
-    } catch {
-      // Fallback to original picker if pick assets not available
-      const prevPicker = engine.getPickerForPickNumber(draft, draftOrder, prevPick);
-      prevPickerRosterId = prevPicker?.rosterId || null;
-    }
+        // Calculate the previous pick number
+        const computedLastPick = draft.status === 'completed'
+          ? totalRosters * draft.rounds  // If completed, last pick was the final one
+          : draft.currentPick - 1;       // Otherwise, it's one before current
+        const computedPrevPick = computedLastPick;
+        const computedPrevRound = engine.getRound(computedPrevPick, totalRosters);
 
-    // Calculate new deadline only if draft was in progress (not paused)
-    const shouldSetDeadline = draft.status === 'in_progress' || wasCompleted;
-    const pickDeadline = shouldSetDeadline ? new Date() : null;
-    if (pickDeadline) {
-      pickDeadline.setSeconds(pickDeadline.getSeconds() + draft.pickTimeSeconds);
-    }
+        // Fetch pick assets inside lock to account for traded picks
+        let computedPrevPickerRosterId: number | null = null;
+        try {
+          const pickAssetRepo = this.pickAssetRepo || container.resolve<DraftPickAssetRepository>(KEYS.PICK_ASSET_REPO);
+          const pickAssets = await pickAssetRepo.findByDraftIdWithClient(client, draftId);
+          const actualPicker = engine.getActualPickerForPickNumber(draft, draftOrder, pickAssets, computedPrevPick);
+          computedPrevPickerRosterId = actualPicker?.rosterId || null;
+        } catch {
+          // Fallback to original picker if pick assets not available
+          const prevPicker = engine.getPickerForPickNumber(draft, draftOrder, computedPrevPick);
+          computedPrevPickerRosterId = prevPicker?.rosterId || null;
+        }
 
-    // Determine the target status after undo
-    const targetStatus = wasCompleted ? 'in_progress' : (draft.status as 'in_progress' | 'paused');
+        // Calculate new deadline only if draft was in progress (not paused)
+        const shouldSetDeadline = draft.status === 'in_progress' || wasCompleted;
+        let computedPickDeadline: Date | null = null;
+        if (shouldSetDeadline) {
+          computedPickDeadline = new Date();
+          computedPickDeadline.setSeconds(computedPickDeadline.getSeconds() + draft.pickTimeSeconds);
+        }
 
-    // Delete the most recent pick (player or pick-asset) and update draft state atomically
-    const { undonePick, undoneSelection, draft: updatedDraft } = await this.draftRepo.undoLastPickTx({
-      draftId,
-      prevPickState: {
-        currentPick: prevPick,
-        currentRound: prevRound,
-        currentRosterId: prevPickerRosterId,
-        pickDeadline,
-        status: targetStatus,
-        completedAt: null,
-      },
-      includeRookiePicks,
-    });
+        // Determine the target status after undo
+        const targetStatus = wasCompleted ? 'in_progress' : (draft.status as 'in_progress' | 'paused');
 
-    if (!undonePick && !undoneSelection) {
-      throw new ValidationException('No picks to undo');
-    }
+        // Delete the most recent pick using the client that already holds the lock
+        const { undonePick, undoneSelection, draft: updatedDraft } =
+          await this.draftRepo.undoLastPickTxWithClient(client, {
+            draftId,
+            prevPickState: {
+              currentPick: computedPrevPick,
+              currentRound: computedPrevRound,
+              currentRosterId: computedPrevPickerRosterId,
+              pickDeadline: computedPickDeadline,
+              status: targetStatus,
+              completedAt: null,
+            },
+            includeRookiePicks,
+          });
 
-    // Build the undone item for socket event (either player pick or pick-asset selection)
-    const undoneItem = undonePick || {
-      id: undoneSelection!.id,
-      pickNumber: undoneSelection!.pickNumber,
-      rosterId: undoneSelection!.rosterId,
-      draftPickAssetId: undoneSelection!.draftPickAssetId,
-      isPickAsset: true,
-    };
+        if (!undonePick && !undoneSelection) {
+          throw new ValidationException('No picks to undo');
+        }
 
-    const response = draftToResponse(updatedDraft);
+        // Build the undone item for socket event
+        const computedUndoneItem = undonePick || {
+          id: undoneSelection!.id,
+          pickNumber: undoneSelection!.pickNumber,
+          rosterId: undoneSelection!.rosterId,
+          draftPickAssetId: undoneSelection!.draftPickAssetId,
+          isPickAsset: true,
+        };
+
+        return {
+          undoneItem: computedUndoneItem,
+          response: draftToResponse(updatedDraft),
+          prevPick: computedPrevPick,
+          prevRound: computedPrevRound,
+          prevPickerRosterId: computedPrevPickerRosterId,
+          pickDeadline: computedPickDeadline,
+          updatedDraftStatus: updatedDraft.status,
+        };
+      });
 
     // Emit socket events AFTER transaction commits
     const socket = tryGetSocketService();
     socket?.emitPickUndone(draftId, { pick: undoneItem, draft: response });
-    if (updatedDraft.status === 'in_progress') {
+    if (updatedDraftStatus === 'in_progress') {
       socket?.emitNextPick(draftId, {
         currentPick: prevPick,
         currentRound: prevRound,

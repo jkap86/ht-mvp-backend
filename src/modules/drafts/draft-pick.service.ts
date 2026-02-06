@@ -1,8 +1,9 @@
+import { Pool } from 'pg';
 import { DraftRepository } from './drafts.repository';
 import { Draft, DraftOrderEntry, DraftSettings, PlayerPoolType, draftToResponse } from './drafts.model';
 import { DraftPickAssetRepository } from './draft-pick-asset.repository';
 import { VetDraftPickSelectionRepository } from './vet-draft-pick-selection.repository';
-import { draftPickAssetWithDetailsToResponse } from './draft-pick-asset.model';
+import { draftPickAssetWithDetailsToResponse, DraftPickAsset } from './draft-pick-asset.model';
 import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import { RosterPlayersRepository } from '../rosters/rosters.repository';
 import { PlayerRepository } from '../players/players.repository';
@@ -11,6 +12,8 @@ import { NotFoundException, ForbiddenException, ValidationException, ConflictExc
 import { tryGetSocketService } from '../../socket';
 import { DraftEngineFactory, IDraftEngine } from '../../engines';
 import { finalizeDraftCompletion } from './draft-completion.utils';
+import { runInDraftTransaction } from '../../shared/locks';
+import { container, KEYS } from '../../container';
 
 export class DraftPickService {
   constructor(
@@ -102,102 +105,128 @@ export class DraftPickService {
     playerId: number,
     idempotencyKey?: string
   ): Promise<any> {
-    // Validate league membership first
+    // Validate league membership first (can stay outside lock - doesn't change during draft)
     const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
     if (!isMember) {
       throw new ForbiddenException('You are not a member of this league');
     }
 
-    const draft = await this.draftRepo.findById(draftId);
-    if (!draft) throw new NotFoundException('Draft not found');
-
-    // Verify draft belongs to the league
-    if (draft.leagueId !== leagueId) {
-      throw new NotFoundException('Draft not found in this league');
-    }
-
-    if (draft.status !== 'in_progress') {
-      throw new ValidationException('Draft is not in progress');
-    }
-
-    // Validate scheduled start time has passed
-    if (draft.scheduledStart && new Date() < draft.scheduledStart) {
-      throw new ValidationException('Draft has not started yet', ErrorCode.DRAFT_NOT_STARTED);
-    }
-
-    // Validate player is eligible for draft's player pool
-    await this.validatePlayerPoolEligibility(draft, playerId);
-
-    // Validate order is confirmed (non-auction drafts only)
-    if (!draft.orderConfirmed && draft.draftType !== 'auction') {
-      throw new ValidationException('Draft order must be confirmed before making picks');
-    }
-
-    // Get user's roster
-    const userRoster = await this.rosterRepo.findByLeagueAndUser(draft.leagueId, userId);
+    // Get user's roster (can stay outside lock - doesn't change during draft)
+    const userRoster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId);
     if (!userRoster) {
       throw new ForbiddenException('You are not in this league');
     }
 
-    // Check if it's user's turn (accounting for traded picks)
-    const draftOrder = await this.draftRepo.getDraftOrder(draftId);
-    const engine = this.engineFactory.createEngine(draft.draftType);
+    // Validate player eligibility early (before lock) - player data doesn't change during draft
+    // We'll re-fetch draft inside lock, but we need a draft to check settings
+    const draftForValidation = await this.draftRepo.findById(draftId);
+    if (draftForValidation) {
+      await this.validatePlayerPoolEligibility(draftForValidation, playerId);
+    }
 
-    // Load pick assets to check for traded picks
-    const pickAssets = this.pickAssetRepo ? await this.pickAssetRepo.findByDraftId(draftId) : [];
+    // Get the pool for running the transaction
+    const pool = container.resolve<Pool>(KEYS.POOL);
 
-    // Use getActualPickerForPickNumber to account for traded picks
-    const actualPicker = engine.getActualPickerForPickNumber?.(
-      draft,
-      draftOrder,
-      pickAssets,
-      draft.currentPick
+    // Run all state reads and the pick operation inside a single transaction with lock
+    // This ensures we compute nextPickState with fresh data
+    const { pick, updatedDraft, nextPickState, player } = await runInDraftTransaction(
+      pool,
+      draftId,
+      async (client) => {
+        // Read fresh draft state inside lock
+        const draft = await this.draftRepo.findByIdWithClient(client, draftId);
+        if (!draft) throw new NotFoundException('Draft not found');
+
+        // Verify draft belongs to the league
+        if (draft.leagueId !== leagueId) {
+          throw new NotFoundException('Draft not found in this league');
+        }
+
+        if (draft.status !== 'in_progress') {
+          throw new ValidationException('Draft is not in progress');
+        }
+
+        // Validate scheduled start time has passed
+        if (draft.scheduledStart && new Date() < draft.scheduledStart) {
+          throw new ValidationException('Draft has not started yet', ErrorCode.DRAFT_NOT_STARTED);
+        }
+
+        // Validate order is confirmed (non-auction drafts only)
+        if (!draft.orderConfirmed && draft.draftType !== 'auction') {
+          throw new ValidationException('Draft order must be confirmed before making picks');
+        }
+
+        // Read fresh draft order inside lock
+        const draftOrder = await this.draftRepo.getDraftOrderWithClient(client, draftId);
+        const engine = this.engineFactory.createEngine(draft.draftType);
+
+        // Load pick assets inside lock for fresh traded picks state
+        const pickAssets = this.pickAssetRepo
+          ? await this.pickAssetRepo.findByDraftIdWithClient(client, draftId)
+          : [];
+
+        // Use getActualPickerForPickNumber to account for traded picks
+        const actualPicker = engine.getActualPickerForPickNumber?.(
+          draft,
+          draftOrder,
+          pickAssets,
+          draft.currentPick
+        );
+
+        // Fall back to original picker logic if engine doesn't support traded picks
+        const currentPickerRosterId =
+          actualPicker?.rosterId ??
+          engine.getPickerForPickNumber(draft, draftOrder, draft.currentPick)?.rosterId;
+
+        if (currentPickerRosterId !== userRoster.id) {
+          throw new ValidationException('It is not your turn to pick');
+        }
+
+        // Calculate pick position
+        const totalRosters = draftOrder.length;
+        const pickInRound = engine.getPickInRound(draft.currentPick, totalRosters);
+
+        // Compute next pick state with FRESH data inside the lock
+        const computedNextPickState = this.computeNextPickState(draft, draftOrder, engine, pickAssets);
+
+        // Make the pick using the client that already holds the lock
+        const result = await this.draftRepo.makePickAndAdvanceTxWithClient(client, {
+          draftId,
+          expectedPickNumber: draft.currentPick,
+          round: draft.currentRound,
+          pickInRound,
+          rosterId: userRoster.id,
+          playerId,
+          nextPickState: computedNextPickState,
+          idempotencyKey,
+        });
+
+        // If draft completed, run unified finalization inside the transaction
+        if (computedNextPickState.status === 'completed') {
+          await finalizeDraftCompletion(
+            {
+              draftRepo: this.draftRepo,
+              leagueRepo: this.leagueRepo,
+              rosterPlayersRepo: this.rosterPlayersRepo,
+            },
+            draftId,
+            leagueId
+          );
+        }
+
+        // Fetch player info for socket event (inside transaction for consistency)
+        const playerData = await this.playerRepo.findById(playerId);
+
+        return {
+          pick: result.pick,
+          updatedDraft: result.draft,
+          nextPickState: computedNextPickState,
+          player: playerData,
+        };
+      }
     );
 
-    // Fall back to original picker logic if engine doesn't support traded picks
-    const currentPickerRosterId =
-      actualPicker?.rosterId ??
-      engine.getPickerForPickNumber(draft, draftOrder, draft.currentPick)?.rosterId;
-
-    if (currentPickerRosterId !== userRoster.id) {
-      throw new ValidationException('It is not your turn to pick');
-    }
-
-    // Calculate pick position
-    const totalRosters = draftOrder.length;
-    const pickInRound = engine.getPickInRound(draft.currentPick, totalRosters);
-
-    // Pre-compute the next pick state BEFORE the atomic transaction
-    const nextPickState = this.computeNextPickState(draft, draftOrder, engine, pickAssets);
-
-    // Make the pick AND advance draft state atomically in a single transaction
-    // This prevents race conditions where pick inserts but draft state doesn't advance
-    const { pick, draft: updatedDraft } = await this.draftRepo.makePickAndAdvanceTx({
-      draftId,
-      expectedPickNumber: draft.currentPick,
-      round: draft.currentRound,
-      pickInRound,
-      rosterId: userRoster.id,
-      playerId,
-      nextPickState,
-      idempotencyKey,
-    });
-
-    // If draft completed, run unified finalization (rosters, league status, schedule)
-    if (nextPickState.status === 'completed') {
-      await finalizeDraftCompletion(
-        {
-          draftRepo: this.draftRepo,
-          leagueRepo: this.leagueRepo,
-          rosterPlayersRepo: this.rosterPlayersRepo,
-        },
-        draftId,
-        leagueId
-      );
-    }
-
-    // Enrich pick with player info for socket event
-    const player = await this.playerRepo.findById(playerId);
+    // Emit socket events AFTER transaction commits
     const enrichedPick = {
       ...pick,
       is_auto_pick: false,
@@ -206,7 +235,6 @@ export class DraftPickService {
       player_team: player?.team,
     };
 
-    // Emit socket events AFTER transaction commits
     const socket = tryGetSocketService();
     socket?.emitDraftPick(draftId, enrichedPick);
 
@@ -275,73 +303,23 @@ export class DraftPickService {
     draftPickAssetId: number,
     idempotencyKey?: string
   ): Promise<any> {
-    // Validate league membership first
+    // Validate league membership first (can stay outside lock)
     const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
     if (!isMember) {
       throw new ForbiddenException('You are not a member of this league');
-    }
-
-    const draft = await this.draftRepo.findById(draftId);
-    if (!draft) throw new NotFoundException('Draft not found');
-
-    if (draft.leagueId !== leagueId) {
-      throw new NotFoundException('Draft not found in this league');
-    }
-
-    if (draft.status !== 'in_progress') {
-      throw new ValidationException('Draft is not in progress');
-    }
-
-    // Validate scheduled start time has passed
-    if (draft.scheduledStart && new Date() < draft.scheduledStart) {
-      throw new ValidationException('Draft has not started yet', ErrorCode.DRAFT_NOT_STARTED);
-    }
-
-    // Validate order is confirmed (non-auction drafts only)
-    if (!draft.orderConfirmed && draft.draftType !== 'auction') {
-      throw new ValidationException('Draft order must be confirmed before making picks');
-    }
-
-    // Verify this draft has includeRookiePicks enabled
-    const settings = draft.settings as DraftSettings;
-    if (!settings?.includeRookiePicks) {
-      throw new ValidationException('This draft does not allow drafting pick assets');
     }
 
     if (!this.pickAssetRepo || !this.vetPickSelectionRepo) {
       throw new ValidationException('Pick asset selection not configured');
     }
 
-    // Get user's roster
-    const userRoster = await this.rosterRepo.findByLeagueAndUser(draft.leagueId, userId);
+    // Get user's roster (can stay outside lock - doesn't change during draft)
+    const userRoster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId);
     if (!userRoster) {
       throw new ForbiddenException('You are not in this league');
     }
 
-    // Check if it's user's turn (accounting for traded picks)
-    const draftOrder = await this.draftRepo.getDraftOrder(draftId);
-    const engine = this.engineFactory.createEngine(draft.draftType);
-
-    // Load pick assets to check for traded picks
-    const pickAssets = await this.pickAssetRepo.findByDraftId(draftId);
-
-    // Use getActualPickerForPickNumber to account for traded picks
-    const actualPicker = engine.getActualPickerForPickNumber?.(
-      draft,
-      draftOrder,
-      pickAssets,
-      draft.currentPick
-    );
-
-    const currentPickerRosterId =
-      actualPicker?.rosterId ??
-      engine.getPickerForPickNumber(draft, draftOrder, draft.currentPick)?.rosterId;
-
-    if (currentPickerRosterId !== userRoster.id) {
-      throw new ValidationException('It is not your turn to pick');
-    }
-
-    // Validate the pick asset exists and belongs to the correct season
+    // Pre-validate pick asset (can stay outside lock - asset data doesn't change mid-pick)
     const pickAsset = await this.pickAssetRepo.findByIdWithDetails(draftPickAssetId);
     if (!pickAsset) {
       throw new NotFoundException('Pick asset not found');
@@ -351,74 +329,134 @@ export class DraftPickService {
       throw new ValidationException('Pick asset does not belong to this league');
     }
 
-    if (settings.rookiePicksSeason && pickAsset.season !== settings.rookiePicksSeason) {
-      throw new ValidationException(
-        `Pick asset is for season ${pickAsset.season}, but draft is configured for season ${settings.rookiePicksSeason}`
-      );
-    }
-
-    // Check if pick asset is in a pending trade
+    // Check if pick asset is in a pending trade (can stay outside lock)
     const isInTrade = await this.pickAssetRepo.isInPendingTrade(draftPickAssetId);
     if (isInTrade) {
       throw new ConflictException('Pick asset is currently in a pending trade');
     }
 
-    // Check if asset already selected in this vet draft
-    const alreadySelected = await this.vetPickSelectionRepo.isAssetSelected(draftId, draftPickAssetId);
-    if (alreadySelected) {
-      throw new ValidationException('This pick asset has already been drafted');
-    }
+    // Get the pool for running the transaction
+    const pool = container.resolve<Pool>(KEYS.POOL);
 
-    // Calculate pick position
-    const totalRosters = draftOrder.length;
-    const pickInRound = engine.getPickInRound(draft.currentPick, totalRosters);
+    // Run all state reads and the pick operation inside a single transaction with lock
+    const { response, nextPickState, updatedDraft } = await runInDraftTransaction(
+      pool,
+      draftId,
+      async (client) => {
+        // Read fresh draft state inside lock
+        const draft = await this.draftRepo.findByIdWithClient(client, draftId);
+        if (!draft) throw new NotFoundException('Draft not found');
 
-    // Pre-compute the next pick state
-    const nextPickState = this.computeNextPickState(draft, draftOrder, engine, pickAssets);
+        if (draft.leagueId !== leagueId) {
+          throw new NotFoundException('Draft not found in this league');
+        }
 
-    // Record the selection, transfer ownership, and update draft state atomically
-    // This prevents race conditions where selection is created but draft state doesn't advance
-    const { selectionId, selectedAt, draft: updatedDraft } =
-      await this.draftRepo.makePickAssetSelectionTx({
-        draftId,
-        expectedPickNumber: draft.currentPick,
-        draftPickAssetId,
-        rosterId: userRoster.id,
-        nextPickState,
-        idempotencyKey,
-      });
+        if (draft.status !== 'in_progress') {
+          throw new ValidationException('Draft is not in progress');
+        }
 
-    // If draft completed, run unified finalization (rosters, league status, schedule)
-    if (nextPickState.status === 'completed') {
-      await finalizeDraftCompletion(
-        {
-          draftRepo: this.draftRepo,
-          leagueRepo: this.leagueRepo,
-          rosterPlayersRepo: this.rosterPlayersRepo,
-        },
-        draftId,
-        leagueId
-      );
-    }
+        // Validate scheduled start time has passed
+        if (draft.scheduledStart && new Date() < draft.scheduledStart) {
+          throw new ValidationException('Draft has not started yet', ErrorCode.DRAFT_NOT_STARTED);
+        }
 
-    // Build response with pick asset info
-    const response = {
-      id: selectionId,
-      draft_id: draftId,
-      pick_number: draft.currentPick,
-      round: draft.currentRound,
-      pick_in_round: pickInRound,
-      roster_id: userRoster.id,
-      player_id: null,
-      is_auto_pick: false,
-      picked_at: selectedAt,
-      // Pick asset specific fields
-      draft_pick_asset_id: draftPickAssetId,
-      pick_asset_season: pickAsset.season,
-      pick_asset_round: pickAsset.round,
-      pick_asset_original_team: pickAsset.originalTeamName,
-      is_pick_asset: true,
-    };
+        // Validate order is confirmed (non-auction drafts only)
+        if (!draft.orderConfirmed && draft.draftType !== 'auction') {
+          throw new ValidationException('Draft order must be confirmed before making picks');
+        }
+
+        // Verify this draft has includeRookiePicks enabled
+        const settings = draft.settings as DraftSettings;
+        if (!settings?.includeRookiePicks) {
+          throw new ValidationException('This draft does not allow drafting pick assets');
+        }
+
+        // Validate season matches
+        if (settings.rookiePicksSeason && pickAsset.season !== settings.rookiePicksSeason) {
+          throw new ValidationException(
+            `Pick asset is for season ${pickAsset.season}, but draft is configured for season ${settings.rookiePicksSeason}`
+          );
+        }
+
+        // Read fresh draft order inside lock
+        const draftOrder = await this.draftRepo.getDraftOrderWithClient(client, draftId);
+        const engine = this.engineFactory.createEngine(draft.draftType);
+
+        // Load pick assets inside lock for fresh traded picks state
+        const pickAssets = await this.pickAssetRepo!.findByDraftIdWithClient(client, draftId);
+
+        // Use getActualPickerForPickNumber to account for traded picks
+        const actualPicker = engine.getActualPickerForPickNumber?.(
+          draft,
+          draftOrder,
+          pickAssets,
+          draft.currentPick
+        );
+
+        const currentPickerRosterId =
+          actualPicker?.rosterId ??
+          engine.getPickerForPickNumber(draft, draftOrder, draft.currentPick)?.rosterId;
+
+        if (currentPickerRosterId !== userRoster.id) {
+          throw new ValidationException('It is not your turn to pick');
+        }
+
+        // Calculate pick position
+        const totalRosters = draftOrder.length;
+        const pickInRound = engine.getPickInRound(draft.currentPick, totalRosters);
+
+        // Compute next pick state with FRESH data inside the lock
+        const computedNextPickState = this.computeNextPickState(draft, draftOrder, engine, pickAssets);
+
+        // Make the pick asset selection using the client that already holds the lock
+        const result = await this.draftRepo.makePickAssetSelectionTxWithClient(client, {
+          draftId,
+          expectedPickNumber: draft.currentPick,
+          draftPickAssetId,
+          rosterId: userRoster.id,
+          nextPickState: computedNextPickState,
+          idempotencyKey,
+        });
+
+        // If draft completed, run unified finalization inside the transaction
+        if (computedNextPickState.status === 'completed') {
+          await finalizeDraftCompletion(
+            {
+              draftRepo: this.draftRepo,
+              leagueRepo: this.leagueRepo,
+              rosterPlayersRepo: this.rosterPlayersRepo,
+            },
+            draftId,
+            leagueId
+          );
+        }
+
+        // Build response with pick asset info
+        const pickResponse = {
+          id: result.selectionId,
+          draft_id: draftId,
+          pick_number: draft.currentPick,
+          round: draft.currentRound,
+          pick_in_round: pickInRound,
+          roster_id: userRoster.id,
+          player_id: null,
+          is_auto_pick: false,
+          picked_at: result.selectedAt,
+          // Pick asset specific fields
+          draft_pick_asset_id: draftPickAssetId,
+          pick_asset_season: pickAsset.season,
+          pick_asset_round: pickAsset.round,
+          pick_asset_original_team: pickAsset.originalTeamName,
+          is_pick_asset: true,
+        };
+
+        return {
+          response: pickResponse,
+          nextPickState: computedNextPickState,
+          updatedDraft: result.draft,
+        };
+      }
+    );
 
     // Emit socket events AFTER transaction commits
     const socket = tryGetSocketService();
