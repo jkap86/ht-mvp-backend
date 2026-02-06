@@ -3,6 +3,7 @@ import {
   DraftTickResult,
   NextPickDetails,
   ActualPickerInfo,
+  PickDeadlineContext,
 } from './draft-engine.interface';
 import { Draft, DraftOrderEntry, DraftPick, DraftSettings, draftToResponse } from '../modules/drafts/drafts.model';
 import { DraftRepository } from '../modules/drafts/drafts.repository';
@@ -167,9 +168,12 @@ export abstract class BaseDraftEngine implements IDraftEngine {
 
   /**
    * Calculate next pick deadline
+   * @param draft - The draft object (uses pickTimeSeconds)
+   * @param context - Optional context for testing or future pick-specific logic
    */
-  calculatePickDeadline(draft: Draft): Date {
-    const deadline = new Date();
+  calculatePickDeadline(draft: Draft, context?: PickDeadlineContext): Date {
+    const now = context?.now ?? new Date();
+    const deadline = new Date(now);
     deadline.setSeconds(deadline.getSeconds() + draft.pickTimeSeconds);
     return deadline;
   }

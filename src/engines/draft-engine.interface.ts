@@ -33,6 +33,19 @@ export interface DraftTickResult {
 }
 
 /**
+ * Optional context for calculating pick deadlines.
+ * Enables deterministic testing and future pick-specific deadline logic.
+ */
+export interface PickDeadlineContext {
+  /** Override current time (useful for testing) */
+  now?: Date;
+  /** The pick number (for future pick-specific deadlines) */
+  pickNumber?: number;
+  /** The round number (for future round-specific deadlines) */
+  round?: number;
+}
+
+/**
  * Details about the next pick in a draft.
  * Field names match frontend expectations for socket events.
  */
@@ -93,8 +106,10 @@ export interface IDraftEngine {
 
   /**
    * Calculate deadline for the next pick
+   * @param draft - The draft object
+   * @param context - Optional context for testing or future pick-specific logic
    */
-  calculatePickDeadline(draft: Draft): Date;
+  calculatePickDeadline(draft: Draft, context?: PickDeadlineContext): Date;
 
   /**
    * Process a tick - called periodically to handle time-based actions.
