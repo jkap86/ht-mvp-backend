@@ -1,4 +1,4 @@
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import {
   AuctionLot,
   AuctionProxyBid,
@@ -448,5 +448,91 @@ export class AuctionLotRepository {
     }
 
     return result;
+  }
+
+  // ============================================================================
+  // WithClient methods - for use inside transactions
+  // ============================================================================
+
+  /**
+   * Creates a new auction lot using an existing transaction client
+   */
+  async createLotWithClient(
+    client: PoolClient,
+    draftId: number,
+    playerId: number,
+    nominatorRosterId: number,
+    bidDeadline: Date,
+    startingBid: number,
+    nominationDate?: string
+  ): Promise<AuctionLot> {
+    const nomDate = nominationDate || new Date().toISOString().split('T')[0];
+    const result = await client.query(
+      `INSERT INTO auction_lots (draft_id, player_id, nominator_roster_id, bid_deadline, current_bid, current_bidder_roster_id, status, nomination_date)
+       VALUES ($1, $2, $3, $4, $5, NULL, 'active', $6)
+       RETURNING *`,
+      [draftId, playerId, nominatorRosterId, bidDeadline, startingBid, nomDate]
+    );
+    return auctionLotFromDatabase(result.rows[0]);
+  }
+
+  /**
+   * Count active lots for a specific roster using transaction client
+   */
+  async countActiveLotsForRosterWithClient(
+    client: PoolClient,
+    draftId: number,
+    rosterId: number
+  ): Promise<number> {
+    const result = await client.query(
+      `SELECT COUNT(*) as count FROM auction_lots
+       WHERE draft_id = $1 AND nominator_roster_id = $2 AND status = 'active'`,
+      [draftId, rosterId]
+    );
+    return parseInt(result.rows[0].count, 10);
+  }
+
+  /**
+   * Count all active lots for a draft using transaction client
+   */
+  async countAllActiveLotsWithClient(client: PoolClient, draftId: number): Promise<number> {
+    const result = await client.query(
+      `SELECT COUNT(*) as count FROM auction_lots
+       WHERE draft_id = $1 AND status = 'active'`,
+      [draftId]
+    );
+    return parseInt(result.rows[0].count, 10);
+  }
+
+  /**
+   * Count daily nominations for a roster using transaction client
+   */
+  async countDailyNominationsForRosterWithClient(
+    client: PoolClient,
+    draftId: number,
+    rosterId: number,
+    date: string
+  ): Promise<number> {
+    const result = await client.query(
+      `SELECT COUNT(*) as count FROM auction_lots
+       WHERE draft_id = $1 AND nominator_roster_id = $2 AND nomination_date = $3`,
+      [draftId, rosterId, date]
+    );
+    return parseInt(result.rows[0].count, 10);
+  }
+
+  /**
+   * Find a lot by draft and player using transaction client
+   */
+  async findLotByDraftAndPlayerWithClient(
+    client: PoolClient,
+    draftId: number,
+    playerId: number
+  ): Promise<AuctionLot | null> {
+    const result = await client.query(
+      `SELECT * FROM auction_lots WHERE draft_id = $1 AND player_id = $2 AND status IN ('active', 'won')`,
+      [draftId, playerId]
+    );
+    return result.rows.length > 0 ? auctionLotFromDatabase(result.rows[0]) : null;
   }
 }

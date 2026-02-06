@@ -231,8 +231,9 @@ export class SlowAuctionService {
   }
 
   // NOMINATE: Create a new lot for a player
+  // Uses transaction with roster + draft locks to prevent race conditions on limit checks
   async nominate(draftId: number, rosterId: number, playerId: number): Promise<NominationResult> {
-    // 1. Validate draft exists, is auction, and in_progress
+    // 1. Basic validation (can stay outside transaction - read-only, fast-fail)
     const draft = await this.draftRepo.findById(draftId);
     if (!draft) throw new NotFoundException('Draft not found');
     if (draft.status !== 'in_progress') {
@@ -248,75 +249,96 @@ export class SlowAuctionService {
       throw new ValidationException('Player not found');
     }
 
-    // 3. Check player not already drafted (in draft_picks table)
+    // 3. Check player not already drafted (outside tx - this is a stable check)
     const isAlreadyDrafted = await this.draftRepo.isPlayerDrafted(draftId, playerId);
     if (isAlreadyDrafted) {
       throw new ValidationException('Player has already been drafted');
     }
 
-    // 4. Check roster has remaining slots
+    // Get league for settings
     const league = await this.leagueRepo.findById(draft.leagueId);
-    const rosterSlots = league?.leagueSettings?.rosterSlots ?? 15;
-    const budgetData = await this.lotRepo.getRosterBudgetData(draftId, rosterId);
-    if (budgetData.wonCount >= rosterSlots) {
-      throw new ValidationException('Your roster is full');
-    }
-
-    // 5. Check per-team nomination limit
+    if (!league) throw new NotFoundException('League not found');
+    const rosterSlots = league.leagueSettings?.rosterSlots ?? 15;
     const settings = this.getSettings(draft);
-    const activeCount = await this.lotRepo.countActiveLotsForRoster(draftId, rosterId);
-    if (activeCount >= settings.maxActiveNominationsPerTeam) {
-      throw new ValidationException(
-        `Maximum of ${settings.maxActiveNominationsPerTeam} active nominations allowed per team`
-      );
-    }
+    const today = getEasternDateString();
 
-    // 5b. Check global nomination cap (league-wide limit)
-    if (settings.maxActiveNominationsGlobal) {
-      const totalActive = await this.lotRepo.countAllActiveLots(draftId);
-      if (totalActive >= settings.maxActiveNominationsGlobal) {
-        throw new ValidationException(
-          `Maximum of ${settings.maxActiveNominationsGlobal} active auctions allowed league-wide`
-        );
-      }
-    }
-
-    // 5c. Check daily nomination limit (if configured)
-    if (settings.dailyNominationLimit) {
-      const today = getEasternDateString();
-      const todayCount = await this.lotRepo.countDailyNominationsForRoster(draftId, rosterId, today);
-      if (todayCount >= settings.dailyNominationLimit) {
-        throw new ValidationException(
-          `Daily nomination limit of ${settings.dailyNominationLimit} reached. Try again tomorrow.`
-        );
-      }
-    }
-
-    // 6. Check player not already nominated (active or won lot)
-    const existing = await this.lotRepo.findLotByDraftAndPlayer(draftId, playerId);
-    if (existing) {
-      throw new ValidationException('Player has already been nominated in this draft');
-    }
-
-    // 7. Create lot with deadline
-    // Wrap in try/catch to handle race condition with unique constraint
-    const bidDeadline = new Date(Date.now() + settings.bidWindowSeconds * 1000);
+    // Use transaction with locks to prevent race conditions on limit checks
+    const client = await this.pool.connect();
     try {
-      const lot = await this.lotRepo.createLot(
+      await client.query('BEGIN');
+
+      // Acquire roster lock first (for per-team + daily limits)
+      await client.query('SELECT pg_advisory_xact_lock($1)', [getAuctionRosterLockId(rosterId)]);
+      // Acquire draft lock (for global cap + player uniqueness)
+      await client.query('SELECT pg_advisory_xact_lock($1)', [getLockId(LockDomain.DRAFT, draftId)]);
+
+      // 4. Check roster has remaining slots (re-check under lock)
+      const budgetData = await getRosterBudgetDataWithClient(client, draftId, rosterId);
+      if (budgetData.wonCount >= rosterSlots) {
+        throw new ValidationException('Your roster is full');
+      }
+
+      // 5. Check per-team nomination limit (under lock)
+      const activeCount = await this.lotRepo.countActiveLotsForRosterWithClient(client, draftId, rosterId);
+      if (activeCount >= settings.maxActiveNominationsPerTeam) {
+        throw new ValidationException(
+          `Maximum of ${settings.maxActiveNominationsPerTeam} active nominations allowed per team`
+        );
+      }
+
+      // 5b. Check global nomination cap (under lock)
+      if (settings.maxActiveNominationsGlobal) {
+        const totalActive = await this.lotRepo.countAllActiveLotsWithClient(client, draftId);
+        if (totalActive >= settings.maxActiveNominationsGlobal) {
+          throw new ValidationException(
+            `Maximum of ${settings.maxActiveNominationsGlobal} active auctions allowed league-wide`
+          );
+        }
+      }
+
+      // 5c. Check daily nomination limit (under lock)
+      if (settings.dailyNominationLimit) {
+        const todayCount = await this.lotRepo.countDailyNominationsForRosterWithClient(
+          client,
+          draftId,
+          rosterId,
+          today
+        );
+        if (todayCount >= settings.dailyNominationLimit) {
+          throw new ValidationException(
+            `Daily nomination limit of ${settings.dailyNominationLimit} reached. Try again tomorrow.`
+          );
+        }
+      }
+
+      // 6. Check player not already nominated (under lock)
+      const existing = await this.lotRepo.findLotByDraftAndPlayerWithClient(client, draftId, playerId);
+      if (existing) {
+        throw new ValidationException('Player has already been nominated in this draft');
+      }
+
+      // 7. Create lot with deadline (using transaction client)
+      const bidDeadline = new Date(Date.now() + settings.bidWindowSeconds * 1000);
+      const lot = await this.lotRepo.createLotWithClient(
+        client,
         draftId,
         playerId,
         rosterId,
         bidDeadline,
         settings.minBid
       );
+
+      await client.query('COMMIT');
       return { lot, message: 'Player nominated successfully' };
     } catch (error: any) {
+      await client.query('ROLLBACK');
       // Handle unique constraint violation from partial index on (draft_id, player_id)
-      // This happens if two users try to nominate the same player concurrently
       if (error.code === '23505') {
         throw new ValidationException('Player has already been nominated in this draft');
       }
       throw error;
+    } finally {
+      client.release();
     }
   }
 
@@ -369,13 +391,23 @@ export class SlowAuctionService {
 
       // 4. Budget validation within transaction (exclude current lot if already leading)
       const budgetData = await getRosterBudgetDataWithClient(client, draftId, rosterId);
+
+      // Guard: reject if roster is already full
+      if (budgetData.wonCount >= rosterSlots) {
+        throw new ValidationException('Cannot bid: your roster is already full');
+      }
+
+      // Calculate remaining slots after winning this lot
       const remainingSlots = rosterSlots - budgetData.wonCount - 1;
-      const reservedForMinBids = Math.max(0, remainingSlots) * settings.minBid;
+      // Clamp to 0 for reserve calculation (should always be >= 0 after the guard above)
+      const remainingSlotsForReserve = Math.max(0, remainingSlots);
+      const reservedForMinBids = remainingSlotsForReserve * settings.minBid;
 
       // 4a. Worst-case check: if you win at maxBid, you must still fill remaining roster
-      const worstCaseIfWin = maxBid + budgetData.spent + remainingSlots * settings.minBid;
+      // Use clamped remainingSlots to avoid negative values making worstCaseIfWin incorrectly smaller
+      const worstCaseIfWin = maxBid + budgetData.spent + remainingSlotsForReserve * settings.minBid;
       if (worstCaseIfWin > totalBudget) {
-        const maxSafeBid = totalBudget - budgetData.spent - remainingSlots * settings.minBid;
+        const maxSafeBid = totalBudget - budgetData.spent - remainingSlotsForReserve * settings.minBid;
         throw new ValidationException(
           `Maximum safe bid is $${Math.max(settings.minBid, maxSafeBid)} (must reserve for remaining roster)`
         );

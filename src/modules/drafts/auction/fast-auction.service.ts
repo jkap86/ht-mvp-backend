@@ -174,8 +174,9 @@ export class FastAuctionService {
         // Calculate bid deadline for fast auction
         const bidDeadline = new Date(Date.now() + settings.nominationSeconds * 1000);
 
-        // Create the lot
-        const lot = await this.lotRepo.createLot(
+        // Create the lot using transaction client
+        const lot = await this.lotRepo.createLotWithClient(
+          client,
           draftId,
           playerId,
           roster.id,
@@ -526,8 +527,10 @@ export class FastAuctionService {
 
   /**
    * Auto-nominate a random available player when nominator times out
+   * Uses transaction with draft lock to prevent race conditions with concurrent nominations
    */
   async autoNominate(draftId: number): Promise<NominationResult | null> {
+    // Pre-flight check outside transaction (fast path for common case)
     const draft = await this.draftRepo.findById(draftId);
     if (!draft) {
       throw new NotFoundException('Draft not found');
@@ -543,62 +546,85 @@ export class FastAuctionService {
       return null;
     }
 
-    // Check if there's already an active lot
-    const activeLots = await this.lotRepo.findActiveLotsByDraft(draftId);
-    if (activeLots.length > 0) {
-      return null; // Already has an active lot, nothing to do
+    // Use transaction with draft lock to prevent race conditions
+    const result = await runWithLock(
+      this.pool,
+      LockDomain.DRAFT,
+      draftId,
+      async (client) => {
+        // Re-check for active lot under lock (prevents race with user nomination)
+        const activeLotResult = await client.query(
+          "SELECT id FROM auction_lots WHERE draft_id = $1 AND status = 'active' LIMIT 1",
+          [draftId]
+        );
+        if (activeLotResult.rows.length > 0) {
+          return null; // Already has an active lot, nothing to do
+        }
+
+        // Get available players (not drafted, not in active lot)
+        const draftedPlayerIds = await this.draftRepo.getDraftedPlayerIds(draftId);
+        const nominatedPlayerIds = await this.lotRepo.getNominatedPlayerIds(draftId);
+        const excludeIds = [...new Set([...draftedPlayerIds, ...nominatedPlayerIds])];
+
+        // Get all players and filter to available ones
+        const allPlayers = await this.playerRepo.findAll();
+        const availablePlayers = allPlayers.filter((p) => !excludeIds.includes(p.id));
+
+        if (availablePlayers.length === 0) {
+          logger.warn('No available players for auto-nomination', { draftId });
+          return { noPlayers: true } as const;
+        }
+
+        // Pick a random player
+        const randomIndex = Math.floor(Math.random() * availablePlayers.length);
+        const randomPlayer = availablePlayers[randomIndex];
+
+        // Calculate bid deadline
+        const bidDeadline = new Date(Date.now() + settings.nominationSeconds * 1000);
+
+        // Create the lot using transaction client
+        const lot = await this.lotRepo.createLotWithClient(
+          client,
+          draftId,
+          randomPlayer.id,
+          draft.currentRosterId!,
+          bidDeadline,
+          settings.minBid
+        );
+
+        return { lot, playerName: randomPlayer.fullName, playerId: randomPlayer.id };
+      }
+    );
+
+    // Handle no-op case (already has active lot)
+    if (result === null) {
+      return null;
     }
 
-    // Get available players (not drafted, not in active lot)
-    const draftedPlayerIds = await this.draftRepo.getDraftedPlayerIds(draftId);
-    const nominatedPlayerIds = await this.lotRepo.getNominatedPlayerIds(draftId);
-    const excludeIds = [...new Set([...draftedPlayerIds, ...nominatedPlayerIds])];
-
-    // Get all players and filter to available ones
-    const allPlayers = await this.playerRepo.findAll();
-    const availablePlayers = allPlayers.filter((p) => !excludeIds.includes(p.id));
-
-    if (availablePlayers.length === 0) {
-      logger.warn('No available players for auto-nomination', { draftId });
-      // Advance to next nominator anyway
+    // Handle no available players case - advance nominator after transaction
+    if ('noPlayers' in result) {
       await this.advanceNominator(draftId);
       return null;
     }
 
-    // Pick a random player
-    const randomIndex = Math.floor(Math.random() * availablePlayers.length);
-    const randomPlayer = availablePlayers[randomIndex];
-
-    // Calculate bid deadline
-    const bidDeadline = new Date(Date.now() + settings.nominationSeconds * 1000);
-
-    // Create the lot
-    const lot = await this.lotRepo.createLot(
-      draftId,
-      randomPlayer.id,
-      draft.currentRosterId,
-      bidDeadline,
-      settings.minBid
-    );
-
+    // Post-commit: Log and emit socket event
     logger.info('Auto-nominated player', {
       draftId,
-      playerId: randomPlayer.id,
-      playerName: randomPlayer.fullName,
+      playerId: result.playerId,
+      playerName: result.playerName,
       nominatorRosterId: draft.currentRosterId,
     });
 
-    // Emit socket event
     const socket = tryGetSocketService();
     socket?.emitAuctionLotCreated(draftId, {
-      lot: auctionLotToResponse(lot),
+      lot: auctionLotToResponse(result.lot),
       serverTime: Date.now(),
       isAutoNomination: true,
     });
 
     return {
-      lot,
-      message: `Auto-nominated ${randomPlayer.fullName} for $${settings.minBid}`,
+      lot: result.lot,
+      message: `Auto-nominated ${result.playerName} for $${settings.minBid}`,
     };
   }
 
