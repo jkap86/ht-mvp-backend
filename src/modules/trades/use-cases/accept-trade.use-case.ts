@@ -79,7 +79,7 @@ export async function acceptTrade(
     }
 
     // Re-validate all items still valid
-    const items = await ctx.tradeItemsRepo.findByTrade(tradeId);
+    const items = await ctx.tradeItemsRepo.findByTrade(tradeId, client);
     for (const item of items) {
       if (item.itemType === 'player' && item.playerId) {
         const onRoster = await ctx.rosterPlayersRepo.findByRosterAndPlayer(
@@ -203,7 +203,7 @@ export async function executeTrade(
   trade: Trade,
   client: PoolClient
 ): Promise<PickTradedEvent[]> {
-  const items = await ctx.tradeItemsRepo.findByTrade(trade.id);
+  const items = await ctx.tradeItemsRepo.findByTrade(trade.id, client);
 
   const pickTradedEvents: PickTradedEvent[] = [];
 

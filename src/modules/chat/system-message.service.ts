@@ -1,3 +1,4 @@
+import { PoolClient } from 'pg';
 import { ChatRepository } from './chat.repository';
 import {
   ChatMessageWithUser,
@@ -66,15 +67,33 @@ export class SystemMessageService {
     );
 
     // Broadcast via socket
-    this.broadcastMessage(leagueId, chatMessage);
+    this.broadcast(leagueId, chatMessage);
 
     return chatMessage;
   }
 
   /**
-   * Broadcast a message to the league chat channel
+   * Create a system message (persist only, no broadcast)
+   * Use inside transactions, then call broadcast() after commit
    */
-  private broadcastMessage(leagueId: number, message: ChatMessageWithUser): void {
+  async create(
+    leagueId: number,
+    messageType: MessageType,
+    metadata: SystemMessageMetadata,
+    client?: PoolClient
+  ): Promise<ChatMessageWithUser> {
+    const templateFn = TEMPLATES[messageType];
+    if (!templateFn) {
+      throw new Error(`Unknown message type: ${messageType}`);
+    }
+    const message = templateFn(metadata);
+    return this.chatRepo.createSystemMessage(leagueId, messageType, message, metadata, client);
+  }
+
+  /**
+   * Broadcast an already-persisted message (call AFTER commit)
+   */
+  broadcast(leagueId: number, message: ChatMessageWithUser): void {
     const socket = tryGetSocketService();
     socket?.emitChatMessage(leagueId, messageToResponse(message));
   }

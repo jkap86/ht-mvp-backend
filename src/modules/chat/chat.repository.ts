@@ -1,4 +1,4 @@
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import { ChatMessageWithUser, MessageType, SystemMessageMetadata } from './chat.model';
 
 export class ChatRepository {
@@ -36,9 +36,11 @@ export class ChatRepository {
     leagueId: number,
     messageType: MessageType,
     message: string,
-    metadata?: SystemMessageMetadata
+    metadata?: SystemMessageMetadata,
+    client?: PoolClient
   ): Promise<ChatMessageWithUser> {
-    const result = await this.pool.query(
+    const db = client || this.pool;
+    const result = await db.query(
       `INSERT INTO league_chat_messages (league_id, user_id, message, message_type, metadata)
        VALUES ($1, NULL, $2, $3, $4)
        RETURNING

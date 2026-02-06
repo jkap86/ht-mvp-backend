@@ -18,8 +18,9 @@ export interface CreateLeagueParams {
 export class LeagueRepository {
   constructor(private readonly db: Pool) {}
 
-  async findById(id: number): Promise<League | null> {
-    const result = await this.db.query('SELECT * FROM leagues WHERE id = $1', [id]);
+  async findById(id: number, client?: PoolClient): Promise<League | null> {
+    const db = client || this.db;
+    const result = await db.query('SELECT * FROM leagues WHERE id = $1', [id]);
 
     if (result.rows.length === 0) {
       return null;

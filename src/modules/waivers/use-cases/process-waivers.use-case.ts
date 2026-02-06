@@ -46,6 +46,7 @@ export async function processLeagueClaims(
   }
 
   const season = parseInt(league.season, 10);
+  const maxRosterSize = league.settings?.roster_size || 15;
 
   const client = await ctx.db.connect();
   let processed = 0;
@@ -78,7 +79,7 @@ export async function processLeagueClaims(
 
       // Find first eligible winner
       for (const claim of sortedClaims) {
-        const canExecute = await canExecuteClaim(ctx, claim, settings.waiverType, season, client);
+        const canExecute = await canExecuteClaim(ctx, claim, settings.waiverType, season, maxRosterSize, client);
         if (canExecute) {
           winner = claim;
           break;
@@ -203,6 +204,7 @@ async function canExecuteClaim(
   claim: WaiverClaim,
   waiverType: WaiverType,
   season: number,
+  maxRosterSize: number,
   client: PoolClient
 ): Promise<boolean> {
   // Check if player is still available
@@ -227,12 +229,8 @@ async function canExecuteClaim(
 
   // Check roster has space (if no drop player)
   if (!claim.dropPlayerId) {
-    const league = await ctx.leagueRepo.findById(claim.leagueId);
-    if (!league) return false;
-
     const rosterSize = await ctx.rosterPlayersRepo.getPlayerCount(claim.rosterId, client);
-    const maxSize = league.settings?.roster_size || 15;
-    if (rosterSize >= maxSize) return false;
+    if (rosterSize >= maxRosterSize) return false;
   }
 
   return true;
@@ -324,7 +322,7 @@ async function invalidateTradesForPlayer(
   if (!ctx.tradesRepo) return [];
 
   // Find pending trades involving this player
-  const pendingTrades = await ctx.tradesRepo.findPendingByPlayer(leagueId, playerId);
+  const pendingTrades = await ctx.tradesRepo.findPendingByPlayer(leagueId, playerId, client);
   const invalidatedTrades: Array<{ id: number; leagueId: number }> = [];
 
   for (const trade of pendingTrades) {

@@ -295,8 +295,9 @@ export class TradesRepository {
   /**
    * Find pending trades that involve a specific player
    */
-  async findPendingByPlayer(leagueId: number, playerId: number): Promise<Trade[]> {
-    const result = await this.db.query(
+  async findPendingByPlayer(leagueId: number, playerId: number, client?: PoolClient): Promise<Trade[]> {
+    const db = client || this.db;
+    const result = await db.query(
       `SELECT DISTINCT t.* FROM trades t
       JOIN trade_items ti ON ti.trade_id = t.id
       WHERE t.league_id = $1 AND ti.player_id = $2
@@ -309,8 +310,9 @@ export class TradesRepository {
   /**
    * Find pending trades that involve a specific pick asset
    */
-  async findPendingByPickAsset(leagueId: number, pickAssetId: number): Promise<Trade[]> {
-    const result = await this.db.query(
+  async findPendingByPickAsset(leagueId: number, pickAssetId: number, client?: PoolClient): Promise<Trade[]> {
+    const db = client || this.db;
+    const result = await db.query(
       `SELECT DISTINCT t.* FROM trades t
       JOIN trade_items ti ON ti.trade_id = t.id
       WHERE t.league_id = $1 AND ti.draft_pick_asset_id = $2
@@ -554,16 +556,18 @@ export class TradeItemsRepository {
   /**
    * Find items by trade ID
    */
-  async findByTrade(tradeId: number): Promise<TradeItem[]> {
-    const result = await this.db.query('SELECT * FROM trade_items WHERE trade_id = $1', [tradeId]);
+  async findByTrade(tradeId: number, client?: PoolClient): Promise<TradeItem[]> {
+    const db = client || this.db;
+    const result = await db.query('SELECT * FROM trade_items WHERE trade_id = $1', [tradeId]);
     return result.rows.map(tradeItemFromDatabase);
   }
 
   /**
    * Get player IDs in a trade
    */
-  async findPlayerIdsInTrade(tradeId: number): Promise<number[]> {
-    const result = await this.db.query(
+  async findPlayerIdsInTrade(tradeId: number, client?: PoolClient): Promise<number[]> {
+    const db = client || this.db;
+    const result = await db.query(
       `SELECT player_id FROM trade_items WHERE trade_id = $1 AND item_type = 'player' AND player_id IS NOT NULL`,
       [tradeId]
     );
@@ -573,8 +577,9 @@ export class TradeItemsRepository {
   /**
    * Get pick asset IDs in a trade
    */
-  async findPickAssetIdsInTrade(tradeId: number): Promise<number[]> {
-    const result = await this.db.query(
+  async findPickAssetIdsInTrade(tradeId: number, client?: PoolClient): Promise<number[]> {
+    const db = client || this.db;
+    const result = await db.query(
       `SELECT draft_pick_asset_id FROM trade_items WHERE trade_id = $1 AND item_type = 'draft_pick' AND draft_pick_asset_id IS NOT NULL`,
       [tradeId]
     );

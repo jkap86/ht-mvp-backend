@@ -102,9 +102,15 @@ export class DuesService {
       throw new ForbiddenException('Only the commissioner can manage dues configuration');
     }
 
-    // Validate payout structure total
+    // Validate payout structure
     if (input.payoutStructure) {
-      const total = Object.values(input.payoutStructure).reduce((sum, val) => sum + val, 0);
+      const values = Object.values(input.payoutStructure);
+
+      if (values.some((v) => typeof v !== 'number' || !Number.isFinite(v) || v < 0)) {
+        throw new ValidationException('Payout percentages must be non-negative numbers');
+      }
+
+      const total = values.reduce((sum, val) => sum + val, 0);
       if (total > 100) {
         throw new ValidationException('Payout percentages cannot exceed 100%');
       }
@@ -184,22 +190,13 @@ export class DuesService {
       notes,
     });
 
-    // Send system message when dues payment status changes
-    if (isPaid) {
-      const teamName = await this.rosterRepo.getTeamName(rosterId);
-      await this.systemMessageService.createAndBroadcast(
-        leagueId,
-        'dues_paid',
-        { teamName: teamName || 'Unknown Team' }
-      );
-    } else {
-      const teamName = await this.rosterRepo.getTeamName(rosterId);
-      await this.systemMessageService.createAndBroadcast(
-        leagueId,
-        'dues_unpaid',
-        { teamName: teamName || 'Unknown Team' }
-      );
-    }
+    // Get team name and emit system message (fire-and-forget)
+    const teamName = await this.rosterRepo.getTeamName(rosterId);
+    this.systemMessageService
+      .createAndBroadcast(leagueId, isPaid ? 'dues_paid' : 'dues_unpaid', {
+        teamName: teamName || 'Unknown Team',
+      })
+      .catch((err) => console.error('Failed to emit dues system message:', err));
 
     return payment;
   }
