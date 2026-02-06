@@ -87,6 +87,8 @@ export const KEYS = {
   VET_PICK_SELECTION_REPO: 'vetPickSelectionRepo',
   SLOW_AUCTION_SERVICE: 'slowAuctionService',
   FAST_AUCTION_SERVICE: 'fastAuctionService',
+  DERBY_REPO: 'derbyRepo',
+  DERBY_SERVICE: 'derbyService',
   CHAT_SERVICE: 'chatService',
   DM_SERVICE: 'dmService',
   PLAYER_SERVICE: 'playerService',

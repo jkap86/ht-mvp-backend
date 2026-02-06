@@ -43,6 +43,8 @@ import { DraftQueueService } from './modules/drafts/draft-queue.service';
 import { AuctionLotRepository } from './modules/drafts/auction/auction-lot.repository';
 import { DraftPickAssetRepository } from './modules/drafts/draft-pick-asset.repository';
 import { VetDraftPickSelectionRepository } from './modules/drafts/vet-draft-pick-selection.repository';
+import { DerbyRepository } from './modules/drafts/derby/derby.repository';
+import { DerbyService } from './modules/drafts/derby/derby.service';
 import { SlowAuctionService } from './modules/drafts/auction/slow-auction.service';
 import { FastAuctionService } from './modules/drafts/auction/fast-auction.service';
 import { ChatService } from './modules/chat/chat.service';
@@ -289,6 +291,25 @@ function bootstrap(): void {
   container.register(
     KEYS.VET_PICK_SELECTION_REPO,
     () => new VetDraftPickSelectionRepository(container.resolve(KEYS.POOL))
+  );
+
+  // Derby (draft order selection mode)
+  container.register(
+    KEYS.DERBY_REPO,
+    () => new DerbyRepository(container.resolve(KEYS.POOL))
+  );
+
+  container.register(
+    KEYS.DERBY_SERVICE,
+    () =>
+      new DerbyService(
+        container.resolve(KEYS.POOL),
+        container.resolve(KEYS.DERBY_REPO),
+        container.resolve(KEYS.DRAFT_REPO),
+        container.resolve(KEYS.LEAGUE_REPO),
+        container.resolve(KEYS.ROSTER_REPO),
+        container.resolve(KEYS.PICK_ASSET_REPO)
+      )
   );
 
   container.register(

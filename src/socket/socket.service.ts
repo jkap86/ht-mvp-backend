@@ -356,6 +356,28 @@ export class SocketService {
     this.emitToUser(userId, SOCKET_EVENTS.AUCTION.ERROR, data);
   }
 
+  // Derby events (draft order selection phase)
+
+  // Emit full derby state
+  emitDerbyState(draftId: number, data: any): void {
+    this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.DERBY.STATE, data);
+  }
+
+  // Emit derby slot picked event
+  emitDerbySlotPicked(draftId: number, data: any): void {
+    this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.DERBY.SLOT_PICKED, data);
+  }
+
+  // Emit derby turn changed event (timeout policy applied)
+  emitDerbyTurnChanged(draftId: number, data: any): void {
+    this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.DERBY.TURN_CHANGED, data);
+  }
+
+  // Emit derby phase transition event
+  emitDerbyPhaseTransition(draftId: number, data: { phase: string }): void {
+    this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.DERBY.PHASE_TRANSITION, data);
+  }
+
   // Emit to specific user via user room (works across instances with Redis adapter)
   emitToUser(userId: string, event: string, data: any): void {
     this.io.to(ROOM_NAMES.user(userId)).emit(event, data);

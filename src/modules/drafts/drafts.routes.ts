@@ -1,8 +1,10 @@
 import { Router } from 'express';
 import { DraftController } from './drafts.controller';
 import { DraftQueueController } from './draft-queue.controller';
+import { DerbyController } from './derby/derby.controller';
 import { DraftService } from './drafts.service';
 import { DraftQueueService } from './draft-queue.service';
+import { DerbyService } from './derby/derby.service';
 import { SlowAuctionService } from './auction/slow-auction.service';
 import { FastAuctionService } from './auction/fast-auction.service';
 import { RosterRepository } from '../leagues/leagues.repository';
@@ -37,6 +39,7 @@ const rosterRepo = container.resolve<RosterRepository>(KEYS.ROSTER_REPO);
 const authService = container.resolve<AuthorizationService>(KEYS.AUTHORIZATION_SERVICE);
 const slowAuctionService = container.resolve<SlowAuctionService>(KEYS.SLOW_AUCTION_SERVICE);
 const fastAuctionService = container.resolve<FastAuctionService>(KEYS.FAST_AUCTION_SERVICE);
+const derbyService = container.resolve<DerbyService>(KEYS.DERBY_SERVICE);
 
 // Set up action dispatcher with all handlers
 const actionDispatcher = new ActionDispatcher();
@@ -58,6 +61,9 @@ const draftController = new DraftController(
 
 // Queue controller uses service layer only
 const queueController = new DraftQueueController(queueService);
+
+// Derby controller
+const derbyController = new DerbyController(derbyService);
 
 const router = Router({ mergeParams: true }); // mergeParams to access :leagueId
 
@@ -176,5 +182,15 @@ router.delete('/:draftId/queue/pick-asset/:pickAssetId', queueLimiter, queueCont
 
 // PATCH /api/leagues/:leagueId/drafts/:draftId/autodraft
 router.patch('/:draftId/autodraft', draftController.toggleAutodraft);
+
+// Derby routes (draft order selection phase)
+// POST /api/leagues/:leagueId/drafts/:draftId/derby/start
+router.post('/:draftId/derby/start', draftModifyLimiter, derbyController.startDerby);
+
+// POST /api/leagues/:leagueId/drafts/:draftId/derby/pick-slot
+router.post('/:draftId/derby/pick-slot', draftPickLimiter, derbyController.pickSlot);
+
+// GET /api/leagues/:leagueId/drafts/:draftId/derby/state
+router.get('/:draftId/derby/state', apiReadLimiter, derbyController.getDerbyState);
 
 export default router;

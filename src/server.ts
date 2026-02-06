@@ -15,6 +15,7 @@ import routes from './routes';
 import { errorHandler } from './middleware/error.middleware';
 import { initializeSocket, closeSocket } from './socket';
 import { startAutopickJob, stopAutopickJob } from './jobs/autopick.job';
+import { startDerbyJob, stopDerbyJob } from './jobs/derby.job';
 import { startPlayerSyncJob, stopPlayerSyncJob } from './jobs/player-sync.job';
 import { startSlowAuctionJob, stopSlowAuctionJob } from './jobs/slow-auction.job';
 import { startTradeExpirationJob, stopTradeExpirationJob } from './jobs/trade-expiration.job';
@@ -102,6 +103,7 @@ server.listen(PORT, '0.0.0.0', () => {
   if (env.RUN_JOBS) {
     logger.info('Background jobs enabled');
     startAutopickJob();
+    startDerbyJob();
     startSlowAuctionJob();
     startTradeExpirationJob();
     startWaiverProcessingJob();
@@ -117,6 +119,7 @@ const gracefulShutdown = () => {
 
   // Stop background jobs
   stopAutopickJob();
+  stopDerbyJob();
   stopSlowAuctionJob();
   stopTradeExpirationJob();
   stopWaiverProcessingJob();

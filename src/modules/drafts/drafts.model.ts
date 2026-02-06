@@ -4,6 +4,9 @@ export type DraftType = 'snake' | 'linear' | 'auction';
 /** Draft status values */
 export type DraftStatus = 'not_started' | 'in_progress' | 'paused' | 'completed';
 
+/** Draft phase values for workflow stage */
+export type DraftPhase = 'SETUP' | 'DERBY' | 'LIVE';
+
 /** Auction-specific settings stored in draft.settings */
 export interface AuctionSettings {
   auctionMode: 'slow' | 'fast';
@@ -49,6 +52,7 @@ export interface Draft {
   leagueId: number;
   draftType: DraftType;
   status: DraftStatus;
+  phase: DraftPhase;
   currentPick: number;
   currentRound: number;
   currentRosterId: number | null;
@@ -96,6 +100,7 @@ export function draftFromDatabase(row: any): Draft {
     leagueId: row.league_id,
     draftType: row.draft_type,
     status: row.status,
+    phase: row.phase ?? 'SETUP',
     currentPick: row.current_pick,
     currentRound: row.current_round,
     currentRosterId: row.current_roster_id,
@@ -144,6 +149,7 @@ export function draftToResponse(draft: Draft) {
     league_id: draft.leagueId,
     draft_type: draft.draftType,
     status: draft.status,
+    phase: draft.phase,
     current_pick: draft.currentPick,
     current_round: draft.currentRound,
     current_roster_id: draft.currentRosterId,

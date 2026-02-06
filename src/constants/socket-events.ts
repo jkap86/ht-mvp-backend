@@ -57,6 +57,14 @@ export const SOCKET_EVENTS = {
     ERROR: 'draft:auction_error',
   },
 
+  // Derby events (draft order selection phase)
+  DERBY: {
+    STATE: 'derby:state',
+    SLOT_PICKED: 'derby:slot_picked',
+    TURN_CHANGED: 'derby:turn_changed',
+    PHASE_TRANSITION: 'derby:phase_transition',
+  },
+
   // Trade events
   TRADE: {
     PROPOSED: 'trade:proposed',
