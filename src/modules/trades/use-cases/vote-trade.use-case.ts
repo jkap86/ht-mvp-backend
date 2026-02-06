@@ -9,7 +9,7 @@ import {
   ValidationException,
   ConflictException,
 } from '../../../utils/exceptions';
-import { getTradeLockId } from '../../../utils/locks';
+import { getLockId, LockDomain } from '../../../shared/locks';
 import { EventListenerService } from '../../chat/event-listener.service';
 import { logger } from '../../../config/logger.config';
 
@@ -63,7 +63,7 @@ export async function voteTrade(
 
   try {
     await client.query('BEGIN');
-    await client.query('SELECT pg_advisory_xact_lock($1)', [getTradeLockId(trade.leagueId)]);
+    await client.query('SELECT pg_advisory_xact_lock($1)', [getLockId(LockDomain.TRADE, trade.leagueId)]);
 
     // Re-verify trade status after acquiring lock
     const lockedTrade = await ctx.tradesRepo.findById(tradeId);

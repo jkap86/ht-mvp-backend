@@ -1,5 +1,5 @@
 import { DraftRepository } from './drafts.repository';
-import { draftToResponse } from './drafts.model';
+import { DraftSettings, draftToResponse } from './drafts.model';
 import { LeagueRepository } from '../leagues/leagues.repository';
 import { RosterPlayersRepository } from '../rosters/rosters.repository';
 import { DraftEngineFactory } from '../../engines';
@@ -308,6 +308,10 @@ export class DraftStateService {
 
     const wasCompleted = draft.status === 'completed';
 
+    // Check if this draft has includeRookiePicks enabled
+    const settings = draft.settings as DraftSettings;
+    const includeRookiePicks = settings?.includeRookiePicks ?? false;
+
     // Pre-compute the previous state using engine
     const draftOrder = await this.draftRepo.getDraftOrder(draftId);
     const engine = this.engineFactory.createEngine(draft.draftType);
@@ -316,7 +320,7 @@ export class DraftStateService {
     // Get the last pick number to determine what state to revert to
     // (We need to know this before the atomic transaction to compute the state)
     const picks = await this.draftRepo.getDraftPicks(draftId, 1);
-    if (picks.length === 0) {
+    if (picks.length === 0 && !includeRookiePicks) {
       throw new ValidationException('No picks to undo');
     }
     const lastPick = draft.status === 'completed'
@@ -348,8 +352,8 @@ export class DraftStateService {
     // Determine the target status after undo
     const targetStatus = wasCompleted ? 'in_progress' : (draft.status as 'in_progress' | 'paused');
 
-    // Delete the most recent pick and update draft state atomically
-    const { undonePick, draft: updatedDraft } = await this.draftRepo.undoLastPickTx({
+    // Delete the most recent pick (player or pick-asset) and update draft state atomically
+    const { undonePick, undoneSelection, draft: updatedDraft } = await this.draftRepo.undoLastPickTx({
       draftId,
       prevPickState: {
         currentPick: prevPick,
@@ -359,17 +363,27 @@ export class DraftStateService {
         status: targetStatus,
         completedAt: null,
       },
+      includeRookiePicks,
     });
 
-    if (!undonePick) {
+    if (!undonePick && !undoneSelection) {
       throw new ValidationException('No picks to undo');
     }
+
+    // Build the undone item for socket event (either player pick or pick-asset selection)
+    const undoneItem = undonePick || {
+      id: undoneSelection!.id,
+      pickNumber: undoneSelection!.pickNumber,
+      rosterId: undoneSelection!.rosterId,
+      draftPickAssetId: undoneSelection!.draftPickAssetId,
+      isPickAsset: true,
+    };
 
     const response = draftToResponse(updatedDraft);
 
     // Emit socket events AFTER transaction commits
     const socket = tryGetSocketService();
-    socket?.emitPickUndone(draftId, { pick: undonePick, draft: response });
+    socket?.emitPickUndone(draftId, { pick: undoneItem, draft: response });
     if (updatedDraft.status === 'in_progress') {
       socket?.emitNextPick(draftId, {
         currentPick: prevPick,
@@ -380,6 +394,6 @@ export class DraftStateService {
       });
     }
 
-    return { draft: response, undone: undonePick };
+    return { draft: response, undone: undoneItem };
   }
 }

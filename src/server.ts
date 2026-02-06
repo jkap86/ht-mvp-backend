@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import { createServer } from 'http';
 
 import { env } from './config/env.config';
+import { logger } from './config/logger.config';
 import { closePool } from './db/pool';
 import { closeRedis } from './config/redis.config';
 import { requestTimingMiddleware } from './middleware/request-timing.middleware';
@@ -57,7 +58,7 @@ const corsOptions: cors.CorsOptions = {
     }
 
     // Reject other origins
-    console.warn(`CORS rejected origin: ${origin}`);
+    logger.warn('CORS rejected origin', { origin });
     return callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
@@ -72,6 +73,7 @@ app.use(
     contentSecurityPolicy: false,
     // Enable all other security headers
     crossOriginEmbedderPolicy: false, // Allow embedding from mobile apps
+    hidePoweredBy: true, // Explicitly hide X-Powered-By header
   })
 );
 app.use(cors(corsOptions));
@@ -94,25 +96,24 @@ const server = createServer(app);
 initializeSocket(server);
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 MVP Backend running on port ${PORT}`);
-  console.log(`📡 Health check: http://localhost:${PORT}/api/health`);
+  logger.info('MVP Backend started', { port: PORT, healthCheck: `http://localhost:${PORT}/api/health` });
 
   // Start background jobs if enabled (for multi-instance deployments, only one instance should run jobs)
   if (env.RUN_JOBS) {
-    console.log('📋 Background jobs enabled');
+    logger.info('Background jobs enabled');
     startAutopickJob();
     startSlowAuctionJob();
     startTradeExpirationJob();
     startWaiverProcessingJob();
     startPlayerSyncJob(true); // Sync players from Sleeper on startup, then every 12h
   } else {
-    console.log('📋 Background jobs disabled (RUN_JOBS=false)');
+    logger.info('Background jobs disabled', { reason: 'RUN_JOBS=false' });
   }
 });
 
 // Graceful shutdown
 const gracefulShutdown = () => {
-  console.log('Shutting down gracefully...');
+  logger.info('Shutting down gracefully...');
 
   // Stop background jobs
   stopAutopickJob();
@@ -122,9 +123,9 @@ const gracefulShutdown = () => {
   stopPlayerSyncJob();
 
   server.close(async () => {
-    console.log('HTTP server closed');
+    logger.info('HTTP server closed');
     await closeSocket();
-    console.log('Socket.IO closed');
+    logger.info('Socket.IO closed');
     await closeRedis();
     await closePool();
     process.exit(0);
@@ -132,7 +133,7 @@ const gracefulShutdown = () => {
 
   // Force shutdown after 10 seconds
   setTimeout(() => {
-    console.error('Forced shutdown after timeout');
+    logger.error('Forced shutdown after timeout');
     process.exit(1);
   }, 10000);
 };
@@ -141,11 +142,11 @@ process.on('SIGINT', gracefulShutdown);
 process.on('SIGTERM', gracefulShutdown);
 
 process.on('uncaughtException', (error) => {
-  console.error('Uncaught Exception:', error);
+  logger.error('Uncaught Exception', { error: error.message, stack: error.stack });
   gracefulShutdown();
 });
 
 process.on('unhandledRejection', (reason) => {
-  console.error('Unhandled Rejection:', reason);
+  logger.error('Unhandled Rejection', { reason: String(reason) });
   gracefulShutdown();
 });

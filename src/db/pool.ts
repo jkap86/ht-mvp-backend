@@ -1,5 +1,6 @@
 import { Pool } from 'pg';
 import { getDatabaseConfig } from '../config/database.config';
+import { logger } from '../config/logger.config';
 
 // Slow query threshold in milliseconds
 const SLOW_QUERY_THRESHOLD_MS = 100;
@@ -26,7 +27,7 @@ const originalQuery = pool.query.bind(pool);
     const duration = Date.now() - start;
     const queryText = typeof text === 'string' ? text : text.text;
     if (duration > SLOW_QUERY_THRESHOLD_MS) {
-      console.warn(`Slow query (${duration}ms): ${queryText?.substring(0, 200)}`);
+      logger.warn('Slow query detected', { durationMs: duration, query: queryText?.substring(0, 200) });
     }
   }
 };
@@ -34,12 +35,12 @@ const originalQuery = pool.query.bind(pool);
 // Log connection events in development
 pool.on('connect', () => {
   if (process.env.NODE_ENV === 'development') {
-    console.log('📦 Database client connected');
+    logger.debug('Database client connected');
   }
 });
 
 pool.on('error', (err) => {
-  console.error('❌ Unexpected database error:', err.message);
+  logger.error('Unexpected database error', { error: err.message });
 });
 
 // Health check function
@@ -48,7 +49,7 @@ export async function checkDatabaseHealth(): Promise<boolean> {
     const result = await pool.query('SELECT 1 as health_check');
     return result.rows[0].health_check === 1;
   } catch (error) {
-    console.error('Database health check failed:', error);
+    logger.error('Database health check failed', { error: String(error) });
     return false;
   }
 }
@@ -56,7 +57,7 @@ export async function checkDatabaseHealth(): Promise<boolean> {
 // Graceful shutdown
 export async function closePool(): Promise<void> {
   await pool.end();
-  console.log('Database pool closed');
+  logger.info('Database pool closed');
 }
 
 // Development pool pressure monitoring
@@ -64,7 +65,7 @@ if (process.env.NODE_ENV === 'development') {
   setInterval(() => {
     const metrics = getPoolMetrics();
     if (metrics.waitingCount > 0) {
-      console.warn('Pool pressure:', metrics);
+      logger.warn('Pool pressure detected', metrics);
     }
   }, 30000);
 }

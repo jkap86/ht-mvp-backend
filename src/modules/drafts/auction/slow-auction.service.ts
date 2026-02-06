@@ -16,6 +16,7 @@ import { resolvePriceWithClient, OutbidNotification } from './auction-price-reso
 import { getAuctionRosterLockId } from '../../../utils/locks';
 import { runInTransaction, runWithLock, LockDomain } from '../../../shared/transaction-runner';
 import { getLockId } from '../../../shared/locks';
+import { logger } from '../../../config/logger.config';
 
 export interface NominationResult {
   lot: AuctionLot;
@@ -622,9 +623,12 @@ export class SlowAuctionService {
 
         // Check roster not full
         if (budgetData.wonCount >= rosterSlots) {
-          console.warn(
-            `Lot ${lotId}: Bidder ${candidateRosterId} roster is full (${budgetData.wonCount}/${rosterSlots}), trying next bidder`
-          );
+          logger.warn('Auction lot settlement: bidder roster full, trying next', {
+            lotId,
+            rosterId: candidateRosterId,
+            wonCount: budgetData.wonCount,
+            rosterSlots,
+          });
           continue;
         }
 
@@ -632,9 +636,13 @@ export class SlowAuctionService {
         const remainingAfterWin = rosterSlots - budgetData.wonCount - 1;
         const requiredReserve = remainingAfterWin * settings.minBid;
         if (budgetData.spent + price + requiredReserve > totalBudget) {
-          console.warn(
-            `Lot ${lotId}: Bidder ${candidateRosterId} cannot afford $${price} (spent: $${budgetData.spent}, reserve: $${requiredReserve}), trying next bidder`
-          );
+          logger.warn('Auction lot settlement: bidder cannot afford, trying next', {
+            lotId,
+            rosterId: candidateRosterId,
+            price,
+            spent: budgetData.spent,
+            requiredReserve,
+          });
           continue;
         }
 
@@ -673,7 +681,7 @@ export class SlowAuctionService {
       }
 
       // No bidder could afford - pass the lot
-      console.warn(`Lot ${lotId}: No bidder could afford the lot, marking as passed`);
+      logger.warn('Auction lot settlement: no bidder could afford, marking as passed', { lotId });
       const passResult = await client.query(
         `UPDATE auction_lots
          SET status = 'passed', updated_at = CURRENT_TIMESTAMP
@@ -697,7 +705,7 @@ export class SlowAuctionService {
         const result = await this.settleLot(lot.id);
         results.push(result);
       } catch (error) {
-        console.error(`Failed to settle lot ${lot.id}:`, error);
+        logger.error('Failed to settle auction lot', { lotId: lot.id, error: String(error) });
       }
     }
 

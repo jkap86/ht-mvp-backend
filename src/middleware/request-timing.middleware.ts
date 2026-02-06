@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { logger } from '../config/logger.config';
 
 export function requestTimingMiddleware(req: Request, res: Response, next: NextFunction) {
   const start = Date.now();
@@ -11,7 +12,7 @@ export function requestTimingMiddleware(req: Request, res: Response, next: NextF
 
     // Log slow requests (over 500ms)
     if (duration > 500) {
-      console.warn(`Slow request: ${method} ${path} ${status} ${duration}ms`);
+      logger.warn('Slow request detected', { method, path, status, durationMs: duration });
     }
   });
 

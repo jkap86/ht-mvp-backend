@@ -1,6 +1,6 @@
 import { TradesRepository, TradeVotesRepository } from '../trades.repository';
 import { tryGetSocketService } from '../../../socket';
-import { getTradeLockId } from '../../../utils/locks';
+import { getLockId, LockDomain } from '../../../shared/locks';
 import { executeTrade, AcceptTradeContext, PickTradedEvent } from './accept-trade.use-case';
 import { EventListenerService } from '../../chat/event-listener.service';
 import { logger } from '../../../config/logger.config';
@@ -104,7 +104,7 @@ export async function processReviewCompleteTrades(ctx: ProcessTradesContext): Pr
     const voteCount = await ctx.tradeVotesRepo.countVotes(trade.id);
     const league = await ctx.leagueRepo.findById(trade.leagueId);
     if (!league) {
-      console.warn(`League ${trade.leagueId} not found for trade ${trade.id}, skipping`);
+      logger.warn('League not found for trade, skipping', { leagueId: trade.leagueId, tradeId: trade.id });
       continue;
     }
     const vetoThreshold = league.settings?.trade_veto_count || DEFAULT_VETO_COUNT;
@@ -116,7 +116,7 @@ export async function processReviewCompleteTrades(ctx: ProcessTradesContext): Pr
 
     try {
       await client.query('BEGIN');
-      await client.query('SELECT pg_advisory_xact_lock($1)', [getTradeLockId(trade.leagueId)]);
+      await client.query('SELECT pg_advisory_xact_lock($1)', [getLockId(LockDomain.TRADE, trade.leagueId)]);
 
       // Use conditional update to ensure trade is still in 'in_review' status
       // This prevents processing a trade that was already completed or vetoed concurrently
@@ -185,7 +185,7 @@ export async function processReviewCompleteTrades(ctx: ProcessTradesContext): Pr
       processed++;
     } catch (error) {
       await client.query('ROLLBACK');
-      console.error(`Failed to process trade ${trade.id}:`, error);
+      logger.error('Failed to process trade', { tradeId: trade.id, error: String(error) });
     } finally {
       client.release();
     }

@@ -443,7 +443,8 @@ export class DraftPickRepository {
   }
 
   /**
-   * Atomically undo the last pick and update draft state in a single transaction.
+   * Atomically undo the last pick (player or pick-asset) and update draft state.
+   * Checks both draft_picks and vet_draft_pick_selections to find the most recent action.
    */
   async undoLastPickTx(params: {
     draftId: number;
@@ -455,7 +456,12 @@ export class DraftPickRepository {
       status: 'in_progress' | 'paused';
       completedAt: null;
     };
-  }): Promise<{ undonePick: DraftPick | null; draft: Draft }> {
+    includeRookiePicks?: boolean;
+  }): Promise<{
+    undonePick: DraftPick | null;
+    undoneSelection?: { id: number; draftPickAssetId: number; pickNumber: number; rosterId: number } | null;
+    draft: Draft;
+  }> {
     return runWithLock(this.db, LockDomain.DRAFT, params.draftId, async (client) => {
       // Re-read draft row FOR UPDATE
       const draftResult = await client.query('SELECT * FROM drafts WHERE id = $1 FOR UPDATE', [
@@ -465,8 +471,8 @@ export class DraftPickRepository {
         throw new ConflictException('Draft not found');
       }
 
-      // Get most recent pick with player info
-      const lastPick = await client.query(
+      // Get most recent player pick
+      const lastPlayerPick = await client.query(
         `SELECT dp.*, p.full_name as player_name, p.position as player_position, p.team as player_team, u.username
          FROM draft_picks dp
          LEFT JOIN players p ON dp.player_id = p.id
@@ -477,17 +483,49 @@ export class DraftPickRepository {
         [params.draftId]
       );
 
-      if (lastPick.rows.length === 0) {
+      // Get most recent pick-asset selection if enabled
+      let lastAssetSelection: any = null;
+      if (params.includeRookiePicks) {
+        const assetResult = await client.query(
+          `SELECT * FROM vet_draft_pick_selections WHERE draft_id = $1 ORDER BY pick_number DESC LIMIT 1`,
+          [params.draftId]
+        );
+        if (assetResult.rows.length > 0) {
+          lastAssetSelection = assetResult.rows[0];
+        }
+      }
+
+      const lastPlayerPickNumber = lastPlayerPick.rows.length > 0 ? lastPlayerPick.rows[0].pick_number : -1;
+      const lastAssetPickNumber = lastAssetSelection ? lastAssetSelection.pick_number : -1;
+
+      // No picks to undo
+      if (lastPlayerPickNumber === -1 && lastAssetPickNumber === -1) {
         return {
           undonePick: null,
+          undoneSelection: null,
           draft: draftFromDatabase(draftResult.rows[0]),
         };
       }
 
-      const row = lastPick.rows[0];
+      let undonePick: DraftPick | null = null;
+      let undoneSelection: { id: number; draftPickAssetId: number; pickNumber: number; rosterId: number } | null = null;
 
-      // Delete the pick
-      await client.query('DELETE FROM draft_picks WHERE id = $1', [row.id]);
+      // Undo whichever was most recent (higher pick number)
+      if (lastPlayerPickNumber >= lastAssetPickNumber) {
+        // Undo player pick
+        const row = lastPlayerPick.rows[0];
+        await client.query('DELETE FROM draft_picks WHERE id = $1', [row.id]);
+        undonePick = DraftPickMapper.fromRow(row);
+      } else {
+        // Undo pick-asset selection
+        await client.query('DELETE FROM vet_draft_pick_selections WHERE id = $1', [lastAssetSelection.id]);
+        undoneSelection = {
+          id: lastAssetSelection.id,
+          draftPickAssetId: lastAssetSelection.draft_pick_asset_id,
+          pickNumber: lastAssetSelection.pick_number,
+          rosterId: lastAssetSelection.roster_id,
+        };
+      }
 
       // Update draft state atomically
       const updatedDraftResult = await client.query(
@@ -508,7 +546,8 @@ export class DraftPickRepository {
       );
 
       return {
-        undonePick: DraftPickMapper.fromRow(row),
+        undonePick,
+        undoneSelection,
         draft: draftFromDatabase(updatedDraftResult.rows[0]),
       };
     });

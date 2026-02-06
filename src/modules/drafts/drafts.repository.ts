@@ -248,7 +248,12 @@ export class DraftRepository {
       status: 'in_progress' | 'paused';
       completedAt: null;
     };
-  }): Promise<{ undonePick: DraftPick | null; draft: Draft }> {
+    includeRookiePicks?: boolean;
+  }): Promise<{
+    undonePick: DraftPick | null;
+    undoneSelection?: { id: number; draftPickAssetId: number; pickNumber: number; rosterId: number } | null;
+    draft: Draft;
+  }> {
     return this.pick.undoLastPickTx(params);
   }
 

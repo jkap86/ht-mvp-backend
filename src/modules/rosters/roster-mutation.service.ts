@@ -172,19 +172,19 @@ export class RosterMutationService {
   async bulkRemovePlayers(params: BulkRemoveParams, client?: PoolClient): Promise<void> {
     const { removals } = params;
 
-    // Validate all exist before removing any
-    for (const { rosterId, playerId } of removals) {
-      const existing = await this.rosterPlayersRepo.findByRosterAndPlayer(
-        rosterId,
-        playerId,
-        client
-      );
-      if (!existing) {
-        throw new ConflictException(`Player ${playerId} is no longer on roster ${rosterId}`);
-      }
+    // Validate all exist before removing any (parallelized for performance)
+    const existenceChecks = await Promise.all(
+      removals.map(({ rosterId, playerId }) =>
+        this.rosterPlayersRepo.findByRosterAndPlayer(rosterId, playerId, client)
+      )
+    );
+    const missingIdx = existenceChecks.findIndex((e) => !e);
+    if (missingIdx !== -1) {
+      const { rosterId, playerId } = removals[missingIdx];
+      throw new ConflictException(`Player ${playerId} is no longer on roster ${rosterId}`);
     }
 
-    // Remove all
+    // Remove all (sequential to maintain transaction ordering)
     for (const { rosterId, playerId } of removals) {
       await this.rosterPlayersRepo.removePlayer(rosterId, playerId, client);
     }

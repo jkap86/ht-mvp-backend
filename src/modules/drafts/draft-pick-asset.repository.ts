@@ -483,6 +483,18 @@ export class DraftPickAssetRepository {
            SELECT 1 FROM vet_draft_pick_selections vdps
            WHERE vdps.draft_id = $3 AND vdps.draft_pick_asset_id = dpa.id
          )
+         -- Exclude picks already used in any rookie draft
+         AND NOT EXISTS (
+           SELECT 1 FROM draft_picks dp
+           WHERE dp.draft_pick_asset_id = dpa.id
+         )
+         -- Exclude picks in pending/active trades
+         AND NOT EXISTS (
+           SELECT 1 FROM trade_items ti
+           JOIN trades t ON ti.trade_id = t.id
+           WHERE ti.draft_pick_asset_id = dpa.id
+             AND t.status IN ('pending', 'countered', 'accepted', 'in_review')
+         )
        ORDER BY dpa.round, dpa.original_pick_position`,
       params
     );

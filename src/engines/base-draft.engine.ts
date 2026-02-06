@@ -17,7 +17,7 @@ import { container, KEYS } from '../container';
 import { DraftPickAssetRepository } from '../modules/drafts/draft-pick-asset.repository';
 import { VetDraftPickSelectionRepository } from '../modules/drafts/vet-draft-pick-selection.repository';
 import { getLockId, LockDomain } from '../shared/locks';
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 
 /**
  * Abstract base class for draft engines.
@@ -243,7 +243,12 @@ export abstract class BaseDraftEngine implements IDraftEngine {
           logger.info(
             `Draft ${draftId}: pick ${draft.currentPick} already exists, recovering stale state`
           );
-          const nextPickInfo = await this.advanceToNextPick(currentDraft, draftOrder);
+
+          // Re-fetch draftOrder INSIDE the lock for consistency
+          const freshDraftOrder = await this.getDraftOrderWithClient(client, draftId);
+
+          // Use client-aware advance method to ensure atomicity
+          const nextPickInfo = await this.advanceToNextPickWithClient(client, currentDraft, freshDraftOrder);
 
           await client.query('COMMIT');
 
@@ -342,7 +347,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
         // Player entry
         if (!draftedPlayerIds.has(queueItem.playerId)) {
           // Found available player - use player pick flow
-          await this.draftRepo.removeFromQueue(queueItem.id);
+          // Queue cleanup happens atomically inside makePickAndAdvanceTx
           return await this.performAutoPickPlayer(draft, draftOrder, queueItem.playerId, true);
         }
         // Player already drafted - remove from queue
@@ -351,7 +356,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
         // Pick asset entry (only if draft allows)
         if (!draftedPickAssetIds?.has(queueItem.pickAssetId)) {
           // Found available pick asset - use pick asset flow
-          await this.draftRepo.removeFromQueue(queueItem.id);
+          // Queue cleanup happens atomically inside makePickAssetSelectionTx
           return await this.performAutoPickAsset(draft, draftOrder, queueItem.pickAssetId);
         }
         // Pick asset already drafted - remove from queue
@@ -680,6 +685,94 @@ export abstract class BaseDraftEngine implements IDraftEngine {
       currentRosterId: nextRosterId,
       pickDeadline,
     });
+
+    return {
+      currentPick: nextPick,
+      currentRound: nextRound,
+      currentRosterId: nextRosterId,
+      pickDeadline,
+      status: 'in_progress',
+    };
+  }
+
+  /**
+   * Fetch draft order using an existing DB client (for use within locks).
+   */
+  protected async getDraftOrderWithClient(client: PoolClient, draftId: number): Promise<DraftOrderEntry[]> {
+    const result = await client.query(
+      `SELECT do.*, u.username FROM draft_order do
+       JOIN rosters r ON do.roster_id = r.id
+       LEFT JOIN users u ON r.user_id = u.id
+       WHERE do.draft_id = $1 ORDER BY do.draft_position`,
+      [draftId]
+    );
+    return result.rows.map((row: any) => ({
+      id: row.id,
+      draftId: row.draft_id,
+      rosterId: row.roster_id,
+      draftPosition: row.draft_position,
+      username: row.username,
+      isAutodraftEnabled: row.is_autodraft_enabled ?? false,
+    }));
+  }
+
+  /**
+   * Advance draft to the next pick using an existing DB client (for use within locks).
+   * This ensures all operations within the stale recovery path are atomic.
+   */
+  protected async advanceToNextPickWithClient(
+    client: PoolClient,
+    draft: Draft,
+    draftOrder: DraftOrderEntry[]
+  ): Promise<NextPickDetails | null> {
+    const totalRosters = draftOrder.length;
+    const totalPicks = totalRosters * draft.rounds;
+    const nextPick = draft.currentPick + 1;
+
+    if (nextPick > totalPicks) {
+      // Draft complete - run unified finalization (rosters, league status, schedule)
+      await finalizeDraftCompletion(
+        {
+          draftRepo: this.draftRepo,
+          leagueRepo: this.leagueRepo,
+          rosterPlayersRepo: this.rosterPlayersRepo,
+        },
+        draft.id,
+        draft.leagueId
+      );
+
+      await client.query(
+        `UPDATE drafts SET status = 'completed', completed_at = $1, current_roster_id = NULL,
+         pick_deadline = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+        [new Date(), draft.id]
+      );
+
+      return null;
+    }
+
+    const nextRound = this.getRound(nextPick, totalRosters);
+
+    // Fetch pick assets to check for traded picks
+    let nextRosterId: number | null = null;
+    try {
+      const pickAssetRepo = container.resolve<DraftPickAssetRepository>(KEYS.PICK_ASSET_REPO);
+      const pickAssets = await pickAssetRepo.findByDraftId(draft.id);
+      const actualPicker = this.getActualPickerForPickNumber(draft, draftOrder, pickAssets, nextPick);
+      nextRosterId = actualPicker?.rosterId || null;
+    } catch (error) {
+      // Fallback to original picker if pick assets not available
+      logger.warn(`Failed to fetch pick assets for draft ${draft.id}, using original picker`, error);
+      const originalPicker = this.getPickerForPickNumber(draft, draftOrder, nextPick);
+      nextRosterId = originalPicker?.rosterId || null;
+    }
+
+    const pickDeadline = this.calculatePickDeadline(draft);
+
+    await client.query(
+      `UPDATE drafts SET current_pick = $1, current_round = $2, current_roster_id = $3,
+       pick_deadline = $4, updated_at = CURRENT_TIMESTAMP WHERE id = $5`,
+      [nextPick, nextRound, nextRosterId, pickDeadline, draft.id]
+    );
 
     return {
       currentPick: nextPick,

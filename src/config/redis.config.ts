@@ -1,10 +1,11 @@
 import Redis from 'ioredis';
 import { env } from './env.config';
+import { logger } from './logger.config';
 
 const getRedisHost = (): string => {
   const host = process.env.REDIS_HOST;
   if (!host && env.NODE_ENV === 'production') {
-    console.warn('REDIS_HOST not configured in production - Redis features will be disabled');
+    logger.warn('REDIS_HOST not configured in production - Redis features will be disabled');
   }
   return host || 'localhost';
 };
@@ -23,8 +24,8 @@ let redisClient: Redis | null = null;
 export function getRedisClient(): Redis {
   if (!redisClient) {
     redisClient = new Redis(redisConfig);
-    redisClient.on('error', (err) => console.error('Redis error:', err));
-    redisClient.on('connect', () => console.log('Redis connected'));
+    redisClient.on('error', (err) => logger.error('Redis error', { error: err.message }));
+    redisClient.on('connect', () => logger.info('Redis connected'));
   }
   return redisClient;
 }

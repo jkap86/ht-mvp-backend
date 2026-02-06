@@ -6,7 +6,7 @@ import {
   ForbiddenException,
   ValidationException,
 } from '../../../utils/exceptions';
-import { getTradeLockId } from '../../../utils/locks';
+import { getLockId, LockDomain } from '../../../shared/locks';
 import { proposeTrade, ProposeTradeContext } from './propose-trade.use-case';
 import { EventListenerService } from '../../chat/event-listener.service';
 import { logger } from '../../../config/logger.config';
@@ -45,7 +45,7 @@ export async function counterTrade(
   try {
     await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock($1)', [
-      getTradeLockId(originalTrade.leagueId),
+      getLockId(LockDomain.TRADE, originalTrade.leagueId),
     ]);
 
     // Re-verify status after acquiring lock (another transaction may have changed it)

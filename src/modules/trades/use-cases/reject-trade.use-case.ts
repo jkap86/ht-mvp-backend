@@ -8,7 +8,7 @@ import {
   ForbiddenException,
   ValidationException,
 } from '../../../utils/exceptions';
-import { getTradeLockId } from '../../../utils/locks';
+import { getLockId, LockDomain } from '../../../shared/locks';
 import { EventListenerService } from '../../chat/event-listener.service';
 import { logger } from '../../../config/logger.config';
 
@@ -43,7 +43,7 @@ export async function rejectTrade(
   const client = await ctx.db.connect();
   try {
     await client.query('BEGIN');
-    await client.query('SELECT pg_advisory_xact_lock($1)', [getTradeLockId(trade.leagueId)]);
+    await client.query('SELECT pg_advisory_xact_lock($1)', [getLockId(LockDomain.TRADE, trade.leagueId)]);
 
     // Re-verify status after acquiring lock (another transaction may have changed it)
     const currentTrade = await ctx.tradesRepo.findById(tradeId, client);

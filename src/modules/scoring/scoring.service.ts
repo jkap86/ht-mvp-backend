@@ -116,14 +116,19 @@ export class ScoringService {
     // Get all lineups for the week
     const lineups = await this.lineupsRepo.getByLeagueAndWeek(leagueId, season, week);
 
-    // Calculate and store points for each lineup
+    // Calculate all lineup points in parallel for performance
+    const calculations = await Promise.all(
+      lineups.map((lineup) => this.calculateLineupPoints(lineup.lineup, season, week, rules))
+    );
+
+    // Store points for each lineup (sequential within transaction)
     const client = await this.db.connect();
     try {
       await client.query('BEGIN');
 
-      for (const lineup of lineups) {
-        const { total } = await this.calculateLineupPoints(lineup.lineup, season, week, rules);
-        await this.lineupsRepo.updatePoints(lineup.rosterId, season, week, total, client);
+      for (let i = 0; i < lineups.length; i++) {
+        const { total } = calculations[i];
+        await this.lineupsRepo.updatePoints(lineups[i].rosterId, season, week, total, client);
       }
 
       await client.query('COMMIT');

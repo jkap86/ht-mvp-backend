@@ -15,7 +15,7 @@ import {
   ValidationException,
   ConflictException,
 } from '../../../utils/exceptions';
-import { getTradeLockId } from '../../../utils/locks';
+import { getLockId, LockDomain } from '../../../shared/locks';
 import { EventListenerService } from '../../chat/event-listener.service';
 import { container, KEYS } from '../../../container';
 import { logger } from '../../../config/logger.config';
@@ -63,7 +63,7 @@ export async function acceptTrade(
   const client = await ctx.db.connect();
   try {
     await client.query('BEGIN');
-    await client.query('SELECT pg_advisory_xact_lock($1)', [getTradeLockId(trade.leagueId)]);
+    await client.query('SELECT pg_advisory_xact_lock($1)', [getLockId(LockDomain.TRADE, trade.leagueId)]);
 
     // Re-verify status after acquiring lock (another transaction may have changed it)
     const currentTrade = await ctx.tradesRepo.findById(tradeId, client);
@@ -79,50 +79,79 @@ export async function acceptTrade(
       throw new ValidationException('Trade deadline has passed - cannot accept trade');
     }
 
-    // Re-validate all items still valid
+    // Re-validate all items still valid (parallelized for performance)
     const items = await ctx.tradeItemsRepo.findByTrade(tradeId, client);
-    for (const item of items) {
-      if (item.itemType === 'player' && item.playerId) {
-        const onRoster = await ctx.rosterPlayersRepo.findByRosterAndPlayer(
-          item.fromRosterId,
-          item.playerId,
-          client
+
+    // Separate player and pick items for parallel validation
+    const playerItems = items.filter((item) => item.itemType === 'player' && item.playerId);
+    const pickItems = items.filter((item) => item.itemType === 'draft_pick' && item.draftPickAssetId);
+
+    // Validate all players in parallel
+    if (playerItems.length > 0) {
+      const playerValidations = await Promise.all(
+        playerItems.map((item) =>
+          ctx.rosterPlayersRepo.findByRosterAndPlayer(item.fromRosterId, item.playerId!, client)
+        )
+      );
+      const missingPlayerIdx = playerValidations.findIndex((result) => !result);
+      if (missingPlayerIdx !== -1) {
+        const item = playerItems[missingPlayerIdx];
+        throw new ConflictException(
+          `Player ${item.playerName} is no longer on the expected roster`
         );
-        if (!onRoster) {
-          throw new ConflictException(
-            `Player ${item.playerName} is no longer on the expected roster`
-          );
-        }
-      } else if (item.itemType === 'draft_pick' && item.draftPickAssetId) {
-        // Ensure pickAssetRepo is available for draft pick validation
-        if (!ctx.pickAssetRepo) {
-          throw new ValidationException(
-            'Draft pick trading is not configured - pickAssetRepo is required'
-          );
-        }
-        // Validate pick is still owned by expected roster and tradeable
-        const pickAsset = await ctx.pickAssetRepo.findById(item.draftPickAssetId, client);
+      }
+    }
+
+    // Validate all picks in parallel
+    if (pickItems.length > 0) {
+      if (!ctx.pickAssetRepo) {
+        throw new ValidationException(
+          'Draft pick trading is not configured - pickAssetRepo is required'
+        );
+      }
+
+      // Fetch all pick assets in parallel
+      const pickAssets = await Promise.all(
+        pickItems.map((item) => ctx.pickAssetRepo!.findById(item.draftPickAssetId!, client))
+      );
+
+      // Check ownership and gather picks that need usage/round checks
+      const picksNeedingUsageCheck: Array<{ item: typeof pickItems[0]; pickAsset: NonNullable<typeof pickAssets[0]> }> = [];
+      for (let i = 0; i < pickItems.length; i++) {
+        const item = pickItems[i];
+        const pickAsset = pickAssets[i];
         if (!pickAsset || pickAsset.currentOwnerRosterId !== item.fromRosterId) {
           throw new ConflictException(
             `Draft pick ${item.pickSeason} Round ${item.pickRound} (${item.pickOriginalTeam}'s pick) is no longer owned by the expected roster`
           );
         }
+        picksNeedingUsageCheck.push({ item, pickAsset });
+      }
 
-        // Check if pick is still tradeable (not used, round not passed)
-        const isUsed = await ctx.pickAssetRepo.isPickUsed(item.draftPickAssetId, client);
-        if (isUsed) {
+      // Check usage status in parallel
+      const usageChecks = await Promise.all(
+        picksNeedingUsageCheck.map(({ item }) => ctx.pickAssetRepo!.isPickUsed(item.draftPickAssetId!, client))
+      );
+      const usedIdx = usageChecks.findIndex((isUsed) => isUsed);
+      if (usedIdx !== -1) {
+        const { item } = picksNeedingUsageCheck[usedIdx];
+        throw new ConflictException(
+          `Draft pick ${item.pickSeason} Round ${item.pickRound} (${item.pickOriginalTeam}'s pick) has been used`
+        );
+      }
+
+      // Check round passed status in parallel (only for picks with draftId)
+      const picksWithDraft = picksNeedingUsageCheck.filter(({ pickAsset }) => pickAsset.draftId !== null);
+      if (picksWithDraft.length > 0) {
+        const roundChecks = await Promise.all(
+          picksWithDraft.map(({ item }) => ctx.pickAssetRepo!.isRoundPassed(item.draftPickAssetId!, client))
+        );
+        const roundPassedIdx = roundChecks.findIndex((passed) => passed);
+        if (roundPassedIdx !== -1) {
+          const { item } = picksWithDraft[roundPassedIdx];
           throw new ConflictException(
-            `Draft pick ${item.pickSeason} Round ${item.pickRound} (${item.pickOriginalTeam}'s pick) has been used`
+            `Draft pick ${item.pickSeason} Round ${item.pickRound} (${item.pickOriginalTeam}'s pick) - round has passed`
           );
-        }
-
-        if (pickAsset.draftId !== null) {
-          const roundPassed = await ctx.pickAssetRepo.isRoundPassed(item.draftPickAssetId, client);
-          if (roundPassed) {
-            throw new ConflictException(
-              `Draft pick ${item.pickSeason} Round ${item.pickRound} (${item.pickOriginalTeam}'s pick) - round has passed`
-            );
-          }
         }
       }
     }
@@ -221,15 +250,19 @@ export async function executeTrade(
   const mutationService =
     ctx.rosterMutationService ?? container.resolve<RosterMutationService>(KEYS.ROSTER_MUTATION_SERVICE);
 
-  // Re-validate all picks before any mutations
+  // Re-validate all picks before any mutations (parallelized for performance)
   if (pickItems.length > 0) {
     if (!ctx.pickAssetRepo) {
       throw new ValidationException(
         'Draft pick trading is not configured - pickAssetRepo is required'
       );
     }
-    for (const item of pickItems) {
-      const pickAsset = await ctx.pickAssetRepo.findById(item.draftPickAssetId!, client);
+    const pickValidations = await Promise.all(
+      pickItems.map((item) => ctx.pickAssetRepo!.findById(item.draftPickAssetId!, client))
+    );
+    for (let i = 0; i < pickItems.length; i++) {
+      const item = pickItems[i];
+      const pickAsset = pickValidations[i];
       if (!pickAsset || pickAsset.currentOwnerRosterId !== item.fromRosterId) {
         throw new ConflictException(
           `Draft pick ${item.pickSeason} Round ${item.pickRound} (${item.pickOriginalTeam}'s pick) is no longer available`

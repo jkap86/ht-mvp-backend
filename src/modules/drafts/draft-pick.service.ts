@@ -1,11 +1,12 @@
 import { DraftRepository } from './drafts.repository';
-import { Draft, DraftOrderEntry, DraftSettings, draftToResponse } from './drafts.model';
+import { Draft, DraftOrderEntry, DraftSettings, PlayerPoolType, draftToResponse } from './drafts.model';
 import { DraftPickAssetRepository } from './draft-pick-asset.repository';
 import { VetDraftPickSelectionRepository } from './vet-draft-pick-selection.repository';
 import { draftPickAssetWithDetailsToResponse } from './draft-pick-asset.model';
 import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import { RosterPlayersRepository } from '../rosters/rosters.repository';
 import { PlayerRepository } from '../players/players.repository';
+import { Player } from '../players/players.model';
 import { NotFoundException, ForbiddenException, ValidationException, ConflictException, ErrorCode } from '../../utils/exceptions';
 import { tryGetSocketService } from '../../socket';
 import { DraftEngineFactory, IDraftEngine } from '../../engines';
@@ -123,6 +124,9 @@ export class DraftPickService {
     if (draft.scheduledStart && new Date() < draft.scheduledStart) {
       throw new ValidationException('Draft has not started yet', ErrorCode.DRAFT_NOT_STARTED);
     }
+
+    // Validate player is eligible for draft's player pool
+    await this.validatePlayerPoolEligibility(draft, playerId);
 
     // Validate order is confirmed (non-auction drafts only)
     if (!draft.orderConfirmed && draft.draftType !== 'auction') {
@@ -499,5 +503,48 @@ export class DraftPickService {
       pickDeadline,
       status: 'in_progress',
     };
+  }
+
+  /**
+   * Validate that a player is eligible for this draft's player pool.
+   */
+  private async validatePlayerPoolEligibility(draft: Draft, playerId: number): Promise<void> {
+    const settings = draft.settings as DraftSettings;
+    const playerPool = settings?.playerPool;
+
+    // Default: allow all NFL players (no restriction)
+    if (!playerPool || playerPool.length === 0) {
+      return;
+    }
+
+    const player = await this.playerRepo.findById(playerId);
+    if (!player) {
+      throw new NotFoundException('Player not found');
+    }
+
+    if (!this.isPlayerInPool(player, playerPool)) {
+      const poolLabels = playerPool.map(p =>
+        p === 'veteran' ? 'veterans' : p === 'rookie' ? 'rookies' : 'college players'
+      ).join(', ');
+      throw new ValidationException(
+        `This draft only allows ${poolLabels}. ${player.fullName} is not eligible.`
+      );
+    }
+  }
+
+  private isPlayerInPool(player: Player, playerPool: PlayerPoolType[]): boolean {
+    for (const poolType of playerPool) {
+      if (poolType === 'veteran' && player.playerType === 'nfl' &&
+          (player.yearsExp === null || player.yearsExp > 0)) {
+        return true;
+      }
+      if (poolType === 'rookie' && player.playerType === 'nfl' && player.yearsExp === 0) {
+        return true;
+      }
+      if (poolType === 'college' && player.playerType === 'college') {
+        return true;
+      }
+    }
+    return false;
   }
 }
