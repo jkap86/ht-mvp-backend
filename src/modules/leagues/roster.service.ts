@@ -11,6 +11,7 @@ import {
   ConflictException,
   ValidationException,
 } from '../../utils/exceptions';
+import { runWithLock, LockDomain } from '../../shared/transaction-runner';
 
 export class RosterService {
   constructor(
@@ -41,117 +42,112 @@ export class RosterService {
     }
 
     // Use transaction with advisory lock to prevent exceeding roster limits
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
-      // Advisory lock on league to prevent concurrent joins
-      await client.query('SELECT pg_advisory_xact_lock($1)', [leagueId]);
+    const { roster, joinedAsBench } = await runWithLock(
+      this.db,
+      LockDomain.LEAGUE,
+      leagueId,
+      async (client) => {
+        // Check if already a member (inside transaction)
+        const existingRoster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId, client);
+        if (existingRoster) {
+          throw new ConflictException('You are already a member of this league');
+        }
 
-      // Check if already a member (inside transaction)
-      const existingRoster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId, client);
-      if (existingRoster) {
-        throw new ConflictException('You are already a member of this league');
-      }
+        let roster;
+        let joinedAsBench = false;
 
-      let roster;
-      let joinedAsBench = false;
+        // Try to claim an empty roster first (for leagues with pre-created rosters from randomization)
+        const emptyRoster = await this.rosterRepo.findEmptyRoster(leagueId, client);
+        if (emptyRoster) {
+          // Claim the empty roster - preserves their randomized draft position
+          roster = await this.rosterRepo.assignUserToRoster(emptyRoster.id, userId, client);
+        } else {
+          // No empty roster available - check if league is full
+          const rosterCount = await this.rosterRepo.getRosterCount(leagueId, client);
+          if (rosterCount >= league.totalRosters) {
+            // League is at capacity - check if it's a paid league with unpaid members
+            const canJoinAsBench = await this.canJoinAsBenchWithClient(client, leagueId, rosterCount);
 
-      // Try to claim an empty roster first (for leagues with pre-created rosters from randomization)
-      const emptyRoster = await this.rosterRepo.findEmptyRoster(leagueId, client);
-      if (emptyRoster) {
-        // Claim the empty roster - preserves their randomized draft position
-        roster = await this.rosterRepo.assignUserToRoster(emptyRoster.id, userId, client);
-      } else {
-        // No empty roster available - check if league is full
-        const rosterCount = await this.rosterRepo.getRosterCount(leagueId, client);
-        if (rosterCount >= league.totalRosters) {
-          // League is at capacity - check if it's a paid league with unpaid members
-          const canJoinAsBench = await this.canJoinAsBench(leagueId, rosterCount, client);
-
-          if (canJoinAsBench) {
-            // Create as benched roster - user can participate once someone pays or leaves
+            if (canJoinAsBench) {
+              // Create as benched roster - user can participate once someone pays or leaves
+              const nextRosterId = await this.rosterRepo.getNextRosterId(leagueId, client);
+              roster = await this.rosterRepo.create(leagueId, userId, nextRosterId, client);
+              await this.rosterRepo.benchMember(roster.id, client);
+              joinedAsBench = true;
+            } else {
+              throw new ConflictException('League is full');
+            }
+          } else {
+            // Create new roster (league doesn't have pre-created empty rosters)
             const nextRosterId = await this.rosterRepo.getNextRosterId(leagueId, client);
             roster = await this.rosterRepo.create(leagueId, userId, nextRosterId, client);
-            await this.rosterRepo.benchMember(roster.id, client);
-            joinedAsBench = true;
-          } else {
-            throw new ConflictException('League is full');
           }
-        } else {
-          // Create new roster (league doesn't have pre-created empty rosters)
-          const nextRosterId = await this.rosterRepo.getNextRosterId(leagueId, client);
-          roster = await this.rosterRepo.create(leagueId, userId, nextRosterId, client);
-        }
-      }
-
-      await client.query('COMMIT');
-
-      // Get team name for notifications
-      const teamName = `Team ${roster.rosterId}`;
-
-      // Emit socket event for real-time UI update
-      const socketService = tryGetSocketService();
-      socketService?.emitMemberJoined(leagueId, {
-        rosterId: roster.rosterId,
-        teamName,
-        userId,
-      });
-
-      // Send system message to league chat
-      if (this.eventListenerService) {
-        await this.eventListenerService.handleMemberJoined(leagueId, teamName);
-      }
-
-      // Emit draft order update for any not-started drafts so draft room shows updated team names
-      if (socketService) {
-        const draftsResult = await this.db.query(
-          `SELECT d.id, dord.draft_position, dord.roster_id,
-                  COALESCE(r.settings->>'team_name', u.username, 'Team ' || r.roster_id) as username,
-                  r.user_id
-           FROM drafts d
-           JOIN draft_order dord ON d.id = dord.draft_id
-           LEFT JOIN rosters r ON dord.roster_id = r.id
-           LEFT JOIN users u ON r.user_id = u.id
-           WHERE d.league_id = $1 AND d.status = 'not_started'
-           ORDER BY d.id, dord.draft_position`,
-          [leagueId]
-        );
-
-        // Group by draft and emit settings update for each
-        const draftOrders = new Map<number, any[]>();
-        for (const row of draftsResult.rows) {
-          if (!draftOrders.has(row.id)) {
-            draftOrders.set(row.id, []);
-          }
-          draftOrders.get(row.id)!.push({
-            draftPosition: row.draft_position,
-            rosterId: row.roster_id,
-            username: row.username,
-            userId: row.user_id,
-          });
         }
 
-        for (const [draftId, draftOrder] of draftOrders) {
-          socketService.emitDraftSettingsUpdated(draftId, { draft_order: draftOrder });
-        }
+        return { roster, joinedAsBench };
       }
+    );
 
-      return {
-        message: joinedAsBench
-          ? 'Successfully joined the league as a bench member'
-          : 'Successfully joined the league',
-        roster: {
-          roster_id: roster.rosterId,
-          league_id: roster.leagueId,
-        },
-        joinedAsBench,
-      };
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
+    // Post-commit operations: socket events and chat messages
+    const teamName = `Team ${roster.rosterId}`;
+
+    // Emit socket event for real-time UI update
+    const socketService = tryGetSocketService();
+    socketService?.emitMemberJoined(leagueId, {
+      rosterId: roster.rosterId,
+      teamName,
+      userId,
+    });
+
+    // Send system message to league chat
+    if (this.eventListenerService) {
+      await this.eventListenerService.handleMemberJoined(leagueId, teamName);
     }
+
+    // Emit draft order update for any not-started drafts so draft room shows updated team names
+    if (socketService) {
+      const draftsResult = await this.db.query(
+        `SELECT d.id, dord.draft_position, dord.roster_id,
+                COALESCE(r.settings->>'team_name', u.username, 'Team ' || r.roster_id) as username,
+                r.user_id
+         FROM drafts d
+         JOIN draft_order dord ON d.id = dord.draft_id
+         LEFT JOIN rosters r ON dord.roster_id = r.id
+         LEFT JOIN users u ON r.user_id = u.id
+         WHERE d.league_id = $1 AND d.status = 'not_started'
+         ORDER BY d.id, dord.draft_position`,
+        [leagueId]
+      );
+
+      // Group by draft and emit settings update for each
+      const draftOrders = new Map<number, any[]>();
+      for (const row of draftsResult.rows) {
+        if (!draftOrders.has(row.id)) {
+          draftOrders.set(row.id, []);
+        }
+        draftOrders.get(row.id)!.push({
+          draftPosition: row.draft_position,
+          rosterId: row.roster_id,
+          username: row.username,
+          userId: row.user_id,
+        });
+      }
+
+      for (const [draftId, draftOrder] of draftOrders) {
+        socketService.emitDraftSettingsUpdated(draftId, { draft_order: draftOrder });
+      }
+    }
+
+    return {
+      message: joinedAsBench
+        ? 'Successfully joined the league as a bench member'
+        : 'Successfully joined the league',
+      roster: {
+        roster_id: roster.rosterId,
+        league_id: roster.leagueId,
+      },
+      joinedAsBench,
+    };
   }
 
   /**
@@ -164,6 +160,17 @@ export class RosterService {
     leagueId: number,
     activeRosterCount: number,
     client: any
+  ): Promise<boolean> {
+    return this.canJoinAsBenchWithClient(client, leagueId, activeRosterCount);
+  }
+
+  /**
+   * Check if a user can join a paid league as bench (with explicit client parameter)
+   */
+  private async canJoinAsBenchWithClient(
+    client: any,
+    leagueId: number,
+    activeRosterCount: number
   ): Promise<boolean> {
     // Check if league has dues
     const duesResult = await client.query(
@@ -376,13 +383,8 @@ async devBulkAddUsers(
     // Get team name before deletion
     const teamName = (await this.rosterRepo.getTeamName(targetRosterId)) || 'Unknown Team';
 
-    // Use transaction to delete everything
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
-      // Advisory lock on roster to prevent race conditions
-      await client.query('SELECT pg_advisory_xact_lock($1)', [targetRosterId + 1000000]);
-
+    // Use transaction with roster lock to delete everything
+    await runWithLock(this.db, LockDomain.ROSTER, targetRosterId, async (client) => {
       // Delete roster players (release all players)
       if (this.rosterPlayersRepo) {
         await this.rosterPlayersRepo.deleteAllByRosterId(targetRosterId, client);
@@ -416,24 +418,17 @@ async devBulkAddUsers(
 
       // Delete the roster itself
       await this.rosterRepo.delete(targetRosterId, client);
+    });
 
-      await client.query('COMMIT');
+    // Post-commit: Emit socket event
+    const socketService = tryGetSocketService();
+    socketService?.emitMemberKicked(leagueId, { rosterId: targetRosterId, teamName });
 
-      // Emit socket event
-      const socketService = tryGetSocketService();
-      socketService?.emitMemberKicked(leagueId, { rosterId: targetRosterId, teamName });
-
-      // Send system message to league chat
-      if (this.eventListenerService) {
-        await this.eventListenerService.handleMemberKicked(leagueId, teamName);
-      }
-
-      return { message: `${teamName} has been removed from the league`, teamName };
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
+    // Send system message to league chat
+    if (this.eventListenerService) {
+      await this.eventListenerService.handleMemberKicked(leagueId, teamName);
     }
+
+    return { message: `${teamName} has been removed from the league`, teamName };
   }
 }

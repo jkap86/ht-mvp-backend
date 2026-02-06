@@ -29,6 +29,8 @@ export interface FinalizeDraftContext extends PopulateRostersContext {
  *
  * IMPORTANT: Now validates roster size via RosterMutationService.
  * Uses skipOwnershipCheck because draft picks aren't in the roster system yet.
+ *
+ * @throws Error if more than the allowed failure threshold of picks fail to be added
  */
 export async function populateRostersFromDraft(
   ctx: PopulateRostersContext,
@@ -39,12 +41,14 @@ export async function populateRostersFromDraft(
   const league = await ctx.leagueRepo.findById(leagueId);
 
   if (!league) {
-    logger.warn(`Cannot populate rosters: league ${leagueId} not found`);
-    return;
+    throw new Error(`Cannot populate rosters: league ${leagueId} not found`);
   }
 
   const season = parseInt(league.season, 10);
   let addedCount = 0;
+  let skippedCount = 0; // Duplicate picks (already on roster)
+  let failedCount = 0;
+  const failedDetails: Array<{ playerId: number; rosterId: number; error: string }> = [];
 
   // Get mutation service from container if not provided in context
   const mutationService =
@@ -84,8 +88,16 @@ export async function populateRostersFromDraft(
       addedCount++;
     } catch (error: any) {
       // Player might already be on roster (e.g., if partial completion happened)
-      if (error.code !== '23505') {
-        // 23505 = unique_violation
+      if (error.code === '23505') {
+        // 23505 = unique_violation - player already on roster, expected during retry
+        skippedCount++;
+      } else {
+        failedCount++;
+        failedDetails.push({
+          playerId: pick.playerId,
+          rosterId: pick.rosterId,
+          error: error.message,
+        });
         logger.warn(
           `Failed to add player ${pick.playerId} to roster ${pick.rosterId}: ${error.message}`
         );
@@ -93,7 +105,26 @@ export async function populateRostersFromDraft(
     }
   }
 
-  logger.info(`Populated rosters from draft ${draftId} with ${addedCount}/${picks.length} picks`);
+  logger.info(
+    `Populated rosters from draft ${draftId}: added=${addedCount}, skipped=${skippedCount}, failed=${failedCount} of ${picks.length} picks`
+  );
+
+  // Fail if more than 10% of picks failed (excluding duplicates)
+  // This threshold is reasonable because a few transient failures shouldn't abort everything,
+  // but systematic failures (like roster size issues) should be surfaced.
+  const totalNonDuplicatePicks = picks.filter((p) => p.playerId !== null).length - skippedCount;
+  const failureThreshold = Math.max(1, Math.ceil(totalNonDuplicatePicks * 0.1)); // At least 1, or 10%
+
+  if (failedCount > failureThreshold) {
+    const errorSummary = failedDetails
+      .slice(0, 5)
+      .map((d) => `player ${d.playerId} to roster ${d.rosterId}: ${d.error}`)
+      .join('; ');
+    throw new Error(
+      `Draft completion failed: ${failedCount} picks could not be added to rosters. ` +
+        `Threshold: ${failureThreshold}. Examples: ${errorSummary}`
+    );
+  }
 }
 
 /**

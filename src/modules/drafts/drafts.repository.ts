@@ -1,59 +1,53 @@
+/**
+ * Draft Repository (Facade)
+ *
+ * This file serves as a backward-compatible facade that delegates to
+ * the split repository classes:
+ * - DraftCoreRepository: Core CRUD operations
+ * - DraftOrderRepository: Draft order management
+ * - DraftPickRepository: Pick operations and atomic transactions
+ * - DraftQueueRepository: Queue management
+ *
+ * For new code, prefer importing from ./repositories directly.
+ */
+
 import { Pool } from 'pg';
-import { Draft, DraftOrderEntry, DraftPick, draftFromDatabase } from './drafts.model';
-import { ConflictException } from '../../utils/exceptions';
-import { getDraftLockId } from '../../utils/locks';
+import { Draft, DraftOrderEntry, DraftPick, DraftSettings } from './drafts.model';
+import { DraftCoreRepository } from './repositories/draft-core.repository';
+import { DraftOrderRepository } from './repositories/draft-order.repository';
+import { DraftPickRepository } from './repositories/draft-pick.repository';
+import { DraftQueueRepository, type QueueEntry } from './repositories/draft-queue.repository';
 
 export class DraftRepository {
-  constructor(private readonly db: Pool) {}
+  private readonly core: DraftCoreRepository;
+  private readonly order: DraftOrderRepository;
+  private readonly pick: DraftPickRepository;
+  private readonly queue: DraftQueueRepository;
+
+  constructor(private readonly db: Pool) {
+    this.core = new DraftCoreRepository(db);
+    this.order = new DraftOrderRepository(db);
+    this.pick = new DraftPickRepository(db);
+    this.queue = new DraftQueueRepository(db);
+  }
+
+  // ============================================
+  // Core Draft Operations (delegated to DraftCoreRepository)
+  // ============================================
 
   async findById(id: number): Promise<Draft | null> {
-    const result = await this.db.query('SELECT * FROM drafts WHERE id = $1', [id]);
-    return result.rows.length > 0 ? draftFromDatabase(result.rows[0]) : null;
+    return this.core.findById(id);
   }
 
   async findByLeagueId(leagueId: number): Promise<Draft[]> {
-    const result = await this.db.query(
-      'SELECT * FROM drafts WHERE league_id = $1 ORDER BY CASE WHEN scheduled_start IS NULL THEN 1 ELSE 0 END, scheduled_start ASC NULLS LAST, created_at DESC',
-      [leagueId]
-    );
-    return result.rows.map(draftFromDatabase);
+    return this.core.findByLeagueId(leagueId);
   }
 
-  /**
-   * Get all drafts for a league AND verify user membership in a single query.
-   * Returns null if the user is not a member (avoids race condition with separate isUserMember check).
-   */
   async findByLeagueIdWithMembershipCheck(
     leagueId: number,
     userId: string
   ): Promise<Draft[] | null> {
-    const result = await this.db.query(
-      `WITH membership_check AS (
-         SELECT EXISTS(SELECT 1 FROM rosters WHERE league_id = $1 AND user_id = $2) as is_member
-       )
-       SELECT d.*, mc.is_member
-       FROM drafts d
-       CROSS JOIN membership_check mc
-       WHERE d.league_id = $1
-       ORDER BY CASE WHEN d.scheduled_start IS NULL THEN 1 ELSE 0 END, d.scheduled_start ASC NULLS LAST, d.created_at DESC`,
-      [leagueId, userId]
-    );
-
-    // If no drafts exist, still check membership
-    if (result.rows.length === 0) {
-      const memberCheck = await this.db.query(
-        'SELECT EXISTS(SELECT 1 FROM rosters WHERE league_id = $1 AND user_id = $2) as is_member',
-        [leagueId, userId]
-      );
-      return memberCheck.rows[0]?.is_member ? [] : null;
-    }
-
-    // Check membership from the first row
-    if (!result.rows[0].is_member) {
-      return null;
-    }
-
-    return result.rows.map(draftFromDatabase);
+    return this.core.findByLeagueIdWithMembershipCheck(leagueId, userId);
   }
 
   async create(
@@ -61,251 +55,73 @@ export class DraftRepository {
     draftType: string,
     rounds: number,
     pickTimeSeconds: number,
-    settings?: Record<string, any>,
+    settings?: DraftSettings | Record<string, any>,
     scheduledStart?: Date
   ): Promise<Draft> {
-    const result = await this.db.query(
-      `INSERT INTO drafts (league_id, draft_type, rounds, pick_time_seconds, settings, scheduled_start)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING *`,
-      [leagueId, draftType, rounds, pickTimeSeconds, settings ? JSON.stringify(settings) : null, scheduledStart || null]
-    );
-    return draftFromDatabase(result.rows[0]);
+    return this.core.create(leagueId, draftType, rounds, pickTimeSeconds, settings, scheduledStart);
   }
 
   async update(id: number, updates: Partial<Draft>): Promise<Draft> {
-    const setClauses: string[] = [];
-    const values: any[] = [];
-    let paramIndex = 1;
-
-    if (updates.status) {
-      setClauses.push(`status = $${paramIndex++}`);
-      values.push(updates.status);
-    }
-    if (updates.currentPick !== undefined) {
-      setClauses.push(`current_pick = $${paramIndex++}`);
-      values.push(updates.currentPick);
-    }
-    if (updates.currentRound !== undefined) {
-      setClauses.push(`current_round = $${paramIndex++}`);
-      values.push(updates.currentRound);
-    }
-    if (updates.currentRosterId !== undefined) {
-      setClauses.push(`current_roster_id = $${paramIndex++}`);
-      values.push(updates.currentRosterId);
-    }
-    if (updates.pickDeadline !== undefined) {
-      setClauses.push(`pick_deadline = $${paramIndex++}`);
-      values.push(updates.pickDeadline);
-    }
-    if (updates.startedAt !== undefined) {
-      setClauses.push(`started_at = $${paramIndex++}`);
-      values.push(updates.startedAt);
-    }
-    if (updates.completedAt !== undefined) {
-      setClauses.push(`completed_at = $${paramIndex++}`);
-      values.push(updates.completedAt);
-    }
-    if (updates.draftState !== undefined) {
-      setClauses.push(`draft_state = $${paramIndex++}`);
-      values.push(JSON.stringify(updates.draftState));
-    }
-    if (updates.settings !== undefined) {
-      setClauses.push(`settings = $${paramIndex++}`);
-      values.push(JSON.stringify(updates.settings));
-    }
-    if (updates.rounds !== undefined) {
-      setClauses.push(`rounds = $${paramIndex++}`);
-      values.push(updates.rounds);
-    }
-    if (updates.pickTimeSeconds !== undefined) {
-      setClauses.push(`pick_time_seconds = $${paramIndex++}`);
-      values.push(updates.pickTimeSeconds);
-    }
-    if (updates.draftType !== undefined) {
-      setClauses.push(`draft_type = $${paramIndex++}`);
-      values.push(updates.draftType);
-    }
-    if (updates.scheduledStart !== undefined) {
-      setClauses.push(`scheduled_start = $${paramIndex++}`);
-      values.push(updates.scheduledStart);
-    }
-
-    if (setClauses.length === 0) {
-      const existing = await this.findById(id);
-      if (!existing) throw new Error('Draft not found');
-      return existing;
-    }
-
-    values.push(id);
-    const result = await this.db.query(
-      `UPDATE drafts SET ${setClauses.join(', ')}, updated_at = CURRENT_TIMESTAMP
-       WHERE id = $${paramIndex}
-       RETURNING *`,
-      values
-    );
-
-    return draftFromDatabase(result.rows[0]);
+    return this.core.update(id, updates);
   }
 
   async delete(id: number): Promise<void> {
-    await this.db.query('DELETE FROM drafts WHERE id = $1', [id]);
+    return this.core.delete(id);
   }
 
   async setOrderConfirmed(draftId: number, confirmed: boolean): Promise<void> {
-    await this.db.query(
-      'UPDATE drafts SET order_confirmed = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
-      [confirmed, draftId]
-    );
+    return this.core.setOrderConfirmed(draftId, confirmed);
   }
 
-  // Draft Order
+  async findExpiredDrafts(): Promise<Draft[]> {
+    return this.core.findExpiredDrafts();
+  }
+
+  async getBestAvailablePlayer(
+    draftId: number,
+    playerPool: string[] = ['veteran', 'rookie']
+  ): Promise<number | null> {
+    return this.core.getBestAvailablePlayer(draftId, playerPool);
+  }
+
+  // ============================================
+  // Draft Order Operations (delegated to DraftOrderRepository)
+  // ============================================
+
   async getDraftOrder(
     draftId: number,
     limit?: number,
     offset?: number
   ): Promise<DraftOrderEntry[]> {
-    let query = `SELECT dord.*,
-       COALESCE(r.settings->>'team_name', u.username, 'Team ' || r.roster_id) as username,
-       r.user_id
-       FROM draft_order dord
-       LEFT JOIN rosters r ON dord.roster_id = r.id
-       LEFT JOIN users u ON r.user_id = u.id
-       WHERE dord.draft_id = $1
-       ORDER BY dord.draft_position`;
-
-    const params: number[] = [draftId];
-
-    if (limit !== undefined) {
-      params.push(limit);
-      query += ` LIMIT $${params.length}`;
-    }
-
-    if (offset !== undefined) {
-      params.push(offset);
-      query += ` OFFSET $${params.length}`;
-    }
-
-    const result = await this.db.query(query, params);
-    return result.rows.map((row) => ({
-      id: row.id,
-      draftId: row.draft_id,
-      rosterId: row.roster_id,
-      draftPosition: row.draft_position,
-      username: row.username,
-      userId: row.user_id,
-      isAutodraftEnabled: row.is_autodraft_enabled ?? false,
-    }));
+    return this.order.getDraftOrder(draftId, limit, offset);
   }
 
   async setAutodraftEnabled(draftId: number, rosterId: number, enabled: boolean): Promise<void> {
-    await this.db.query(
-      `UPDATE draft_order SET is_autodraft_enabled = $1 WHERE draft_id = $2 AND roster_id = $3`,
-      [enabled, draftId, rosterId]
-    );
+    return this.order.setAutodraftEnabled(draftId, rosterId, enabled);
   }
 
   async getAutodraftEnabled(draftId: number, rosterId: number): Promise<boolean> {
-    const result = await this.db.query(
-      `SELECT is_autodraft_enabled FROM draft_order WHERE draft_id = $1 AND roster_id = $2`,
-      [draftId, rosterId]
-    );
-    return result.rows.length > 0 ? (result.rows[0].is_autodraft_enabled ?? false) : false;
+    return this.order.getAutodraftEnabled(draftId, rosterId);
   }
 
   async createDraftOrder(draftId: number, rosterId: number, position: number): Promise<void> {
-    await this.db.query(
-      `INSERT INTO draft_order (draft_id, roster_id, draft_position)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (draft_id, roster_id) DO UPDATE SET draft_position = EXCLUDED.draft_position`,
-      [draftId, rosterId, position]
-    );
+    return this.order.createDraftOrder(draftId, rosterId, position);
   }
 
   async clearDraftOrder(draftId: number): Promise<void> {
-    await this.db.query('DELETE FROM draft_order WHERE draft_id = $1', [draftId]);
+    return this.order.clearDraftOrder(draftId);
   }
 
-  /**
-   * Atomically updates the draft order within a transaction.
-   * Clears existing order and inserts new positions in a single transaction.
-   * @param draftId - The draft ID
-   * @param rosterIds - Array of roster IDs in desired order (index 0 = position 1)
-   */
   async updateDraftOrderAtomic(draftId: number, rosterIds: number[]): Promise<void> {
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
-
-      // Clear existing order
-      await client.query('DELETE FROM draft_order WHERE draft_id = $1', [draftId]);
-
-      // Insert new order using properly parameterized batch insert
-      if (rosterIds.length > 0) {
-        // Build parameterized placeholders: ($1, $2, $3), ($1, $4, $5), etc.
-        const values: number[] = [draftId];
-        const placeholders = rosterIds
-          .map((rosterId, index) => {
-            const rosterParamIndex = values.length + 1;
-            const positionParamIndex = values.length + 2;
-            values.push(rosterId, index + 1);
-            return `($1, $${rosterParamIndex}, $${positionParamIndex})`;
-          })
-          .join(', ');
-
-        await client.query(
-          `INSERT INTO draft_order (draft_id, roster_id, draft_position) VALUES ${placeholders}`,
-          values
-        );
-      }
-
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    return this.order.updateDraftOrderAtomic(draftId, rosterIds);
   }
 
-  // Draft Picks
+  // ============================================
+  // Draft Pick Operations (delegated to DraftPickRepository)
+  // ============================================
+
   async getDraftPicks(draftId: number, limit?: number, offset?: number): Promise<DraftPick[]> {
-    let query = `SELECT dp.*, p.full_name as player_name, p.position as player_position, p.team as player_team, u.username
-       FROM draft_picks dp
-       LEFT JOIN players p ON dp.player_id = p.id
-       LEFT JOIN rosters r ON dp.roster_id = r.id
-       LEFT JOIN users u ON r.user_id = u.id
-       WHERE dp.draft_id = $1
-       ORDER BY dp.pick_number`;
-
-    const params: number[] = [draftId];
-
-    if (limit !== undefined) {
-      params.push(limit);
-      query += ` LIMIT $${params.length}`;
-    }
-
-    if (offset !== undefined) {
-      params.push(offset);
-      query += ` OFFSET $${params.length}`;
-    }
-
-    const result = await this.db.query(query, params);
-    return result.rows.map((row) => ({
-      id: row.id,
-      draftId: row.draft_id,
-      pickNumber: row.pick_number,
-      round: row.round,
-      pickInRound: row.pick_in_round,
-      rosterId: row.roster_id,
-      playerId: row.player_id,
-      isAutoPick: row.is_auto_pick,
-      pickedAt: row.picked_at,
-      playerName: row.player_name,
-      playerPosition: row.player_position,
-      playerTeam: row.player_team,
-      username: row.username,
-    }));
+    return this.pick.getDraftPicks(draftId, limit, offset);
   }
 
   async createDraftPick(
@@ -316,31 +132,9 @@ export class DraftRepository {
     rosterId: number,
     playerId: number
   ): Promise<DraftPick> {
-    const result = await this.db.query(
-      `INSERT INTO draft_picks (draft_id, pick_number, round, pick_in_round, roster_id, player_id)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING *`,
-      [draftId, pickNumber, round, pickInRound, rosterId, playerId]
-    );
-    const row = result.rows[0];
-    return {
-      id: row.id,
-      draftId: row.draft_id,
-      pickNumber: row.pick_number,
-      round: row.round,
-      pickInRound: row.pick_in_round,
-      rosterId: row.roster_id,
-      playerId: row.player_id,
-      isAutoPick: row.is_auto_pick,
-      pickedAt: row.picked_at,
-    };
+    return this.pick.createDraftPick(draftId, pickNumber, round, pickInRound, rosterId, playerId);
   }
 
-  /**
-   * Creates a draft pick and removes the player from all queues atomically.
-   * Uses pg_advisory_xact_lock to prevent race conditions between concurrent picks.
-   * Supports idempotency keys for safe retries.
-   */
   async createDraftPickWithCleanup(
     draftId: number,
     pickNumber: number,
@@ -350,199 +144,37 @@ export class DraftRepository {
     playerId: number,
     idempotencyKey?: string
   ): Promise<DraftPick> {
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
-
-      // Acquire advisory lock on draft to prevent race conditions
-      await client.query('SELECT pg_advisory_xact_lock($1)', [getDraftLockId(draftId)]);
-
-      // Check idempotency - return existing pick if found
-      if (idempotencyKey) {
-        const existing = await client.query(
-          `SELECT * FROM draft_picks
-           WHERE draft_id = $1 AND roster_id = $2 AND idempotency_key = $3`,
-          [draftId, rosterId, idempotencyKey]
-        );
-        if (existing.rows.length > 0) {
-          await client.query('COMMIT');
-          const row = existing.rows[0];
-          return {
-            id: row.id,
-            draftId: row.draft_id,
-            pickNumber: row.pick_number,
-            round: row.round,
-            pickInRound: row.pick_in_round,
-            rosterId: row.roster_id,
-            playerId: row.player_id,
-            isAutoPick: row.is_auto_pick,
-            pickedAt: row.picked_at,
-          };
-        }
-      }
-
-      // Re-check player not drafted (inside lock to prevent race condition)
-      const alreadyDrafted = await client.query(
-        'SELECT 1 FROM draft_picks WHERE draft_id = $1 AND player_id = $2',
-        [draftId, playerId]
-      );
-      if (alreadyDrafted.rows.length > 0) {
-        await client.query('ROLLBACK');
-        throw new ConflictException('Player has already been drafted');
-      }
-
-      // Create the pick with idempotency key
-      const pickResult = await client.query(
-        `INSERT INTO draft_picks (draft_id, pick_number, round, pick_in_round, roster_id, player_id, idempotency_key)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         RETURNING *`,
-        [draftId, pickNumber, round, pickInRound, rosterId, playerId, idempotencyKey || null]
-      );
-
-      // Remove player from all queues in this draft
-      await client.query('DELETE FROM draft_queue WHERE draft_id = $1 AND player_id = $2', [
-        draftId,
-        playerId,
-      ]);
-
-      await client.query('COMMIT');
-
-      const row = pickResult.rows[0];
-      return {
-        id: row.id,
-        draftId: row.draft_id,
-        pickNumber: row.pick_number,
-        round: row.round,
-        pickInRound: row.pick_in_round,
-        rosterId: row.roster_id,
-        playerId: row.player_id,
-        isAutoPick: row.is_auto_pick,
-        pickedAt: row.picked_at,
-      };
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    return this.pick.createDraftPickWithCleanup(
+      draftId,
+      pickNumber,
+      round,
+      pickInRound,
+      rosterId,
+      playerId,
+      idempotencyKey
+    );
   }
 
-  /**
-   * Undoes the most recent draft pick atomically.
-   * Uses advisory lock to prevent race conditions.
-   * Returns the deleted pick with player info, or null if no picks exist.
-   */
   async undoLastPick(draftId: number): Promise<DraftPick | null> {
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
-
-      // Acquire advisory lock on draft
-      await client.query('SELECT pg_advisory_xact_lock($1)', [getDraftLockId(draftId)]);
-
-      // Get most recent pick with player info
-      const lastPick = await client.query(
-        `SELECT dp.*, p.full_name as player_name, p.position as player_position, p.team as player_team, u.username
-         FROM draft_picks dp
-         LEFT JOIN players p ON dp.player_id = p.id
-         LEFT JOIN rosters r ON dp.roster_id = r.id
-         LEFT JOIN users u ON r.user_id = u.id
-         WHERE dp.draft_id = $1
-         ORDER BY dp.pick_number DESC LIMIT 1`,
-        [draftId]
-      );
-
-      if (lastPick.rows.length === 0) {
-        await client.query('COMMIT');
-        return null;
-      }
-
-      const row = lastPick.rows[0];
-
-      // Delete the pick
-      await client.query('DELETE FROM draft_picks WHERE id = $1', [row.id]);
-
-      await client.query('COMMIT');
-
-      return {
-        id: row.id,
-        draftId: row.draft_id,
-        pickNumber: row.pick_number,
-        round: row.round,
-        pickInRound: row.pick_in_round,
-        rosterId: row.roster_id,
-        playerId: row.player_id,
-        isAutoPick: row.is_auto_pick,
-        pickedAt: row.picked_at,
-        playerName: row.player_name,
-        playerPosition: row.player_position,
-        playerTeam: row.player_team,
-        username: row.username,
-      };
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    return this.pick.undoLastPick(draftId);
   }
 
   async isPlayerDrafted(draftId: number, playerId: number): Promise<boolean> {
-    const result = await this.db.query(
-      'SELECT EXISTS(SELECT 1 FROM draft_picks WHERE draft_id = $1 AND player_id = $2)',
-      [draftId, playerId]
-    );
-    return result.rows[0].exists;
+    return this.pick.isPlayerDrafted(draftId, playerId);
   }
 
   async getDraftedPlayerIds(draftId: number): Promise<Set<number>> {
-    const result = await this.db.query(
-      'SELECT player_id FROM draft_picks WHERE draft_id = $1 AND player_id IS NOT NULL',
-      [draftId]
-    );
-    return new Set(result.rows.map((row) => row.player_id));
-  }
-
-  async findExpiredDrafts(): Promise<Draft[]> {
-    const result = await this.db.query(
-      `SELECT d.* FROM drafts d
-       WHERE d.status = 'in_progress'
-       AND (
-         (d.pick_deadline IS NOT NULL AND d.pick_deadline < NOW())
-         OR EXISTS (
-           SELECT 1 FROM draft_order dord
-           WHERE dord.draft_id = d.id
-           AND dord.roster_id = d.current_roster_id
-           AND dord.is_autodraft_enabled = true
-         )
-         OR EXISTS (
-           SELECT 1 FROM rosters r
-           WHERE r.id = d.current_roster_id
-           AND r.user_id IS NULL
-         )
-       )`
-    );
-    return result.rows.map(draftFromDatabase);
+    return this.pick.getDraftedPlayerIds(draftId);
   }
 
   async markPickAsAutoPick(pickId: number): Promise<void> {
-    await this.db.query('UPDATE draft_picks SET is_auto_pick = true WHERE id = $1', [pickId]);
+    return this.pick.markPickAsAutoPick(pickId);
   }
 
-  /**
-   * Atomically make a pick and advance the draft state in a single transaction.
-   * This prevents race conditions where pick is inserted but draft state doesn't advance.
-   *
-   * @param params.draftId - The draft ID
-   * @param params.expectedPickNumber - The pick number we expect to be making (validates no race condition)
-   * @param params.round - The round number
-   * @param params.pickInRound - The pick position within the round
-   * @param params.rosterId - The roster making the pick
-   * @param params.playerId - The player being picked
-   * @param params.nextPickState - Pre-computed next pick state (currentPick, currentRound, currentRosterId, pickDeadline, status)
-   * @param params.idempotencyKey - Optional idempotency key for safe retries
-   * @returns The created pick and updated draft
-   */
+  async pickExists(draftId: number, pickNumber: number): Promise<boolean> {
+    return this.pick.pickExists(draftId, pickNumber);
+  }
+
   async makePickAndAdvanceTx(params: {
     draftId: number;
     expectedPickNumber: number;
@@ -560,397 +192,9 @@ export class DraftRepository {
     };
     idempotencyKey?: string;
   }): Promise<{ pick: DraftPick; draft: Draft }> {
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
-
-      // 1. Acquire advisory lock on draft to prevent concurrent picks
-      await client.query('SELECT pg_advisory_xact_lock($1)', [getDraftLockId(params.draftId)]);
-
-      // 2. Re-read draft row FOR UPDATE and validate current state
-      const draftResult = await client.query('SELECT * FROM drafts WHERE id = $1 FOR UPDATE', [
-        params.draftId,
-      ]);
-      if (draftResult.rows.length === 0) {
-        await client.query('ROLLBACK');
-        throw new ConflictException('Draft not found');
-      }
-      const currentDraft = draftFromDatabase(draftResult.rows[0]);
-
-      // 3. Validate draft is in correct state
-      if (currentDraft.status !== 'in_progress') {
-        await client.query('ROLLBACK');
-        throw new ConflictException('Draft is not in progress');
-      }
-
-      // 4. Check idempotency FIRST - return existing pick if found
-      // This MUST happen before pick number validation to handle retries correctly.
-      // If a client's HTTP response times out after a successful pick, the draft
-      // will have advanced. On retry, we must return the cached pick immediately
-      // rather than failing validation due to the advanced pick number.
-      if (params.idempotencyKey) {
-        const existing = await client.query(
-          `SELECT * FROM draft_picks
-           WHERE draft_id = $1 AND roster_id = $2 AND idempotency_key = $3`,
-          [params.draftId, params.rosterId, params.idempotencyKey]
-        );
-        if (existing.rows.length > 0) {
-          await client.query('COMMIT');
-          const row = existing.rows[0];
-          return {
-            pick: {
-              id: row.id,
-              draftId: row.draft_id,
-              pickNumber: row.pick_number,
-              round: row.round,
-              pickInRound: row.pick_in_round,
-              rosterId: row.roster_id,
-              playerId: row.player_id,
-              isAutoPick: row.is_auto_pick,
-              pickedAt: row.picked_at,
-            },
-            draft: currentDraft,
-          };
-        }
-      }
-
-      // 5. Critical: Validate expected pick number matches current state
-      if (currentDraft.currentPick !== params.expectedPickNumber) {
-        await client.query('ROLLBACK');
-        throw new ConflictException(
-          `Pick already made. Expected pick ${params.expectedPickNumber}, but draft is at pick ${currentDraft.currentPick}`
-        );
-      }
-
-      // 6. Validate it's the correct roster's turn
-      if (currentDraft.currentRosterId !== params.rosterId) {
-        await client.query('ROLLBACK');
-        throw new ConflictException('It is not your turn to pick');
-      }
-
-      // 7. Validate player not already drafted
-      const alreadyDrafted = await client.query(
-        'SELECT 1 FROM draft_picks WHERE draft_id = $1 AND player_id = $2',
-        [params.draftId, params.playerId]
-      );
-      if (alreadyDrafted.rows.length > 0) {
-        await client.query('ROLLBACK');
-        throw new ConflictException('Player has already been drafted');
-      }
-
-      // 8. Insert the pick
-      const pickResult = await client.query(
-        `INSERT INTO draft_picks (draft_id, pick_number, round, pick_in_round, roster_id, player_id, idempotency_key)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         RETURNING *`,
-        [
-          params.draftId,
-          params.expectedPickNumber,
-          params.round,
-          params.pickInRound,
-          params.rosterId,
-          params.playerId,
-          params.idempotencyKey || null,
-        ]
-      );
-
-      // 9. Remove player from all queues in this draft
-      await client.query('DELETE FROM draft_queue WHERE draft_id = $1 AND player_id = $2', [
-        params.draftId,
-        params.playerId,
-      ]);
-
-      // 10. Update draft state atomically
-      const updateClauses: string[] = [];
-      const updateValues: any[] = [];
-      let paramIndex = 1;
-
-      if (params.nextPickState.status) {
-        updateClauses.push(`status = $${paramIndex++}`);
-        updateValues.push(params.nextPickState.status);
-      }
-      if (params.nextPickState.currentPick !== undefined) {
-        updateClauses.push(`current_pick = $${paramIndex++}`);
-        updateValues.push(params.nextPickState.currentPick);
-      }
-      if (params.nextPickState.currentRound !== undefined) {
-        updateClauses.push(`current_round = $${paramIndex++}`);
-        updateValues.push(params.nextPickState.currentRound);
-      }
-      if (params.nextPickState.currentRosterId !== undefined) {
-        updateClauses.push(`current_roster_id = $${paramIndex++}`);
-        updateValues.push(params.nextPickState.currentRosterId);
-      }
-      if (params.nextPickState.pickDeadline !== undefined) {
-        updateClauses.push(`pick_deadline = $${paramIndex++}`);
-        updateValues.push(params.nextPickState.pickDeadline);
-      }
-      if (params.nextPickState.completedAt !== undefined) {
-        updateClauses.push(`completed_at = $${paramIndex++}`);
-        updateValues.push(params.nextPickState.completedAt);
-      }
-
-      updateValues.push(params.draftId);
-      const updatedDraftResult = await client.query(
-        `UPDATE drafts SET ${updateClauses.join(', ')}, updated_at = CURRENT_TIMESTAMP
-         WHERE id = $${paramIndex}
-         RETURNING *`,
-        updateValues
-      );
-
-      await client.query('COMMIT');
-
-      const row = pickResult.rows[0];
-      return {
-        pick: {
-          id: row.id,
-          draftId: row.draft_id,
-          pickNumber: row.pick_number,
-          round: row.round,
-          pickInRound: row.pick_in_round,
-          rosterId: row.roster_id,
-          playerId: row.player_id,
-          isAutoPick: row.is_auto_pick,
-          pickedAt: row.picked_at,
-        },
-        draft: draftFromDatabase(updatedDraftResult.rows[0]),
-      };
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    return this.pick.makePickAndAdvanceTx(params);
   }
 
-  /**
-   * Check if a pick already exists for the given draft and pick number.
-   * Used to detect race conditions where a pick was made but draft state wasn't updated.
-   */
-  async pickExists(draftId: number, pickNumber: number): Promise<boolean> {
-    const result = await this.db.query(
-      'SELECT 1 FROM draft_picks WHERE draft_id = $1 AND pick_number = $2',
-      [draftId, pickNumber]
-    );
-    return result.rows.length > 0;
-  }
-
-  async getBestAvailablePlayer(
-    draftId: number,
-    playerPool: string[] = ['veteran', 'rookie']
-  ): Promise<number | null> {
-    // Build WHERE clause based on playerPool
-    // veteran: player_type = 'nfl' AND (years_exp > 0 OR years_exp IS NULL)
-    // rookie: player_type = 'nfl' AND years_exp = 0
-    // college: player_type = 'college'
-    const conditions: string[] = [];
-    if (playerPool.includes('veteran')) {
-      conditions.push("(player_type = 'nfl' AND (years_exp > 0 OR years_exp IS NULL))");
-    }
-    if (playerPool.includes('rookie')) {
-      conditions.push("(player_type = 'nfl' AND years_exp = 0)");
-    }
-    if (playerPool.includes('college')) {
-      conditions.push("(player_type = 'college')");
-    }
-
-    const playerFilter = conditions.length > 0
-      ? `AND (${conditions.join(' OR ')})`
-      : '';
-
-    const result = await this.db.query(
-      `SELECT id FROM players
-       WHERE active = true
-       ${playerFilter}
-       AND id NOT IN (SELECT player_id FROM draft_picks WHERE draft_id = $1 AND player_id IS NOT NULL)
-       ORDER BY
-         CASE position
-           WHEN 'QB' THEN 1
-           WHEN 'RB' THEN 2
-           WHEN 'WR' THEN 3
-           WHEN 'TE' THEN 4
-           WHEN 'K' THEN 5
-           WHEN 'DEF' THEN 6
-           ELSE 7
-         END,
-         id
-       LIMIT 1`,
-      [draftId]
-    );
-    return result.rows.length > 0 ? result.rows[0].id : null;
-  }
-
-  // Draft Queue
-  async getQueue(draftId: number, rosterId: number): Promise<QueueEntry[]> {
-    const result = await this.db.query(
-      `SELECT dq.*,
-              p.full_name as player_name, p.position as player_position, p.team as player_team,
-              dpa.season as pick_asset_season, dpa.round as pick_asset_round,
-              COALESCE(orig_r.settings->>'team_name', orig_u.username, 'Team ' || orig_r.id) as original_team_name
-       FROM draft_queue dq
-       LEFT JOIN players p ON dq.player_id = p.id
-       LEFT JOIN draft_pick_assets dpa ON dq.pick_asset_id = dpa.id
-       LEFT JOIN rosters orig_r ON dpa.original_roster_id = orig_r.id
-       LEFT JOIN users orig_u ON orig_r.user_id = orig_u.id
-       WHERE dq.draft_id = $1 AND dq.roster_id = $2
-       ORDER BY dq.queue_position`,
-      [draftId, rosterId]
-    );
-    return result.rows.map((row) => {
-      // Build pick asset display name if this is a pick asset entry
-      let pickAssetDisplayName: string | undefined;
-      if (row.pick_asset_id) {
-        pickAssetDisplayName = `${row.pick_asset_season} Round ${row.pick_asset_round} - ${row.original_team_name}`;
-      }
-      return {
-        id: row.id,
-        draftId: row.draft_id,
-        rosterId: row.roster_id,
-        playerId: row.player_id,
-        queuePosition: row.queue_position,
-        playerName: row.player_name,
-        playerPosition: row.player_position,
-        playerTeam: row.player_team,
-        pickAssetId: row.pick_asset_id,
-        pickAssetSeason: row.pick_asset_season,
-        pickAssetRound: row.pick_asset_round,
-        pickAssetDisplayName,
-        originalTeamName: row.original_team_name,
-      };
-    });
-  }
-
-  async addToQueue(
-    draftId: number,
-    rosterId: number,
-    playerId?: number,
-    pickAssetId?: number
-  ): Promise<QueueEntry> {
-    if (!playerId && !pickAssetId) {
-      throw new Error('Either playerId or pickAssetId must be provided');
-    }
-    if (playerId && pickAssetId) {
-      throw new Error('Cannot provide both playerId and pickAssetId');
-    }
-
-    // Single query: calculate position and insert atomically
-    const result = await this.db.query(
-      `INSERT INTO draft_queue (draft_id, roster_id, player_id, pick_asset_id, queue_position)
-       SELECT $1, $2, $3, $4, COALESCE(MAX(queue_position), 0) + 1
-       FROM draft_queue WHERE draft_id = $1 AND roster_id = $2
-       ON CONFLICT DO NOTHING
-       RETURNING *`,
-      [draftId, rosterId, playerId || null, pickAssetId || null]
-    );
-
-    if (result.rows.length === 0) {
-      throw new Error(playerId ? 'Player already in queue' : 'Pick asset already in queue');
-    }
-
-    const row = result.rows[0];
-    return {
-      id: row.id,
-      draftId: row.draft_id,
-      rosterId: row.roster_id,
-      playerId: row.player_id,
-      queuePosition: row.queue_position,
-      pickAssetId: row.pick_asset_id,
-    };
-  }
-
-  async removeFromQueue(queueId: number): Promise<void> {
-    await this.db.query('DELETE FROM draft_queue WHERE id = $1', [queueId]);
-  }
-
-  async removeFromQueueByPlayer(
-    draftId: number,
-    rosterId: number,
-    playerId: number
-  ): Promise<void> {
-    await this.db.query(
-      'DELETE FROM draft_queue WHERE draft_id = $1 AND roster_id = $2 AND player_id = $3',
-      [draftId, rosterId, playerId]
-    );
-  }
-
-  async removePlayerFromAllQueues(draftId: number, playerId: number): Promise<void> {
-    await this.db.query('DELETE FROM draft_queue WHERE draft_id = $1 AND player_id = $2', [
-      draftId,
-      playerId,
-    ]);
-  }
-
-  async removeFromQueueByPickAsset(
-    draftId: number,
-    rosterId: number,
-    pickAssetId: number
-  ): Promise<void> {
-    await this.db.query(
-      'DELETE FROM draft_queue WHERE draft_id = $1 AND roster_id = $2 AND pick_asset_id = $3',
-      [draftId, rosterId, pickAssetId]
-    );
-  }
-
-  async removePickAssetFromAllQueues(draftId: number, pickAssetId: number): Promise<void> {
-    await this.db.query('DELETE FROM draft_queue WHERE draft_id = $1 AND pick_asset_id = $2', [
-      draftId,
-      pickAssetId,
-    ]);
-  }
-
-  /**
-   * Reorder queue using entry IDs (supports mixed player + pick asset queues).
-   * Falls back to legacy player-only behavior if entryIds not provided.
-   */
-  async reorderQueue(
-    draftId: number,
-    rosterId: number,
-    playerIds: number[],
-    entryIds?: number[]
-  ): Promise<void> {
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
-
-      if (entryIds && entryIds.length > 0) {
-        // New behavior: reorder by entry IDs (supports mixed queue)
-        for (let i = 0; i < entryIds.length; i++) {
-          await client.query(
-            'UPDATE draft_queue SET queue_position = $1 WHERE id = $2 AND draft_id = $3 AND roster_id = $4',
-            [i + 1, entryIds[i], draftId, rosterId]
-          );
-        }
-      } else {
-        // Legacy behavior: reorder by player IDs only
-        // Delete existing queue entries for this user
-        await client.query('DELETE FROM draft_queue WHERE draft_id = $1 AND roster_id = $2', [
-          draftId,
-          rosterId,
-        ]);
-        // Insert in new order
-        for (let i = 0; i < playerIds.length; i++) {
-          await client.query(
-            'INSERT INTO draft_queue (draft_id, roster_id, player_id, queue_position) VALUES ($1, $2, $3, $4)',
-            [draftId, rosterId, playerIds[i], i + 1]
-          );
-        }
-      }
-
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
-
-  /**
-   * Atomically make a pick asset selection and advance the draft state in a single transaction.
-   * This prevents race conditions where selection is created but draft state doesn't advance.
-   *
-   * @returns The created selection ID and updated draft
-   */
   async makePickAssetSelectionTx(params: {
     draftId: number;
     expectedPickNumber: number;
@@ -970,153 +214,9 @@ export class DraftRepository {
     selectedAt: Date;
     draft: Draft;
   }> {
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
-
-      // 1. Acquire advisory lock on draft to prevent concurrent picks
-      await client.query('SELECT pg_advisory_xact_lock($1)', [getDraftLockId(params.draftId)]);
-
-      // 2. Re-read draft row FOR UPDATE and validate current state
-      const draftResult = await client.query('SELECT * FROM drafts WHERE id = $1 FOR UPDATE', [
-        params.draftId,
-      ]);
-      if (draftResult.rows.length === 0) {
-        await client.query('ROLLBACK');
-        throw new ConflictException('Draft not found');
-      }
-      const currentDraft = draftFromDatabase(draftResult.rows[0]);
-
-      // 3. Validate draft is in correct state
-      if (currentDraft.status !== 'in_progress') {
-        await client.query('ROLLBACK');
-        throw new ConflictException('Draft is not in progress');
-      }
-
-      // 4. Check idempotency FIRST - return existing selection if found
-      if (params.idempotencyKey) {
-        const existing = await client.query(
-          `SELECT * FROM vet_draft_pick_selections
-           WHERE draft_id = $1 AND roster_id = $2 AND pick_number = $3`,
-          [params.draftId, params.rosterId, params.expectedPickNumber]
-        );
-        if (existing.rows.length > 0) {
-          await client.query('COMMIT');
-          const row = existing.rows[0];
-          return {
-            selectionId: row.id,
-            selectedAt: row.selected_at,
-            draft: currentDraft,
-          };
-        }
-      }
-
-      // 5. Critical: Validate expected pick number matches current state
-      if (currentDraft.currentPick !== params.expectedPickNumber) {
-        await client.query('ROLLBACK');
-        throw new ConflictException(
-          `Pick already made. Expected pick ${params.expectedPickNumber}, but draft is at pick ${currentDraft.currentPick}`
-        );
-      }
-
-      // 6. Validate it's the correct roster's turn
-      if (currentDraft.currentRosterId !== params.rosterId) {
-        await client.query('ROLLBACK');
-        throw new ConflictException('It is not your turn to pick');
-      }
-
-      // 7. Validate pick asset not already selected in this draft
-      const alreadySelected = await client.query(
-        `SELECT 1 FROM vet_draft_pick_selections WHERE draft_id = $1 AND draft_pick_asset_id = $2`,
-        [params.draftId, params.draftPickAssetId]
-      );
-      if (alreadySelected.rows.length > 0) {
-        await client.query('ROLLBACK');
-        throw new ConflictException('This pick asset has already been drafted');
-      }
-
-      // 8. Insert the selection
-      const selectionResult = await client.query(
-        `INSERT INTO vet_draft_pick_selections (draft_id, draft_pick_asset_id, pick_number, roster_id)
-         VALUES ($1, $2, $3, $4)
-         RETURNING *`,
-        [params.draftId, params.draftPickAssetId, params.expectedPickNumber, params.rosterId]
-      );
-
-      // 9. Transfer ownership of the pick asset to the drafter
-      await client.query(
-        `UPDATE draft_pick_assets
-         SET current_owner_roster_id = $1, updated_at = CURRENT_TIMESTAMP
-         WHERE id = $2`,
-        [params.rosterId, params.draftPickAssetId]
-      );
-
-      // 9b. Remove pick asset from all queues in this draft
-      await client.query('DELETE FROM draft_queue WHERE draft_id = $1 AND pick_asset_id = $2', [
-        params.draftId,
-        params.draftPickAssetId,
-      ]);
-
-      // 10. Update draft state atomically
-      const updateClauses: string[] = [];
-      const updateValues: any[] = [];
-      let paramIndex = 1;
-
-      if (params.nextPickState.status) {
-        updateClauses.push(`status = $${paramIndex++}`);
-        updateValues.push(params.nextPickState.status);
-      }
-      if (params.nextPickState.currentPick !== undefined) {
-        updateClauses.push(`current_pick = $${paramIndex++}`);
-        updateValues.push(params.nextPickState.currentPick);
-      }
-      if (params.nextPickState.currentRound !== undefined) {
-        updateClauses.push(`current_round = $${paramIndex++}`);
-        updateValues.push(params.nextPickState.currentRound);
-      }
-      if (params.nextPickState.currentRosterId !== undefined) {
-        updateClauses.push(`current_roster_id = $${paramIndex++}`);
-        updateValues.push(params.nextPickState.currentRosterId);
-      }
-      if (params.nextPickState.pickDeadline !== undefined) {
-        updateClauses.push(`pick_deadline = $${paramIndex++}`);
-        updateValues.push(params.nextPickState.pickDeadline);
-      }
-      if (params.nextPickState.completedAt !== undefined) {
-        updateClauses.push(`completed_at = $${paramIndex++}`);
-        updateValues.push(params.nextPickState.completedAt);
-      }
-
-      updateValues.push(params.draftId);
-      const updatedDraftResult = await client.query(
-        `UPDATE drafts SET ${updateClauses.join(', ')}, updated_at = CURRENT_TIMESTAMP
-         WHERE id = $${paramIndex}
-         RETURNING *`,
-        updateValues
-      );
-
-      await client.query('COMMIT');
-
-      const selectionRow = selectionResult.rows[0];
-      return {
-        selectionId: selectionRow.id,
-        selectedAt: selectionRow.selected_at,
-        draft: draftFromDatabase(updatedDraftResult.rows[0]),
-      };
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    return this.pick.makePickAssetSelectionTx(params);
   }
 
-  /**
-   * Atomically undo the last pick and update draft state in a single transaction.
-   * This prevents race conditions where pick is deleted but draft state isn't reverted.
-   *
-   * @returns The deleted pick info and updated draft
-   */
   async undoLastPickTx(params: {
     draftId: number;
     prevPickState: {
@@ -1128,107 +228,63 @@ export class DraftRepository {
       completedAt: null;
     };
   }): Promise<{ undonePick: DraftPick | null; draft: Draft }> {
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
+    return this.pick.undoLastPickTx(params);
+  }
 
-      // 1. Acquire advisory lock on draft
-      await client.query('SELECT pg_advisory_xact_lock($1)', [getDraftLockId(params.draftId)]);
+  // ============================================
+  // Draft Queue Operations (delegated to DraftQueueRepository)
+  // ============================================
 
-      // 2. Re-read draft row FOR UPDATE
-      const draftResult = await client.query('SELECT * FROM drafts WHERE id = $1 FOR UPDATE', [
-        params.draftId,
-      ]);
-      if (draftResult.rows.length === 0) {
-        await client.query('ROLLBACK');
-        throw new ConflictException('Draft not found');
-      }
+  async getQueue(draftId: number, rosterId: number): Promise<QueueEntry[]> {
+    return this.queue.getQueue(draftId, rosterId);
+  }
 
-      // 3. Get most recent pick with player info
-      const lastPick = await client.query(
-        `SELECT dp.*, p.full_name as player_name, p.position as player_position, p.team as player_team, u.username
-         FROM draft_picks dp
-         LEFT JOIN players p ON dp.player_id = p.id
-         LEFT JOIN rosters r ON dp.roster_id = r.id
-         LEFT JOIN users u ON r.user_id = u.id
-         WHERE dp.draft_id = $1
-         ORDER BY dp.pick_number DESC LIMIT 1`,
-        [params.draftId]
-      );
+  async addToQueue(
+    draftId: number,
+    rosterId: number,
+    playerId?: number,
+    pickAssetId?: number
+  ): Promise<QueueEntry> {
+    return this.queue.addToQueue(draftId, rosterId, playerId, pickAssetId);
+  }
 
-      if (lastPick.rows.length === 0) {
-        await client.query('COMMIT');
-        return {
-          undonePick: null,
-          draft: draftFromDatabase(draftResult.rows[0]),
-        };
-      }
+  async removeFromQueue(queueId: number): Promise<void> {
+    return this.queue.removeFromQueue(queueId);
+  }
 
-      const row = lastPick.rows[0];
+  async removeFromQueueByPlayer(
+    draftId: number,
+    rosterId: number,
+    playerId: number
+  ): Promise<void> {
+    return this.queue.removeFromQueueByPlayer(draftId, rosterId, playerId);
+  }
 
-      // 4. Delete the pick
-      await client.query('DELETE FROM draft_picks WHERE id = $1', [row.id]);
+  async removePlayerFromAllQueues(draftId: number, playerId: number): Promise<void> {
+    return this.queue.removePlayerFromAllQueues(draftId, playerId);
+  }
 
-      // 5. Update draft state atomically
-      const updatedDraftResult = await client.query(
-        `UPDATE drafts
-         SET current_pick = $1, current_round = $2, current_roster_id = $3,
-             pick_deadline = $4, status = $5, completed_at = $6, updated_at = CURRENT_TIMESTAMP
-         WHERE id = $7
-         RETURNING *`,
-        [
-          params.prevPickState.currentPick,
-          params.prevPickState.currentRound,
-          params.prevPickState.currentRosterId,
-          params.prevPickState.pickDeadline,
-          params.prevPickState.status,
-          params.prevPickState.completedAt,
-          params.draftId,
-        ]
-      );
+  async removeFromQueueByPickAsset(
+    draftId: number,
+    rosterId: number,
+    pickAssetId: number
+  ): Promise<void> {
+    return this.queue.removeFromQueueByPickAsset(draftId, rosterId, pickAssetId);
+  }
 
-      await client.query('COMMIT');
+  async removePickAssetFromAllQueues(draftId: number, pickAssetId: number): Promise<void> {
+    return this.queue.removePickAssetFromAllQueues(draftId, pickAssetId);
+  }
 
-      return {
-        undonePick: {
-          id: row.id,
-          draftId: row.draft_id,
-          pickNumber: row.pick_number,
-          round: row.round,
-          pickInRound: row.pick_in_round,
-          rosterId: row.roster_id,
-          playerId: row.player_id,
-          isAutoPick: row.is_auto_pick,
-          pickedAt: row.picked_at,
-          playerName: row.player_name,
-          playerPosition: row.player_position,
-          playerTeam: row.player_team,
-          username: row.username,
-        },
-        draft: draftFromDatabase(updatedDraftResult.rows[0]),
-      };
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+  async reorderQueue(
+    draftId: number,
+    rosterId: number,
+    playerIds: number[],
+    entryIds?: number[]
+  ): Promise<void> {
+    return this.queue.reorderQueue(draftId, rosterId, playerIds, entryIds);
   }
 }
 
-export interface QueueEntry {
-  id: number;
-  draftId: number;
-  rosterId: number;
-  playerId: number | null;
-  queuePosition: number;
-  playerName?: string;
-  playerPosition?: string;
-  playerTeam?: string;
-  // Pick asset fields
-  pickAssetId: number | null;
-  pickAssetSeason?: number;
-  pickAssetRound?: number;
-  pickAssetDisplayName?: string;
-  originalTeamName?: string;
-}
+// Re-export QueueEntry for backward compatibility
+export type { QueueEntry } from './repositories/draft-queue.repository';

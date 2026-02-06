@@ -13,7 +13,9 @@ import { PlayerRepository } from '../../players/players.repository';
 import { ValidationException, NotFoundException } from '../../../utils/exceptions';
 import { getRosterBudgetDataWithClient } from './auction-budget-calculator';
 import { resolvePriceWithClient, OutbidNotification } from './auction-price-resolver';
-import { getAuctionRosterLockId, getDraftLockId } from '../../../utils/locks';
+import { getAuctionRosterLockId } from '../../../utils/locks';
+import { runInTransaction, runWithLock, LockDomain } from '../../../shared/transaction-runner';
+import { getLockId } from '../../../shared/locks';
 
 export interface NominationResult {
   lot: AuctionLot;
@@ -325,10 +327,7 @@ export class SlowAuctionService {
     rosterId: number,
     maxBid: number
   ): Promise<SetMaxBidResult> {
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
-
+    return runInTransaction(this.pool, async (client) => {
       // 0. Acquire roster-level lock to prevent cross-lot race conditions
       // Use centralized lock ID for consistency with fast auction
       await client.query('SELECT pg_advisory_xact_lock($1)', [getAuctionRosterLockId(rosterId)]);
@@ -338,29 +337,24 @@ export class SlowAuctionService {
         lotId,
       ]);
       if (lotResult.rows.length === 0) {
-        await client.query('ROLLBACK');
         throw new NotFoundException('Lot not found');
       }
       const lot = auctionLotFromDatabase(lotResult.rows[0]);
 
       if (lot.status !== 'active') {
-        await client.query('ROLLBACK');
         throw new ValidationException('Lot is not active');
       }
       if (lot.draftId !== draftId) {
-        await client.query('ROLLBACK');
         throw new ValidationException('Lot does not belong to this draft');
       }
 
       // 2. Get draft and league for settings/budget
       const draft = await this.draftRepo.findById(draftId);
       if (!draft) {
-        await client.query('ROLLBACK');
         throw new NotFoundException('Draft not found');
       }
       const league = await this.leagueRepo.findById(draft.leagueId);
       if (!league) {
-        await client.query('ROLLBACK');
         throw new NotFoundException('League not found');
       }
 
@@ -370,7 +364,6 @@ export class SlowAuctionService {
 
       // 3. Validate min bid
       if (maxBid < settings.minBid) {
-        await client.query('ROLLBACK');
         throw new ValidationException(`Minimum bid is $${settings.minBid}`);
       }
 
@@ -383,7 +376,6 @@ export class SlowAuctionService {
       const worstCaseIfWin = maxBid + budgetData.spent + remainingSlots * settings.minBid;
       if (worstCaseIfWin > totalBudget) {
         const maxSafeBid = totalBudget - budgetData.spent - remainingSlots * settings.minBid;
-        await client.query('ROLLBACK');
         throw new ValidationException(
           `Maximum safe bid is $${Math.max(settings.minBid, maxSafeBid)} (must reserve for remaining roster)`
         );
@@ -397,7 +389,6 @@ export class SlowAuctionService {
         maxAffordable += lot.currentBid; // Can reuse current commitment
       }
       if (maxBid > maxAffordable) {
-        await client.query('ROLLBACK');
         throw new ValidationException(`Maximum affordable bid is $${maxAffordable}`);
       }
 
@@ -441,20 +432,13 @@ export class SlowAuctionService {
         finalLot = { ...finalLot, bidDeadline: newBidDeadline };
       }
 
-      await client.query('COMMIT');
-
       return {
         proxyBid,
         lot: finalLot,
         outbidNotifications: result.outbidNotifications,
         message: 'Max bid set successfully',
       };
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   // Resolve price based on proxy bids (second-price auction) - non-transactional version
@@ -527,22 +511,17 @@ export class SlowAuctionService {
   // Now includes fallback logic: if the highest bidder can't afford,
   // try the next highest bidder until one can afford, or pass the lot.
   async settleLot(lotId: number): Promise<SettlementResult> {
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
-
+    return runInTransaction(this.pool, async (client) => {
       // Lock and get lot
       const lotResult = await client.query('SELECT * FROM auction_lots WHERE id = $1 FOR UPDATE', [
         lotId,
       ]);
       if (lotResult.rows.length === 0) {
-        await client.query('ROLLBACK');
         throw new NotFoundException('Lot not found');
       }
       const lot = auctionLotFromDatabase(lotResult.rows[0]);
 
       if (lot.status !== 'active') {
-        await client.query('ROLLBACK');
         throw new ValidationException('Lot is not active');
       }
 
@@ -565,19 +544,16 @@ export class SlowAuctionService {
           [lotId]
         );
         const passedLot = auctionLotFromDatabase(passResult.rows[0]);
-        await client.query('COMMIT');
         return { lot: passedLot, winner: null, passed: true };
       }
 
       // Load draft and league data once
       const draft = await this.draftRepo.findById(lot.draftId);
       if (!draft) {
-        await client.query('ROLLBACK');
         throw new NotFoundException('Draft not found');
       }
       const league = await this.leagueRepo.findById(draft.leagueId);
       if (!league) {
-        await client.query('ROLLBACK');
         throw new NotFoundException('League not found');
       }
 
@@ -586,7 +562,7 @@ export class SlowAuctionService {
       const settings = this.getSettings(draft);
 
       // Acquire draft-level lock first (per lock ordering: DRAFT before ROSTER)
-      await client.query('SELECT pg_advisory_xact_lock($1)', [getDraftLockId(lot.draftId)]);
+      await client.query('SELECT pg_advisory_xact_lock($1)', [getLockId(LockDomain.DRAFT, lot.draftId)]);
 
       // Try each bidder in order until one can afford
       for (let i = 0; i < proxyBids.length; i++) {
@@ -657,8 +633,6 @@ export class SlowAuctionService {
           lot.playerId,
         ]);
 
-        await client.query('COMMIT');
-
         return {
           lot: settledLot,
           winner: { rosterId: candidateRosterId, amount: price },
@@ -676,15 +650,9 @@ export class SlowAuctionService {
         [lotId]
       );
       const passedLot = auctionLotFromDatabase(passResult.rows[0]);
-      await client.query('COMMIT');
 
       return { lot: passedLot, winner: null, passed: true };
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   // Process all expired lots (called by job)

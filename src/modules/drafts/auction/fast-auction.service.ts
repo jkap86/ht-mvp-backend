@@ -16,7 +16,8 @@ import {
   NotFoundException,
   ForbiddenException,
 } from '../../../utils/exceptions';
-import { getAuctionRosterLockId, getDraftLockId } from '../../../utils/locks';
+import { getAuctionRosterLockId } from '../../../utils/locks';
+import { runWithLock, runInTransaction, LockDomain } from '../../../shared/transaction-runner';
 import { logger } from '../../../config/logger.config';
 import { Draft } from '../drafts.model';
 import { getRosterBudgetDataWithClient } from './auction-budget-calculator';
@@ -124,86 +125,80 @@ export class FastAuctionService {
     }
 
     // Use transaction with advisory lock to prevent race condition
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
+    const { lot, playerName } = await runWithLock(
+      this.pool,
+      LockDomain.DRAFT,
+      draftId,
+      async (client) => {
+        // Check no active lot exists (inside lock)
+        const activeLotResult = await client.query(
+          "SELECT id FROM auction_lots WHERE draft_id = $1 AND status = 'active' LIMIT 1",
+          [draftId]
+        );
+        if (activeLotResult.rows.length > 0) {
+          throw new ValidationException('There is already an active lot - wait for it to complete');
+        }
 
-      // Acquire draft-level lock to prevent concurrent nominations
-      await client.query('SELECT pg_advisory_xact_lock($1)', [getDraftLockId(draftId)]);
+        // Validate player
+        const player = await this.playerRepo.findById(playerId);
+        if (!player) {
+          throw new NotFoundException('Player not found');
+        }
 
-      // Check no active lot exists (inside lock)
-      const activeLotResult = await client.query(
-        "SELECT id FROM auction_lots WHERE draft_id = $1 AND status = 'active' LIMIT 1",
-        [draftId]
-      );
-      if (activeLotResult.rows.length > 0) {
-        throw new ValidationException('There is already an active lot - wait for it to complete');
+        // Check player not already drafted
+        const isDrafted = await this.draftRepo.isPlayerDrafted(draftId, playerId);
+        if (isDrafted) {
+          throw new ValidationException('Player has already been drafted');
+        }
+
+        // Check player not already nominated (active or won lot)
+        const existingLot = await this.lotRepo.findLotByDraftAndPlayer(draftId, playerId);
+        if (existingLot) {
+          throw new ValidationException('Player has already been nominated in this draft');
+        }
+
+        // Validate budget and roster slots
+        const budgetInfo = await this.lotRepo.getRosterBudgetData(draftId, roster.id);
+        const league = await this.leagueRepo.findById(draft.leagueId);
+        if (!league) {
+          throw new NotFoundException('League not found');
+        }
+
+        const rosterSlots = league.leagueSettings?.rosterSlots ?? 15;
+
+        // Check roster has slots
+        if (budgetInfo.wonCount >= rosterSlots) {
+          throw new ValidationException('Your roster is full');
+        }
+
+        // Calculate bid deadline for fast auction
+        const bidDeadline = new Date(Date.now() + settings.nominationSeconds * 1000);
+
+        // Create the lot
+        const lot = await this.lotRepo.createLot(
+          draftId,
+          playerId,
+          roster.id,
+          bidDeadline,
+          settings.minBid
+        );
+
+        return { lot, playerName: player.fullName };
       }
+    );
 
-      // Validate player
-      const player = await this.playerRepo.findById(playerId);
-      if (!player) {
-        throw new NotFoundException('Player not found');
-      }
+    // Post-commit: Emit socket event - convert to snake_case for frontend consistency
+    // Include serverTime for client clock synchronization
+    const socket = tryGetSocketService();
+    socket?.emitAuctionLotCreated(draftId, {
+      lot: auctionLotToResponse(lot),
+      serverTime: Date.now(),
+    });
 
-      // Check player not already drafted
-      const isDrafted = await this.draftRepo.isPlayerDrafted(draftId, playerId);
-      if (isDrafted) {
-        throw new ValidationException('Player has already been drafted');
-      }
-
-      // Check player not already nominated (active or won lot)
-      const existingLot = await this.lotRepo.findLotByDraftAndPlayer(draftId, playerId);
-      if (existingLot) {
-        throw new ValidationException('Player has already been nominated in this draft');
-      }
-
-      // Validate budget and roster slots
-      const budgetInfo = await this.lotRepo.getRosterBudgetData(draftId, roster.id);
-      const league = await this.leagueRepo.findById(draft.leagueId);
-      if (!league) {
-        throw new NotFoundException('League not found');
-      }
-
-      const rosterSlots = league.leagueSettings?.rosterSlots ?? 15;
-
-      // Check roster has slots
-      if (budgetInfo.wonCount >= rosterSlots) {
-        throw new ValidationException('Your roster is full');
-      }
-
-      // Calculate bid deadline for fast auction
-      const bidDeadline = new Date(Date.now() + settings.nominationSeconds * 1000);
-
-      // Create the lot
-      const lot = await this.lotRepo.createLot(
-        draftId,
-        playerId,
-        roster.id,
-        bidDeadline,
-        settings.minBid
-      );
-
-      await client.query('COMMIT');
-
-      // Emit socket event - convert to snake_case for frontend consistency
-      // Include serverTime for client clock synchronization
-      const socket = tryGetSocketService();
-      socket?.emitAuctionLotCreated(draftId, {
-        lot: auctionLotToResponse(lot),
-        serverTime: Date.now(),
-      });
-
-      return {
-        lot,
-        message: `${player.fullName} nominated for $${settings.minBid}`,
-      };
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    return {
+      lot,
+      message: `${playerName} nominated for $${settings.minBid}`,
+    };
   }
 
   /**
@@ -227,154 +222,150 @@ export class FastAuctionService {
       throw new ValidationException('This is not a fast auction draft');
     }
 
+    // Validate user is a member first (outside transaction)
+    const roster = await this.rosterRepo.findByLeagueAndUser(draft.leagueId, userId);
+    if (!roster) {
+      throw new ForbiddenException('You are not a member of this league');
+    }
+
     // Use transaction for atomic operations
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
+    const { finalLot, outbidNotifications: rawNotifications, playerId } = await runInTransaction(
+      this.pool,
+      async (client) => {
+        // Acquire roster-level lock to prevent cross-lot race conditions
+        await client.query('SELECT pg_advisory_xact_lock($1)', [getAuctionRosterLockId(roster.id)]);
 
-      // Acquire roster-level lock to prevent cross-lot race conditions
-      const roster = await this.rosterRepo.findByLeagueAndUser(draft.leagueId, userId);
-      if (!roster) {
-        throw new ForbiddenException('You are not a member of this league');
-      }
-      await client.query('SELECT pg_advisory_xact_lock($1)', [getAuctionRosterLockId(roster.id)]);
-
-      // Get lot with lock
-      const lotResult = await client.query('SELECT * FROM auction_lots WHERE id = $1 FOR UPDATE', [
-        lotId,
-      ]);
-      if (lotResult.rows.length === 0) {
-        throw new NotFoundException('Lot not found');
-      }
-      const lot = auctionLotFromDatabase(lotResult.rows[0]);
-
-      if (lot.draftId !== draftId) {
-        throw new NotFoundException('Lot does not belong to this draft');
-      }
-      if (lot.status !== 'active') {
-        throw new ValidationException('Lot is no longer active');
-      }
-
-      // Validate bid meets minimum
-      const minRequired = lot.currentBid + settings.minIncrement;
-      if (maxBid < minRequired && lot.currentBidderRosterId !== roster.id) {
-        throw new ValidationException(`Bid must be at least $${minRequired}`);
-      }
-
-      // Validate budget
-      const league = await this.leagueRepo.findById(draft.leagueId);
-      if (!league) {
-        throw new NotFoundException('League not found');
-      }
-
-      const totalBudget = league.leagueSettings?.auctionBudget ?? 200;
-      const rosterSlots = league.leagueSettings?.rosterSlots ?? 15;
-      const budgetInfo = await getRosterBudgetDataWithClient(client, draftId, roster.id);
-
-      // Calculate remaining slots and required reserve
-      const remainingSlots = rosterSlots - budgetInfo.wonCount - 1; // -1 for this lot
-      const requiredReserve = Math.max(0, remainingSlots) * settings.minBid;
-
-      // Calculate max affordable bid
-      let maxAffordable =
-        totalBudget - budgetInfo.spent - requiredReserve - budgetInfo.leadingCommitment;
-      const isLeadingThisLot = lot.currentBidderRosterId === roster.id;
-      if (isLeadingThisLot) {
-        maxAffordable += lot.currentBid; // Can reuse current commitment
-      }
-
-      if (maxBid > maxAffordable) {
-        throw new ValidationException(`Maximum affordable bid is $${maxAffordable}`);
-      }
-
-      // Worst-case budget validation: ensure user can fill remaining roster at minBid
-      const worstCaseSpend = maxBid + budgetInfo.spent + requiredReserve;
-      if (worstCaseSpend > totalBudget) {
-        const maxAllowed = totalBudget - budgetInfo.spent - requiredReserve;
-        throw new ValidationException(
-          `Bid would leave insufficient budget for remaining roster slots. Maximum: $${maxAllowed}`
-        );
-      }
-
-      // Upsert proxy bid
-      await client.query(
-        `INSERT INTO auction_proxy_bids (lot_id, roster_id, max_bid)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (lot_id, roster_id)
-         DO UPDATE SET max_bid = EXCLUDED.max_bid, updated_at = CURRENT_TIMESTAMP`,
-        [lotId, roster.id, maxBid]
-      );
-
-      // Resolve price using shared utility
-      const result = await resolvePriceWithClient(client, lot, settings);
-
-      // Fast auction specific: reset timer on price/leader change
-      let finalLot = result.updatedLot;
-      if (result.priceChanged || result.leaderChanged) {
-        const newDeadline = new Date(Date.now() + settings.resetOnBidSeconds * 1000);
-        // Only extend deadline, never shorten it
-        if (newDeadline > finalLot.bidDeadline) {
-          await client.query(
-            'UPDATE auction_lots SET bid_deadline = $1, updated_at = NOW() WHERE id = $2',
-            [newDeadline, lotId]
-          );
-          finalLot = { ...finalLot, bidDeadline: newDeadline };
+        // Get lot with lock
+        const lotResult = await client.query('SELECT * FROM auction_lots WHERE id = $1 FOR UPDATE', [
+          lotId,
+        ]);
+        if (lotResult.rows.length === 0) {
+          throw new NotFoundException('Lot not found');
         }
-      }
+        const lot = auctionLotFromDatabase(lotResult.rows[0]);
 
-      await client.query('COMMIT');
+        if (lot.draftId !== draftId) {
+          throw new NotFoundException('Lot does not belong to this draft');
+        }
+        if (lot.status !== 'active') {
+          throw new ValidationException('Lot is no longer active');
+        }
 
-      // Emit lot updated event - convert to snake_case for frontend consistency
-      // Include serverTime for client clock synchronization
-      const socket = tryGetSocketService();
-      socket?.emitAuctionLotUpdated(draftId, {
-        lot: auctionLotToResponse(finalLot),
-        serverTime: Date.now(),
-      });
+        // Validate bid meets minimum
+        const minRequired = lot.currentBid + settings.minIncrement;
+        if (maxBid < minRequired && lot.currentBidderRosterId !== roster.id) {
+          throw new ValidationException(`Bid must be at least $${minRequired}`);
+        }
 
-      // Get proxy bid for response
-      const proxyBidResult = await this.lotRepo.getProxyBid(lotId, roster.id);
+        // Validate budget
+        const league = await this.leagueRepo.findById(draft.leagueId);
+        if (!league) {
+          throw new NotFoundException('League not found');
+        }
 
-      // Handle outbid notifications with retry logic
-      const userOutbidNotifications: Array<{ userId: string; lotId: number; playerId: number }> =
-        [];
-      for (const notification of result.outbidNotifications) {
-        const outbidRoster = await this.rosterRepo.findById(notification.rosterId);
-        if (outbidRoster && outbidRoster.userId) {
-          userOutbidNotifications.push({
-            userId: outbidRoster.userId,
-            lotId: notification.lotId,
-            playerId: lot.playerId,
-          });
-          try {
-            // Use snake_case to match slow auction payload format
-            socket?.emitAuctionOutbid(outbidRoster.userId, {
-              lot_id: notification.lotId,
-              player_id: lot.playerId,
-              new_bid: finalLot.currentBid,
-            });
-          } catch (socketError) {
-            logger.warn('Failed to emit outbid notification', {
-              userId: outbidRoster.userId,
-              lotId: notification.lotId,
-              error: socketError,
-            });
+        const totalBudget = league.leagueSettings?.auctionBudget ?? 200;
+        const rosterSlots = league.leagueSettings?.rosterSlots ?? 15;
+        const budgetInfo = await getRosterBudgetDataWithClient(client, draftId, roster.id);
+
+        // Calculate remaining slots and required reserve
+        const remainingSlots = rosterSlots - budgetInfo.wonCount - 1; // -1 for this lot
+        const requiredReserve = Math.max(0, remainingSlots) * settings.minBid;
+
+        // Calculate max affordable bid
+        let maxAffordable =
+          totalBudget - budgetInfo.spent - requiredReserve - budgetInfo.leadingCommitment;
+        const isLeadingThisLot = lot.currentBidderRosterId === roster.id;
+        if (isLeadingThisLot) {
+          maxAffordable += lot.currentBid; // Can reuse current commitment
+        }
+
+        if (maxBid > maxAffordable) {
+          throw new ValidationException(`Maximum affordable bid is $${maxAffordable}`);
+        }
+
+        // Worst-case budget validation: ensure user can fill remaining roster at minBid
+        const worstCaseSpend = maxBid + budgetInfo.spent + requiredReserve;
+        if (worstCaseSpend > totalBudget) {
+          const maxAllowed = totalBudget - budgetInfo.spent - requiredReserve;
+          throw new ValidationException(
+            `Bid would leave insufficient budget for remaining roster slots. Maximum: $${maxAllowed}`
+          );
+        }
+
+        // Upsert proxy bid
+        await client.query(
+          `INSERT INTO auction_proxy_bids (lot_id, roster_id, max_bid)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (lot_id, roster_id)
+           DO UPDATE SET max_bid = EXCLUDED.max_bid, updated_at = CURRENT_TIMESTAMP`,
+          [lotId, roster.id, maxBid]
+        );
+
+        // Resolve price using shared utility
+        const result = await resolvePriceWithClient(client, lot, settings);
+
+        // Fast auction specific: reset timer on price/leader change
+        let finalLot = result.updatedLot;
+        if (result.priceChanged || result.leaderChanged) {
+          const newDeadline = new Date(Date.now() + settings.resetOnBidSeconds * 1000);
+          // Only extend deadline, never shorten it
+          if (newDeadline > finalLot.bidDeadline) {
+            await client.query(
+              'UPDATE auction_lots SET bid_deadline = $1, updated_at = NOW() WHERE id = $2',
+              [newDeadline, lotId]
+            );
+            finalLot = { ...finalLot, bidDeadline: newDeadline };
           }
         }
-      }
 
-      return {
-        proxyBid: proxyBidResult!,
-        lot: finalLot,
-        outbidNotifications: userOutbidNotifications,
-        message: `Max bid set to $${maxBid}`,
-      };
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
+        return { finalLot, outbidNotifications: result.outbidNotifications, playerId: lot.playerId };
+      }
+    );
+
+    // Post-commit: Emit lot updated event - convert to snake_case for frontend consistency
+    // Include serverTime for client clock synchronization
+    const socket = tryGetSocketService();
+    socket?.emitAuctionLotUpdated(draftId, {
+      lot: auctionLotToResponse(finalLot),
+      serverTime: Date.now(),
+    });
+
+    // Get proxy bid for response
+    const proxyBidResult = await this.lotRepo.getProxyBid(lotId, roster.id);
+
+    // Handle outbid notifications with retry logic
+    const userOutbidNotifications: Array<{ userId: string; lotId: number; playerId: number }> = [];
+    for (const notification of rawNotifications) {
+      const outbidRoster = await this.rosterRepo.findById(notification.rosterId);
+      if (outbidRoster && outbidRoster.userId) {
+        userOutbidNotifications.push({
+          userId: outbidRoster.userId,
+          lotId: notification.lotId,
+          playerId,
+        });
+        try {
+          // Use snake_case to match slow auction payload format
+          socket?.emitAuctionOutbid(outbidRoster.userId, {
+            lot_id: notification.lotId,
+            player_id: playerId,
+            new_bid: finalLot.currentBid,
+          });
+        } catch (socketError) {
+          logger.warn('Failed to emit outbid notification', {
+            userId: outbidRoster.userId,
+            lotId: notification.lotId,
+            error: socketError,
+          });
+        }
+      }
     }
+
+    return {
+      proxyBid: proxyBidResult!,
+      lot: finalLot,
+      outbidNotifications: userOutbidNotifications,
+      message: `Max bid set to $${maxBid}`,
+    };
   }
 
   /**
@@ -382,74 +373,70 @@ export class FastAuctionService {
    * Uses transaction with advisory lock to prevent race conditions
    */
   async advanceNominator(draftId: number): Promise<void> {
-    const client = await this.pool.connect();
+    const result = await runWithLock(
+      this.pool,
+      LockDomain.DRAFT,
+      draftId,
+      async (client) => {
+        // Re-read draft inside transaction with lock
+        const draftResult = await client.query(
+          'SELECT * FROM drafts WHERE id = $1 FOR UPDATE',
+          [draftId]
+        );
+        if (draftResult.rows.length === 0) {
+          throw new NotFoundException('Draft not found');
+        }
 
-    try {
-      await client.query('BEGIN');
+        const draft = draftResult.rows[0];
+        const auctionMode = draft.settings?.auctionMode ?? 'slow';
+        if (auctionMode !== 'fast') {
+          return null; // Not a fast auction, nothing to do
+        }
 
-      // Acquire draft-level lock to prevent concurrent nominator advancement
-      await client.query('SELECT pg_advisory_xact_lock($1)', [getDraftLockId(draftId)]);
+        // Get draft order
+        const orderResult = await client.query(
+          'SELECT * FROM draft_order WHERE draft_id = $1 ORDER BY draft_position',
+          [draftId]
+        );
+        if (orderResult.rows.length === 0) {
+          return null;
+        }
 
-      // Re-read draft inside transaction with lock
-      const draftResult = await client.query(
-        'SELECT * FROM drafts WHERE id = $1 FOR UPDATE',
-        [draftId]
-      );
-      if (draftResult.rows.length === 0) {
-        await client.query('COMMIT');
-        throw new NotFoundException('Draft not found');
+        const order = orderResult.rows;
+        const nominationSeconds = draft.settings?.nominationSeconds ?? 60;
+
+        // Calculate next nominator
+        const nextPick = (draft.current_pick || 0) + 1;
+        const nextIndex = (nextPick - 1) % order.length;
+        const nextNominator = order[nextIndex];
+
+        // Calculate nomination deadline
+        const nominationDeadline = new Date(Date.now() + nominationSeconds * 1000);
+
+        // Update draft with new nominator and deadline
+        await client.query(
+          `UPDATE drafts
+           SET current_pick = $1, current_roster_id = $2, pick_deadline = $3, updated_at = NOW()
+           WHERE id = $4`,
+          [nextPick, nextNominator.roster_id, nominationDeadline, draftId]
+        );
+
+        return {
+          nominatorRosterId: nextNominator.roster_id,
+          nominationNumber: nextPick,
+          nominationDeadline,
+        };
       }
+    );
 
-      const draft = draftResult.rows[0];
-      const auctionMode = draft.settings?.auctionMode ?? 'slow';
-      if (auctionMode !== 'fast') {
-        await client.query('COMMIT');
-        return; // Not a fast auction, nothing to do
-      }
-
-      // Get draft order
-      const orderResult = await client.query(
-        'SELECT * FROM draft_order WHERE draft_id = $1 ORDER BY draft_position',
-        [draftId]
-      );
-      if (orderResult.rows.length === 0) {
-        await client.query('COMMIT');
-        return;
-      }
-
-      const order = orderResult.rows;
-      const nominationSeconds = draft.settings?.nominationSeconds ?? 60;
-
-      // Calculate next nominator
-      const nextPick = (draft.current_pick || 0) + 1;
-      const nextIndex = (nextPick - 1) % order.length;
-      const nextNominator = order[nextIndex];
-
-      // Calculate nomination deadline
-      const nominationDeadline = new Date(Date.now() + nominationSeconds * 1000);
-
-      // Update draft with new nominator and deadline
-      await client.query(
-        `UPDATE drafts
-         SET current_pick = $1, current_roster_id = $2, pick_deadline = $3, updated_at = NOW()
-         WHERE id = $4`,
-        [nextPick, nextNominator.roster_id, nominationDeadline, draftId]
-      );
-
-      await client.query('COMMIT');
-
-      // Emit nominator changed event with deadline (after commit)
+    // Post-commit: Emit nominator changed event with deadline
+    if (result) {
       const socket = tryGetSocketService();
       socket?.emitAuctionNominatorChanged(draftId, {
-        nominatorRosterId: nextNominator.roster_id,
-        nominationNumber: nextPick,
-        nominationDeadline: nominationDeadline.toISOString(),
+        nominatorRosterId: result.nominatorRosterId,
+        nominationNumber: result.nominationNumber,
+        nominationDeadline: result.nominationDeadline.toISOString(),
       });
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
     }
   }
 
@@ -458,85 +445,82 @@ export class FastAuctionService {
    * This is a simplified version that directly updates the database
    */
   async forceAdvanceNominator(draftId: number): Promise<void> {
-    const client = await this.pool.connect();
     try {
-      await client.query('BEGIN');
-
-      // Acquire advisory lock to prevent race with normal advanceNominator
-      await client.query('SELECT pg_advisory_xact_lock($1)', [getDraftLockId(draftId)]);
-
-      // Get current draft state and order count
-      const draftResult = await client.query(
-        'SELECT current_pick, settings FROM drafts WHERE id = $1 FOR UPDATE',
-        [draftId]
-      );
-      if (draftResult.rows.length === 0) {
-        await client.query('COMMIT');
-        return;
-      }
-
-      const draft = draftResult.rows[0];
-      const nominationSeconds = draft.settings?.nominationSeconds ?? 60;
-
-      const orderCountResult = await client.query(
-        'SELECT COUNT(*) as count FROM draft_order WHERE draft_id = $1',
-        [draftId]
-      );
-      const orderCount = parseInt(orderCountResult.rows[0].count, 10);
-      if (orderCount === 0) {
-        await client.query('COMMIT');
-        return;
-      }
-
-      const nextPick = (draft.current_pick || 0) + 1;
-      const nextIndex = (nextPick - 1) % orderCount;
-      const nominationDeadline = new Date(Date.now() + nominationSeconds * 1000);
-
-      // Get the next nominator
-      const nextNominatorResult = await client.query(
-        `SELECT roster_id FROM draft_order
-         WHERE draft_id = $1
-         ORDER BY draft_position
-         LIMIT 1 OFFSET $2`,
-        [draftId, nextIndex]
-      );
-
-      if (nextNominatorResult.rows.length === 0) {
-        await client.query('COMMIT');
-        return;
-      }
-
-      const nextRosterId = nextNominatorResult.rows[0].roster_id;
-
-      // Update draft
-      await client.query(
-        `UPDATE drafts
-         SET current_pick = $1, current_roster_id = $2, pick_deadline = $3, updated_at = NOW()
-         WHERE id = $4`,
-        [nextPick, nextRosterId, nominationDeadline, draftId]
-      );
-
-      await client.query('COMMIT');
-
-      // Emit socket event
-      const socket = tryGetSocketService();
-      socket?.emitAuctionNominatorChanged(draftId, {
-        nominatorRosterId: nextRosterId,
-        nominationNumber: nextPick,
-        nominationDeadline: nominationDeadline.toISOString(),
-      });
-
-      logger.info('Force advanced nominator', {
+      const result = await runWithLock(
+        this.pool,
+        LockDomain.DRAFT,
         draftId,
-        nextPick,
-        nextRosterId,
-      });
+        async (client) => {
+          // Get current draft state and order count
+          const draftResult = await client.query(
+            'SELECT current_pick, settings FROM drafts WHERE id = $1 FOR UPDATE',
+            [draftId]
+          );
+          if (draftResult.rows.length === 0) {
+            return null;
+          }
+
+          const draft = draftResult.rows[0];
+          const nominationSeconds = draft.settings?.nominationSeconds ?? 60;
+
+          const orderCountResult = await client.query(
+            'SELECT COUNT(*) as count FROM draft_order WHERE draft_id = $1',
+            [draftId]
+          );
+          const orderCount = parseInt(orderCountResult.rows[0].count, 10);
+          if (orderCount === 0) {
+            return null;
+          }
+
+          const nextPick = (draft.current_pick || 0) + 1;
+          const nextIndex = (nextPick - 1) % orderCount;
+          const nominationDeadline = new Date(Date.now() + nominationSeconds * 1000);
+
+          // Get the next nominator
+          const nextNominatorResult = await client.query(
+            `SELECT roster_id FROM draft_order
+             WHERE draft_id = $1
+             ORDER BY draft_position
+             LIMIT 1 OFFSET $2`,
+            [draftId, nextIndex]
+          );
+
+          if (nextNominatorResult.rows.length === 0) {
+            return null;
+          }
+
+          const nextRosterId = nextNominatorResult.rows[0].roster_id;
+
+          // Update draft
+          await client.query(
+            `UPDATE drafts
+             SET current_pick = $1, current_roster_id = $2, pick_deadline = $3, updated_at = NOW()
+             WHERE id = $4`,
+            [nextPick, nextRosterId, nominationDeadline, draftId]
+          );
+
+          return { nextRosterId, nextPick, nominationDeadline };
+        }
+      );
+
+      if (result) {
+        // Post-commit: Emit socket event
+        const socket = tryGetSocketService();
+        socket?.emitAuctionNominatorChanged(draftId, {
+          nominatorRosterId: result.nextRosterId,
+          nominationNumber: result.nextPick,
+          nominationDeadline: result.nominationDeadline.toISOString(),
+        });
+
+        logger.info('Force advanced nominator', {
+          draftId,
+          nextPick: result.nextPick,
+          nextRosterId: result.nextRosterId,
+        });
+      }
     } catch (error) {
-      await client.query('ROLLBACK');
       logger.error('Force advance nominator failed', { draftId, error });
       throw error;
-    } finally {
-      client.release();
     }
   }
 

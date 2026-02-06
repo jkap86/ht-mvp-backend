@@ -6,7 +6,7 @@ import { draftPickAssetWithDetailsToResponse } from './draft-pick-asset.model';
 import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import { RosterPlayersRepository } from '../rosters/rosters.repository';
 import { PlayerRepository } from '../players/players.repository';
-import { NotFoundException, ForbiddenException, ValidationException } from '../../utils/exceptions';
+import { NotFoundException, ForbiddenException, ValidationException, ConflictException, ErrorCode } from '../../utils/exceptions';
 import { tryGetSocketService } from '../../socket';
 import { DraftEngineFactory, IDraftEngine } from '../../engines';
 import { finalizeDraftCompletion } from './draft-completion.utils';
@@ -36,15 +36,32 @@ export class DraftPickService {
     const draft = await this.draftRepo.findById(draftId);
     const settings = draft?.settings as DraftSettings;
 
+    // Transform playerPicks to snake_case API response format
+    const transformPlayerPick = (pick: any) => ({
+      id: pick.id,
+      draft_id: pick.draftId,
+      pick_number: pick.pickNumber,
+      round: pick.round,
+      pick_in_round: pick.pickInRound,
+      roster_id: pick.rosterId,
+      player_id: pick.playerId,
+      is_auto_pick: pick.isAutoPick,
+      picked_at: pick.pickedAt,
+      player_name: pick.playerName,
+      player_position: pick.playerPosition,
+      player_team: pick.playerTeam,
+      username: pick.username,
+    });
+
     if (!settings?.includeRookiePicks || !this.vetPickSelectionRepo) {
-      return playerPicks;
+      return playerPicks.map(transformPlayerPick);
     }
 
     // Get pick asset selections and transform to match DraftPick shape
     const pickAssetSelections = await this.vetPickSelectionRepo.findByDraftId(draftId);
 
     if (pickAssetSelections.length === 0) {
-      return playerPicks;
+      return playerPicks.map(transformPlayerPick);
     }
 
     // Calculate total rosters to determine round from pick number
@@ -70,7 +87,8 @@ export class DraftPickService {
     }));
 
     // Merge and sort by pick number
-    const allPicks = [...playerPicks, ...transformedSelections];
+    const transformedPlayerPicks = playerPicks.map(transformPlayerPick);
+    const allPicks = [...transformedPlayerPicks, ...transformedSelections];
     allPicks.sort((a, b) => a.pick_number - b.pick_number);
 
     return allPicks;
@@ -99,6 +117,16 @@ export class DraftPickService {
 
     if (draft.status !== 'in_progress') {
       throw new ValidationException('Draft is not in progress');
+    }
+
+    // Validate scheduled start time has passed
+    if (draft.scheduledStart && new Date() < draft.scheduledStart) {
+      throw new ValidationException('Draft has not started yet', ErrorCode.DRAFT_NOT_STARTED);
+    }
+
+    // Validate order is confirmed (non-auction drafts only)
+    if (!draft.orderConfirmed && draft.draftType !== 'auction') {
+      throw new ValidationException('Draft order must be confirmed before making picks');
     }
 
     // Get user's roster
@@ -225,7 +253,8 @@ export class DraftPickService {
     const assets = await this.pickAssetRepo.getAvailablePickAssetsForVetDraft(
       leagueId,
       draftId,
-      settings.rookiePicksSeason
+      settings.rookiePicksSeason,
+      settings.rookiePicksRounds
     );
 
     return assets.map(draftPickAssetWithDetailsToResponse);
@@ -257,6 +286,16 @@ export class DraftPickService {
 
     if (draft.status !== 'in_progress') {
       throw new ValidationException('Draft is not in progress');
+    }
+
+    // Validate scheduled start time has passed
+    if (draft.scheduledStart && new Date() < draft.scheduledStart) {
+      throw new ValidationException('Draft has not started yet', ErrorCode.DRAFT_NOT_STARTED);
+    }
+
+    // Validate order is confirmed (non-auction drafts only)
+    if (!draft.orderConfirmed && draft.draftType !== 'auction') {
+      throw new ValidationException('Draft order must be confirmed before making picks');
     }
 
     // Verify this draft has includeRookiePicks enabled
@@ -312,6 +351,12 @@ export class DraftPickService {
       throw new ValidationException(
         `Pick asset is for season ${pickAsset.season}, but draft is configured for season ${settings.rookiePicksSeason}`
       );
+    }
+
+    // Check if pick asset is in a pending trade
+    const isInTrade = await this.pickAssetRepo.isInPendingTrade(draftPickAssetId);
+    if (isInTrade) {
+      throw new ConflictException('Pick asset is currently in a pending trade');
     }
 
     // Check if asset already selected in this vet draft

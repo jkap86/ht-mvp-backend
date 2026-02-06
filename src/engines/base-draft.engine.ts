@@ -16,7 +16,7 @@ import { finalizeDraftCompletion } from '../modules/drafts/draft-completion.util
 import { container, KEYS } from '../container';
 import { DraftPickAssetRepository } from '../modules/drafts/draft-pick-asset.repository';
 import { VetDraftPickSelectionRepository } from '../modules/drafts/vet-draft-pick-selection.repository';
-import { getDraftLockId } from '../utils/locks';
+import { getLockId, LockDomain } from '../shared/locks';
 import { Pool } from 'pg';
 
 /**
@@ -232,7 +232,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
-        await client.query('SELECT pg_advisory_xact_lock($1)', [getDraftLockId(draftId)]);
+        await client.query('SELECT pg_advisory_xact_lock($1)', [getLockId(LockDomain.DRAFT, draftId)]);
 
         // Re-check under lock to confirm pick still exists and state is still stale
         const stillExists = await this.draftRepo.pickExists(draftId, draft.currentPick);

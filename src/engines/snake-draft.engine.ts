@@ -24,6 +24,17 @@ export class SnakeDraftEngine extends BaseDraftEngine {
     draftOrder: DraftOrderEntry[],
     pickNumber: number
   ): DraftOrderEntry | undefined {
+    // Defensive assertion: validate draftOrder is sorted by draftPosition
+    // This assumption is critical for correct snake order calculation
+    if (draftOrder.length > 1) {
+      const isSorted = draftOrder.every(
+        (o, i) => i === 0 || o.draftPosition > draftOrder[i - 1].draftPosition
+      );
+      if (!isSorted) {
+        throw new Error('draftOrder must be sorted by draftPosition');
+      }
+    }
+
     const totalRosters = draftOrder.length;
     const round = this.getRound(pickNumber, totalRosters);
     const pickInRound = this.getPickInRound(pickNumber, totalRosters);

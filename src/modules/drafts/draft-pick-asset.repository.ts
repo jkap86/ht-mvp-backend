@@ -334,14 +334,15 @@ export class DraftPickAssetRepository {
   }
 
   /**
-   * Check if a pick has already been used (draft pick made with it)
+   * Check if a pick has already been used (draft pick made with it OR selected in a vet draft)
    */
   async isPickUsed(assetId: number, client?: PoolClient): Promise<boolean> {
     const queryRunner = client || this.db;
     const result = await queryRunner.query(
       `SELECT EXISTS(
-        SELECT 1 FROM draft_picks
-        WHERE draft_pick_asset_id = $1
+        SELECT 1 FROM draft_picks WHERE draft_pick_asset_id = $1
+        UNION
+        SELECT 1 FROM vet_draft_pick_selections WHERE draft_pick_asset_id = $1
       )`,
       [assetId]
     );
@@ -447,12 +448,21 @@ export class DraftPickAssetRepository {
   /**
    * Get available pick assets for a vet draft that has includeRookiePicks enabled.
    * Returns pick assets for the specified season that haven't been selected in this vet draft.
+   * @param maxRounds - Optional max rounds to include (default: all rounds)
    */
   async getAvailablePickAssetsForVetDraft(
     leagueId: number,
     vetDraftId: number,
-    season: number
+    season: number,
+    maxRounds?: number
   ): Promise<DraftPickAssetWithDetails[]> {
+    const params: (number | string)[] = [leagueId, season, vetDraftId];
+    let roundFilter = '';
+    if (maxRounds !== undefined && maxRounds > 0) {
+      params.push(maxRounds);
+      roundFilter = `AND dpa.round <= $${params.length}`;
+    }
+
     const result = await this.db.query(
       `SELECT
         dpa.*,
@@ -467,13 +477,14 @@ export class DraftPickAssetRepository {
        JOIN users owner_u ON owner_r.user_id = owner_u.id
        WHERE dpa.league_id = $1
          AND dpa.season = $2
+         ${roundFilter}
          -- Exclude picks already selected in this vet draft
          AND NOT EXISTS (
            SELECT 1 FROM vet_draft_pick_selections vdps
            WHERE vdps.draft_id = $3 AND vdps.draft_pick_asset_id = dpa.id
          )
        ORDER BY dpa.round, dpa.original_pick_position`,
-      [leagueId, season, vetDraftId]
+      params
     );
 
     return result.rows.map((row) => ({

@@ -138,6 +138,16 @@ export class DraftService {
 
     // Add rookie picks settings for vet-only drafts
     if (options.includeRookiePicks !== undefined) {
+      // Validate includeRookiePicks is only enabled for veteran-only drafts
+      if (options.includeRookiePicks === true) {
+        const effectivePlayerPool = options.playerPool || ['veteran', 'rookie'];
+        const hasRookies = effectivePlayerPool.includes('rookie');
+        if (hasRookies) {
+          throw new ValidationException(
+            'includeRookiePicks can only be enabled for veteran-only drafts (playerPool must not include rookies)'
+          );
+        }
+      }
       settings.includeRookiePicks = options.includeRookiePicks;
     }
     if (options.rookiePicksSeason !== undefined) {
@@ -555,6 +565,16 @@ export class DraftService {
 
     // Handle rookie picks settings
     if (updates.includeRookiePicks !== undefined) {
+      // Validate includeRookiePicks is only enabled for veteran-only drafts
+      if (updates.includeRookiePicks === true) {
+        const effectivePlayerPool = updates.playerPool || mergedSettings.playerPool || ['veteran', 'rookie'];
+        const hasRookies = effectivePlayerPool.includes('rookie');
+        if (hasRookies) {
+          throw new ValidationException(
+            'includeRookiePicks can only be enabled for veteran-only drafts (playerPool must not include rookies)'
+          );
+        }
+      }
       mergedSettings.includeRookiePicks = updates.includeRookiePicks;
     }
     if (updates.rookiePicksSeason !== undefined) {

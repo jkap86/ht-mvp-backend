@@ -28,10 +28,11 @@
  * The following files currently use pg_advisory_lock directly and should be
  * migrated to use this centralized helper for consistent lock ordering:
  *
- * DRAFT OPERATIONS (uses getDraftLockId from src/utils/locks.ts):
- * - src/modules/drafts/drafts.repository.ts
- *   - createDraftPickWithCleanup(): locks draft for pick creation
- *   - undoLastPick(): locks draft for undo operation
+ * DRAFT OPERATIONS (MIGRATED to LockDomain.DRAFT):
+ * - src/modules/drafts/drafts.repository.ts - ✓ migrated
+ * - src/engines/base-draft.engine.ts - ✓ migrated
+ * - src/modules/drafts/auction/fast-auction.service.ts - ✓ migrated
+ * - src/modules/drafts/auction/slow-auction.service.ts - ✓ migrated
  *
  * TRADE OPERATIONS (uses getTradeLockId from src/utils/locks.ts):
  * - src/modules/trades/use-cases/propose-trade.use-case.ts: locks league for trade proposal
