@@ -27,6 +27,14 @@ export class RosterRepository {
     return RosterMapper.fromRows(result.rows);
   }
 
+  async findByLeagueIdWithClient(client: PoolClient, leagueId: number): Promise<Roster[]> {
+    const result = await client.query(
+      'SELECT * FROM rosters WHERE league_id = $1 ORDER BY id',
+      [leagueId]
+    );
+    return RosterMapper.fromRows(result.rows);
+  }
+
   /**
    * Get all rosters for a league AND verify user membership in a single query.
    * Returns null if the user is not a member.

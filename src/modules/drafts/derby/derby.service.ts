@@ -98,7 +98,7 @@ export class DerbyService {
       }
 
       // Get all rosters for the league
-      const rosters = await this.rosterRepo.findByLeagueId(leagueId);
+      const rosters = await this.rosterRepo.findByLeagueIdWithClient(client, leagueId);
       teamCount = rosters.length;
 
       if (teamCount < 2) {
@@ -187,6 +187,11 @@ export class DerbyService {
       // Validate slot is available
       if (state.claimedSlots[slotNumber]) {
         throw new ValidationException(`Slot ${slotNumber} has already been claimed`);
+      }
+
+      // Validate one slot per roster
+      if (Object.values(state.claimedSlots).includes(roster.id)) {
+        throw new ValidationException('You have already claimed a slot');
       }
 
       // Claim slot

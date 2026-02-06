@@ -48,7 +48,7 @@ export class DerbyRepository {
        SET phase = 'DERBY',
            status = 'in_progress',
            started_at = CURRENT_TIMESTAMP,
-           draft_state = draft_state || $2::jsonb,
+           draft_state = COALESCE(draft_state, '{}'::jsonb) || $2::jsonb,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = $1`,
       [draftId, JSON.stringify(this.serializeState(state))]
@@ -61,7 +61,7 @@ export class DerbyRepository {
   async updateDerbyState(client: PoolClient, draftId: number, state: DerbyState): Promise<void> {
     await client.query(
       `UPDATE drafts
-       SET draft_state = draft_state || $2::jsonb,
+       SET draft_state = COALESCE(draft_state, '{}'::jsonb) || $2::jsonb,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = $1`,
       [draftId, JSON.stringify(this.serializeState(state))]
