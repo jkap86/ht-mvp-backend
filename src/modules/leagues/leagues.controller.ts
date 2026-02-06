@@ -2,13 +2,15 @@ import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../../middleware/auth.middleware';
 import { LeagueService } from './leagues.service';
 import { RosterService } from './roster.service';
+import { DashboardService } from './dashboard.service';
 import { ValidationException } from '../../utils/exceptions';
 import { requireUserId, requireLeagueId } from '../../utils/controller-helpers';
 
 export class LeagueController {
   constructor(
     private readonly leagueService: LeagueService,
-    private readonly rosterService?: RosterService
+    private readonly rosterService?: RosterService,
+    private readonly dashboardService?: DashboardService
   ) {}
 
   getMyLeagues = async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -258,6 +260,21 @@ export class LeagueController {
       );
 
       res.status(200).json(league);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getDashboard = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const userId = requireUserId(req);
+      const leagueId = requireLeagueId(req);
+
+      if (!this.dashboardService) {
+        throw new ValidationException('Dashboard service not available');
+      }
+      const dashboard = await this.dashboardService.getDashboardSummary(leagueId, userId);
+      res.status(200).json(dashboard);
     } catch (error) {
       next(error);
     }

@@ -116,20 +116,21 @@ export async function resolvePriceWithClient(
     // Use provided deadline or keep existing
     const deadline = newBidDeadline ?? lot.bidDeadline;
 
-    // CAS-style update: Only update if current_bid matches expected value
-    // This prevents race conditions where the price changed between read and write
+    // CAS-style update: Only update if lot state matches expected values
+    // Checks: current_bid, current_bidder_roster_id, and status = 'active'
+    // Uses IS NOT DISTINCT FROM for leader since it could be NULL initially
     const updateResult = await client.query(
       `UPDATE auction_lots
        SET current_bidder_roster_id = $2, current_bid = $3, bid_count = $4, bid_deadline = $5, updated_at = CURRENT_TIMESTAMP
-       WHERE id = $1 AND current_bid = $6
+       WHERE id = $1 AND current_bid = $6 AND current_bidder_roster_id IS NOT DISTINCT FROM $7 AND status = 'active'
        RETURNING *`,
-      [lot.id, newLeader, newPrice, newBidCount, deadline, lot.currentBid]
+      [lot.id, newLeader, newPrice, newBidCount, deadline, lot.currentBid, previousLeader]
     );
 
     // If no rows updated, the lot state changed between our read and write
-    // This shouldn't happen with advisory locks, but check anyway for safety
+    // This could happen if: lot was settled, another bid changed price/leader, or lot was passed
     if (updateResult.rowCount === 0) {
-      throw new Error('Lot state changed during price resolution - stale update detected');
+      throw new Error('Lot state changed during price resolution - stale update detected (bid/leader changed or lot settled)');
     }
 
     updatedLot = auctionLotFromDatabase(updateResult.rows[0]);

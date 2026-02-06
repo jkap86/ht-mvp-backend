@@ -367,33 +367,34 @@ export class AuctionLotRepository {
 
   /**
    * Get roster budget data: spent, won count, and leading commitment
+   * Uses a single query to avoid race conditions between status checks
    */
   async getRosterBudgetData(draftId: number, rosterId: number): Promise<RosterBudgetData> {
-    // Get sum of winning bids and count of won lots
-    const wonResult = await this.db.query(
-      `SELECT COALESCE(SUM(winning_bid), 0) as spent, COUNT(*) as won_count
+    // Single query with conditional aggregation to avoid race conditions
+    // between checking won lots and active lots
+    const result = await this.db.query(
+      `SELECT
+         COALESCE(SUM(CASE WHEN status = 'won' AND winning_roster_id = $2 THEN winning_bid ELSE 0 END), 0) as spent,
+         COUNT(CASE WHEN status = 'won' AND winning_roster_id = $2 THEN 1 END) as won_count,
+         COALESCE(SUM(CASE WHEN status = 'active' AND current_bidder_roster_id = $2 THEN current_bid ELSE 0 END), 0) as leading_commitment
        FROM auction_lots
-       WHERE draft_id = $1 AND winning_roster_id = $2 AND status = 'won'`,
-      [draftId, rosterId]
-    );
-
-    // Get sum of current_bid where this roster is the leading bidder on active lots
-    const leadingResult = await this.db.query(
-      `SELECT COALESCE(SUM(current_bid), 0) as leading_commitment
-       FROM auction_lots
-       WHERE draft_id = $1 AND current_bidder_roster_id = $2 AND status = 'active'`,
+       WHERE draft_id = $1 AND (
+         (status = 'won' AND winning_roster_id = $2) OR
+         (status = 'active' AND current_bidder_roster_id = $2)
+       )`,
       [draftId, rosterId]
     );
 
     return {
-      spent: parseInt(wonResult.rows[0].spent, 10),
-      wonCount: parseInt(wonResult.rows[0].won_count, 10),
-      leadingCommitment: parseInt(leadingResult.rows[0].leading_commitment, 10),
+      spent: parseInt(result.rows[0].spent, 10),
+      wonCount: parseInt(result.rows[0].won_count, 10),
+      leadingCommitment: parseInt(result.rows[0].leading_commitment, 10),
     };
   }
 
   /**
    * Get budget data for all rosters in a draft (optimized batch query)
+   * Uses a single query to avoid race conditions between status checks
    */
   async getAllRosterBudgetData(
     draftId: number,
@@ -403,24 +404,28 @@ export class AuctionLotRepository {
       return new Map();
     }
 
-    // Get spent and won counts for all rosters
-    const wonResult = await this.db.query(
-      `SELECT winning_roster_id as roster_id,
-              COALESCE(SUM(winning_bid), 0) as spent,
-              COUNT(*) as won_count
-       FROM auction_lots
-       WHERE draft_id = $1 AND winning_roster_id = ANY($2) AND status = 'won'
-       GROUP BY winning_roster_id`,
-      [draftId, rosterIds]
-    );
-
-    // Get leading commitments for all rosters
-    const leadingResult = await this.db.query(
-      `SELECT current_bidder_roster_id as roster_id,
-              COALESCE(SUM(current_bid), 0) as leading_commitment
-       FROM auction_lots
-       WHERE draft_id = $1 AND current_bidder_roster_id = ANY($2) AND status = 'active'
-       GROUP BY current_bidder_roster_id`,
+    // Single query with conditional aggregation to avoid race conditions
+    // Uses UNION to combine won and leading stats per roster
+    const queryResult = await this.db.query(
+      `WITH roster_stats AS (
+         SELECT
+           COALESCE(winning_roster_id, current_bidder_roster_id) as roster_id,
+           CASE WHEN status = 'won' THEN winning_bid ELSE 0 END as spent_amount,
+           CASE WHEN status = 'won' THEN 1 ELSE 0 END as won_flag,
+           CASE WHEN status = 'active' THEN current_bid ELSE 0 END as leading_amount
+         FROM auction_lots
+         WHERE draft_id = $1 AND (
+           (status = 'won' AND winning_roster_id = ANY($2)) OR
+           (status = 'active' AND current_bidder_roster_id = ANY($2))
+         )
+       )
+       SELECT
+         roster_id,
+         COALESCE(SUM(spent_amount), 0) as spent,
+         COALESCE(SUM(won_flag), 0) as won_count,
+         COALESCE(SUM(leading_amount), 0) as leading_commitment
+       FROM roster_stats
+       GROUP BY roster_id`,
       [draftId, rosterIds]
     );
 
@@ -430,19 +435,12 @@ export class AuctionLotRepository {
       result.set(rosterId, { spent: 0, wonCount: 0, leadingCommitment: 0 });
     }
 
-    // Fill in won data
-    for (const row of wonResult.rows) {
+    // Fill in data from query
+    for (const row of queryResult.rows) {
       const data = result.get(row.roster_id);
       if (data) {
         data.spent = parseInt(row.spent, 10);
         data.wonCount = parseInt(row.won_count, 10);
-      }
-    }
-
-    // Fill in leading data
-    for (const row of leadingResult.rows) {
-      const data = result.get(row.roster_id);
-      if (data) {
         data.leadingCommitment = parseInt(row.leading_commitment, 10);
       }
     }
@@ -534,5 +532,34 @@ export class AuctionLotRepository {
       [draftId, playerId]
     );
     return result.rows.length > 0 ? auctionLotFromDatabase(result.rows[0]) : null;
+  }
+
+  /**
+   * Get roster budget data using transaction client
+   * Uses a single query to avoid race conditions between status checks
+   */
+  async getRosterBudgetDataWithClient(
+    client: PoolClient,
+    draftId: number,
+    rosterId: number
+  ): Promise<RosterBudgetData> {
+    const result = await client.query(
+      `SELECT
+         COALESCE(SUM(CASE WHEN status = 'won' AND winning_roster_id = $2 THEN winning_bid ELSE 0 END), 0) as spent,
+         COUNT(CASE WHEN status = 'won' AND winning_roster_id = $2 THEN 1 END) as won_count,
+         COALESCE(SUM(CASE WHEN status = 'active' AND current_bidder_roster_id = $2 THEN current_bid ELSE 0 END), 0) as leading_commitment
+       FROM auction_lots
+       WHERE draft_id = $1 AND (
+         (status = 'won' AND winning_roster_id = $2) OR
+         (status = 'active' AND current_bidder_roster_id = $2)
+       )`,
+      [draftId, rosterId]
+    );
+
+    return {
+      spent: parseInt(result.rows[0].spent, 10),
+      wonCount: parseInt(result.rows[0].won_count, 10),
+      leadingCommitment: parseInt(result.rows[0].leading_commitment, 10),
+    };
   }
 }

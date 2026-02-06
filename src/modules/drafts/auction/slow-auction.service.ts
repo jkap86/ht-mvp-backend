@@ -673,6 +673,9 @@ export class SlowAuctionService {
           lot.playerId,
         ]);
 
+        // Clean up proxy bids for this lot (lot is settled)
+        await client.query('DELETE FROM auction_proxy_bids WHERE lot_id = $1', [lotId]);
+
         return {
           lot: settledLot,
           winner: { rosterId: candidateRosterId, amount: price },
@@ -690,6 +693,9 @@ export class SlowAuctionService {
         [lotId]
       );
       const passedLot = auctionLotFromDatabase(passResult.rows[0]);
+
+      // Clean up proxy bids for this lot (lot is passed)
+      await client.query('DELETE FROM auction_proxy_bids WHERE lot_id = $1', [lotId]);
 
       return { lot: passedLot, winner: null, passed: true };
     });

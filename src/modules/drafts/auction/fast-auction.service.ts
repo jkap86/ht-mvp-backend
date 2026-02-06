@@ -16,8 +16,7 @@ import {
   NotFoundException,
   ForbiddenException,
 } from '../../../utils/exceptions';
-import { getAuctionRosterLockId } from '../../../utils/locks';
-import { runWithLock, runInTransaction, LockDomain } from '../../../shared/transaction-runner';
+import { runWithLock, LockDomain } from '../../../shared/transaction-runner';
 import { logger } from '../../../config/logger.config';
 import { Draft } from '../drafts.model';
 import { getRosterBudgetDataWithClient } from './auction-budget-calculator';
@@ -229,12 +228,13 @@ export class FastAuctionService {
       throw new ForbiddenException('You are not a member of this league');
     }
 
-    // Use transaction for atomic operations
-    const { finalLot, outbidNotifications: rawNotifications, playerId } = await runInTransaction(
+    // Use transaction with roster lock for atomic operations
+    // Using modern lock system (LockDomain.ROSTER) for consistency
+    const { finalLot, outbidNotifications: rawNotifications, playerId } = await runWithLock(
       this.pool,
+      LockDomain.ROSTER,
+      roster.id,
       async (client) => {
-        // Acquire roster-level lock to prevent cross-lot race conditions
-        await client.query('SELECT pg_advisory_xact_lock($1)', [getAuctionRosterLockId(roster.id)]);
 
         // Get lot with lock
         const lotResult = await client.query('SELECT * FROM auction_lots WHERE id = $1 FOR UPDATE', [

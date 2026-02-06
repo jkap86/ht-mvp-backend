@@ -1,6 +1,8 @@
 import { Router } from 'express';
+import { Pool } from 'pg';
 import { LeagueController } from './leagues.controller';
 import { LeagueService } from './leagues.service';
+import { DashboardService } from './dashboard.service';
 import { authMiddleware } from '../../middleware/auth.middleware';
 import { validateRequest } from '../../middleware/validation.middleware';
 import { draftModifyLimiter, apiReadLimiter } from '../../middleware/rate-limit.middleware';
@@ -32,11 +34,16 @@ import { ScoringService } from '../scoring/scoring.service';
 import { ScheduleGeneratorService } from '../matchups/schedule-generator.service';
 import { StandingsService } from '../matchups/standings.service';
 import { getDraftStructures } from '../drafts/draft-structure-presets';
+import { LeagueRepository, RosterRepository } from './leagues.repository';
 
 // Resolve dependencies from container
 const leagueService = container.resolve<LeagueService>(KEYS.LEAGUE_SERVICE);
 const leagueRosterService = container.resolve<RosterService>(KEYS.ROSTER_SERVICE);
-const leagueController = new LeagueController(leagueService, leagueRosterService);
+const pool = container.resolve<Pool>(KEYS.POOL);
+const leagueRepo = container.resolve<LeagueRepository>(KEYS.LEAGUE_REPO);
+const rosterRepo = container.resolve<RosterRepository>(KEYS.ROSTER_REPO);
+const dashboardService = new DashboardService(pool, leagueRepo, rosterRepo);
+const leagueController = new LeagueController(leagueService, leagueRosterService, dashboardService);
 
 // Resolve season management services
 const rosterService = container.resolve<RosterPlayerService>(KEYS.ROSTER_PLAYER_SERVICE);
@@ -83,6 +90,9 @@ router.post('/join/:inviteCode', leagueController.joinLeagueByInviteCode);
 
 // GET /api/leagues/:id
 router.get('/:id', apiReadLimiter, leagueController.getLeague);
+
+// GET /api/leagues/:leagueId/dashboard - Get dashboard summary for league home
+router.get('/:leagueId/dashboard', apiReadLimiter, leagueController.getDashboard);
 
 // POST /api/leagues
 router.post('/', draftModifyLimiter, validateRequest(createLeagueSchema, 'body'), leagueController.createLeague);
