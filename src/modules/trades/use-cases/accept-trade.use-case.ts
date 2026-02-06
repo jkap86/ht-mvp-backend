@@ -18,6 +18,7 @@ import {
 import { getTradeLockId } from '../../../utils/locks';
 import { EventListenerService } from '../../chat/event-listener.service';
 import { container, KEYS } from '../../../container';
+import { logger } from '../../../config/logger.config';
 
 const DEFAULT_REVIEW_HOURS = 24;
 
@@ -171,7 +172,12 @@ export async function acceptTrade(
       const isCompleted = updatedTrade.status === 'completed';
       ctx.eventListenerService
         .handleTradeAccepted(trade.leagueId, trade.id, isCompleted, trade.notifyLeagueChat)
-        .catch((err) => console.error('Failed to emit trade accepted system message:', err));
+        .catch((err) => logger.warn('Failed to emit system message', {
+          type: 'trade_accepted',
+          leagueId: trade.leagueId,
+          tradeId: trade.id,
+          error: err.message
+        }));
     }
 
     return tradeWithDetails;

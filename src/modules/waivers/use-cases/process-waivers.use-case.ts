@@ -20,6 +20,7 @@ import { getWaiverLockId } from '../../../utils/locks';
 import { addToWaiverWire, WaiverInfoContext } from './waiver-info.use-case';
 import { EventListenerService } from '../../chat/event-listener.service';
 import { container, KEYS } from '../../../container';
+import { logger } from '../../../config/logger.config';
 
 export interface ProcessWaiversContext extends WaiverInfoContext {
   claimsRepo: WaiverClaimsRepository;
@@ -161,7 +162,11 @@ export async function processLeagueClaims(
     if (processed > 0 && ctx.eventListenerService) {
       ctx.eventListenerService
         .handleWaiverProcessed(leagueId)
-        .catch((err) => console.error('Failed to emit waiver processed system message:', err));
+        .catch((err) => logger.warn('Failed to emit system message', {
+          type: 'waiver_processed',
+          leagueId,
+          error: err.message
+        }));
     }
 
     return { processed, successful };
@@ -372,7 +377,12 @@ async function emitClaimSuccessful(ctx: ProcessWaiversContext, claim: WaiverClai
             claimWithDetails.playerName || 'Unknown Player',
             claim.bidAmount > 0 ? claim.bidAmount : undefined
           )
-          .catch((err) => console.error('Failed to emit waiver successful system message:', err));
+          .catch((err) => logger.warn('Failed to emit system message', {
+            type: 'waiver_successful',
+            leagueId: claim.leagueId,
+            claimId: claim.id,
+            error: err.message
+          }));
       }
     }
   }

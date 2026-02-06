@@ -11,6 +11,7 @@ import {
 } from '../../../utils/exceptions';
 import { getTradeLockId } from '../../../utils/locks';
 import { EventListenerService } from '../../chat/event-listener.service';
+import { logger } from '../../../config/logger.config';
 
 const DEFAULT_VETO_COUNT = 4;
 
@@ -105,7 +106,12 @@ export async function voteTrade(
     if (ctx.eventListenerService) {
       ctx.eventListenerService
         .handleTradeVetoed(trade.leagueId, trade.id)
-        .catch((err) => console.error('Failed to emit trade vetoed system message:', err));
+        .catch((err) => logger.warn('Failed to emit system message', {
+          type: 'trade_vetoed',
+          leagueId: trade.leagueId,
+          tradeId: trade.id,
+          error: err.message
+        }));
     }
   } else {
     emitTradeVoteCastEvent(trade.leagueId, trade.id, voteCount);

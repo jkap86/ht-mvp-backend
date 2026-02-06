@@ -244,6 +244,17 @@ export class MatchupsRepository {
   }
 
   /**
+   * Count regular season matchups for a league/season
+   */
+  async countByLeagueSeason(leagueId: number, season: number): Promise<number> {
+    const result = await this.db.query(
+      'SELECT COUNT(*) as count FROM matchups WHERE league_id = $1 AND season = $2 AND is_playoff = false',
+      [leagueId, season]
+    );
+    return parseInt(result.rows[0].count, 10);
+  }
+
+  /**
    * Delete all matchups for a league (for regenerating schedule)
    */
   async deleteByLeague(leagueId: number, season: number): Promise<void> {

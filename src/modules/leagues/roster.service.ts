@@ -12,6 +12,7 @@ import {
   ValidationException,
 } from '../../utils/exceptions';
 import { runWithLock, LockDomain } from '../../shared/transaction-runner';
+import { logger } from '../../config/logger.config';
 
 export class RosterService {
   constructor(
@@ -99,9 +100,17 @@ export class RosterService {
       userId,
     });
 
-    // Send system message to league chat
+    // Send system message to league chat (fire-and-forget to not slow down join response)
     if (this.eventListenerService) {
-      await this.eventListenerService.handleMemberJoined(leagueId, teamName);
+      this.eventListenerService
+        .handleMemberJoined(leagueId, teamName)
+        .catch((err) =>
+          logger.warn('Failed to emit member joined message', {
+            leagueId,
+            teamName,
+            error: err.message,
+          })
+        );
     }
 
     // Emit draft order update for any not-started drafts so draft room shows updated team names

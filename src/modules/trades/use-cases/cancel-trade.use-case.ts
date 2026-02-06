@@ -10,6 +10,7 @@ import {
 } from '../../../utils/exceptions';
 import { getTradeLockId } from '../../../utils/locks';
 import { EventListenerService } from '../../chat/event-listener.service';
+import { logger } from '../../../config/logger.config';
 
 export interface CancelTradeContext {
   db: Pool;
@@ -71,7 +72,12 @@ export async function cancelTrade(
   if (ctx.eventListenerService) {
     ctx.eventListenerService
       .handleTradeCancelled(trade.leagueId, trade.id, trade.notifyLeagueChat)
-      .catch((err) => console.error('Failed to emit trade cancelled system message:', err));
+      .catch((err) => logger.warn('Failed to emit system message', {
+        type: 'trade_cancelled',
+        leagueId: trade.leagueId,
+        tradeId: trade.id,
+        error: err.message
+      }));
   }
 
   return tradeWithDetails;

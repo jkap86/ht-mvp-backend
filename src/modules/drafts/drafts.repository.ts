@@ -11,7 +11,7 @@
  * For new code, prefer importing from ./repositories directly.
  */
 
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import { Draft, DraftOrderEntry, DraftPick, DraftSettings } from './drafts.model';
 import { DraftCoreRepository } from './repositories/draft-core.repository';
 import { DraftOrderRepository } from './repositories/draft-order.repository';
@@ -39,6 +39,10 @@ export class DraftRepository {
     return this.core.findById(id);
   }
 
+  async findByIdWithClient(client: PoolClient, id: number): Promise<Draft | null> {
+    return this.core.findByIdWithClient(client, id);
+  }
+
   async findByLeagueId(leagueId: number): Promise<Draft[]> {
     return this.core.findByLeagueId(leagueId);
   }
@@ -63,6 +67,14 @@ export class DraftRepository {
 
   async update(id: number, updates: Partial<Draft>): Promise<Draft> {
     return this.core.update(id, updates);
+  }
+
+  async updateWithLock(
+    id: number,
+    updates: Partial<Draft>,
+    expectedStatus?: string
+  ): Promise<Draft> {
+    return this.core.updateWithLock(id, updates, expectedStatus);
   }
 
   async delete(id: number): Promise<void> {
@@ -175,6 +187,14 @@ export class DraftRepository {
     return this.pick.pickExists(draftId, pickNumber);
   }
 
+  async pickExistsWithClient(
+    client: PoolClient,
+    draftId: number,
+    pickNumber: number
+  ): Promise<boolean> {
+    return this.pick.pickExistsWithClient(client, draftId, pickNumber);
+  }
+
   async makePickAndAdvanceTx(params: {
     draftId: number;
     expectedPickNumber: number;
@@ -191,6 +211,7 @@ export class DraftRepository {
       completedAt?: Date | null;
     };
     idempotencyKey?: string;
+    isAutoPick?: boolean;
   }): Promise<{ pick: DraftPick; draft: Draft }> {
     return this.pick.makePickAndAdvanceTx(params);
   }

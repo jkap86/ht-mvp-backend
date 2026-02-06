@@ -12,6 +12,7 @@ import {
   ValidationException,
 } from '../../utils/exceptions';
 import { SystemMessageService } from '../chat/system-message.service';
+import { logger } from '../../config/logger.config';
 
 export interface DuesConfigInput {
   buyInAmount: number;
@@ -196,7 +197,12 @@ export class DuesService {
       .createAndBroadcast(leagueId, isPaid ? 'dues_paid' : 'dues_unpaid', {
         teamName: teamName || 'Unknown Team',
       })
-      .catch((err) => console.error('Failed to emit dues system message:', err));
+      .catch((err) => logger.warn('Failed to emit system message', {
+        type: isPaid ? 'dues_paid' : 'dues_unpaid',
+        leagueId,
+        rosterId,
+        error: err.message
+      }));
 
     return payment;
   }

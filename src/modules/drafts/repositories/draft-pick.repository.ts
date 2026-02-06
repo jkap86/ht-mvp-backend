@@ -193,6 +193,21 @@ export class DraftPickRepository {
   }
 
   /**
+   * Check if a pick already exists using an existing client (for use within transactions).
+   */
+  async pickExistsWithClient(
+    client: PoolClient,
+    draftId: number,
+    pickNumber: number
+  ): Promise<boolean> {
+    const result = await client.query(
+      'SELECT 1 FROM draft_picks WHERE draft_id = $1 AND pick_number = $2',
+      [draftId, pickNumber]
+    );
+    return result.rows.length > 0;
+  }
+
+  /**
    * Atomically make a pick and advance the draft state in a single transaction.
    * This prevents race conditions where pick is inserted but draft state doesn't advance.
    */
@@ -212,6 +227,7 @@ export class DraftPickRepository {
       completedAt?: Date | null;
     };
     idempotencyKey?: string;
+    isAutoPick?: boolean;
   }): Promise<{ pick: DraftPick; draft: Draft }> {
     return runWithLock(this.db, LockDomain.DRAFT, params.draftId, async (client) => {
       // Re-read draft row FOR UPDATE and validate current state
@@ -266,8 +282,8 @@ export class DraftPickRepository {
 
       // Insert the pick
       const pickResult = await client.query(
-        `INSERT INTO draft_picks (draft_id, pick_number, round, pick_in_round, roster_id, player_id, idempotency_key)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `INSERT INTO draft_picks (draft_id, pick_number, round, pick_in_round, roster_id, player_id, idempotency_key, is_auto_pick)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING *`,
         [
           params.draftId,
@@ -277,6 +293,7 @@ export class DraftPickRepository {
           params.rosterId,
           params.playerId,
           params.idempotencyKey || null,
+          params.isAutoPick ?? false,
         ]
       );
 

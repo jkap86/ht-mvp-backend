@@ -234,16 +234,16 @@ export abstract class BaseDraftEngine implements IDraftEngine {
         await client.query('BEGIN');
         await client.query('SELECT pg_advisory_xact_lock($1)', [getLockId(LockDomain.DRAFT, draftId)]);
 
-        // Re-check under lock to confirm pick still exists and state is still stale
-        const stillExists = await this.draftRepo.pickExists(draftId, draft.currentPick);
-        const currentDraft = await this.draftRepo.findById(draftId);
+        // Re-check under lock using client-aware methods to ensure consistency
+        const stillExists = await this.draftRepo.pickExistsWithClient(client, draftId, draft.currentPick);
+        const currentDraft = await this.draftRepo.findByIdWithClient(client, draftId);
 
         if (stillExists && currentDraft && currentDraft.currentPick === draft.currentPick) {
           // Pick was made but draft state is stale - advance to next pick
           logger.info(
             `Draft ${draftId}: pick ${draft.currentPick} already exists, recovering stale state`
           );
-          const nextPickInfo = await this.advanceToNextPick(draft, draftOrder);
+          const nextPickInfo = await this.advanceToNextPick(currentDraft, draftOrder);
 
           await client.query('COMMIT');
 
@@ -365,6 +365,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
 
   /**
    * Perform an autopick for a player.
+   * Uses atomic makePickAndAdvanceTx to prevent race conditions.
    */
   protected async performAutoPickPlayer(
     draft: Draft,
@@ -384,29 +385,55 @@ export abstract class BaseDraftEngine implements IDraftEngine {
       throw new Error(`No available players for auto-pick in draft ${draft.id}`);
     }
 
-    // Create the pick atomically (with advisory lock, recheck, and queue cleanup)
+    // Load pick assets for computing next pick state
+    const pickAssetRepo = container.resolve<DraftPickAssetRepository>(KEYS.PICK_ASSET_REPO);
+    const pickAssets = await pickAssetRepo.findByDraftId(draft.id);
+
+    // Pre-compute next pick state before the atomic transaction
+    const nextPickState = this.computeNextPickState(draft, draftOrder, pickAssets);
+
+    // Create the pick AND advance state atomically in a single transaction
     const pickInRound = this.getPickInRound(draft.currentPick, totalRosters);
     const idempotencyKey = `autopick-${draft.id}-${draft.currentPick}`;
-    const pick = await this.draftRepo.createDraftPickWithCleanup(
-      draft.id,
-      draft.currentPick,
-      draft.currentRound,
+    const { pick, draft: updatedDraft } = await this.draftRepo.makePickAndAdvanceTx({
+      draftId: draft.id,
+      expectedPickNumber: draft.currentPick,
+      round: draft.currentRound,
       pickInRound,
-      draft.currentRosterId!,
+      rosterId: draft.currentRosterId!,
       playerId,
-      idempotencyKey
-    );
+      nextPickState,
+      idempotencyKey,
+      isAutoPick: true,
+    });
 
-    // Mark as auto-pick (separate from atomic creation)
-    await this.draftRepo.markPickAsAutoPick(pick.id);
+    // Handle draft completion if this was the last pick
+    if (nextPickState.status === 'completed') {
+      await finalizeDraftCompletion(
+        {
+          draftRepo: this.draftRepo,
+          leagueRepo: this.leagueRepo,
+          rosterPlayersRepo: this.rosterPlayersRepo,
+        },
+        draft.id,
+        draft.leagueId
+      );
+    }
 
     // Check if user had autodraft disabled - if so, force-enable it
     await this.handleAutodraftForceEnable(draft, draftOrder);
 
-    // Advance to next pick
-    const nextPickInfo = await this.advanceToNextPick(draft, draftOrder);
+    // Build next pick info for socket emission
+    // When status is 'in_progress', pickDeadline is always set by computeNextPickState
+    const nextPickInfo: NextPickDetails | null = nextPickState.status === 'completed' ? null : {
+      currentPick: nextPickState.currentPick!,
+      currentRound: nextPickState.currentRound!,
+      currentRosterId: nextPickState.currentRosterId,
+      pickDeadline: nextPickState.pickDeadline!,
+      status: 'in_progress',
+    };
 
-    // Emit socket events
+    // Emit socket events AFTER transaction has committed
     this.emitPickEvents(draft, pick, playerId, nextPickInfo);
 
     logger.info(

@@ -1,7 +1,7 @@
 import { Pool } from 'pg';
 import { MatchupsRepository } from './matchups.repository';
 import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
-import { NotFoundException, ForbiddenException, ValidationException } from '../../utils/exceptions';
+import { NotFoundException, ForbiddenException, ValidationException, ConflictException } from '../../utils/exceptions';
 
 /**
  * Generated matchup data for a single game
@@ -55,8 +55,13 @@ export class ScheduleGeneratorService {
 
     const season = parseInt(league.season, 10);
 
-    // Delete existing schedule for this season
-    await this.matchupsRepo.deleteByLeague(leagueId, season);
+    // Check if schedule already exists
+    const existingCount = await this.matchupsRepo.countByLeagueSeason(leagueId, season);
+    if (existingCount > 0) {
+      throw new ConflictException(
+        'Schedule already exists for this season. Delete existing schedule first.'
+      );
+    }
 
     // Generate round-robin matchups
     const rosterIds = rosters.map((r) => r.id);
@@ -82,7 +87,8 @@ export class ScheduleGeneratorService {
 
   /**
    * Generate schedule without commissioner check (for system/automated use)
-   * Used when draft completes via autopick
+   * Used when draft completes via autopick.
+   * Idempotent: silently returns if schedule already exists.
    */
   async generateScheduleSystem(leagueId: number, weeks: number): Promise<void> {
     const league = await this.leagueRepo.findById(leagueId);
@@ -97,8 +103,11 @@ export class ScheduleGeneratorService {
 
     const season = parseInt(league.season, 10);
 
-    // Delete existing schedule for this season
-    await this.matchupsRepo.deleteByLeague(leagueId, season);
+    // Check if schedule already exists (idempotent - skip if exists)
+    const existingCount = await this.matchupsRepo.countByLeagueSeason(leagueId, season);
+    if (existingCount > 0) {
+      return; // Schedule already generated, nothing to do
+    }
 
     // Generate round-robin matchups
     const rosterIds = rosters.map((r) => r.id);

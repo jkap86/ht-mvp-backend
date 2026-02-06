@@ -3,6 +3,7 @@ import { SleeperApiClient } from './sleeper.client';
 import { CFBDApiClient } from './cfbd.client';
 import { playerToResponse } from './players.model';
 import { NotFoundException } from '../../utils/exceptions';
+import { logger } from '../../config/logger.config';
 
 export class PlayerService {
   constructor(
@@ -36,7 +37,7 @@ export class PlayerService {
   }
 
   async syncPlayersFromSleeper(): Promise<{ synced: number; total: number }> {
-    console.log('Starting player sync from Sleeper API...');
+    logger.info('Starting player sync from Sleeper API');
 
     const players = await this.sleeperClient.fetchNflPlayers();
     const playerIds = Object.keys(players);
@@ -58,12 +59,12 @@ export class PlayerService {
         return true;
       });
 
-    console.log(`Found ${playersToSync.length} fantasy-relevant players to sync...`);
+    logger.info('Found fantasy-relevant players to sync', { count: playersToSync.length });
 
     // Use batch upsert for much better performance (100 players per batch)
     const syncedCount = await this.playerRepo.batchUpsertFromSleeper(playersToSync, 100);
 
-    console.log(`Player sync complete. Synced ${syncedCount} fantasy-relevant players.`);
+    logger.info('Player sync complete', { synced: syncedCount });
 
     const totalCount = await this.playerRepo.getPlayerCount();
 
@@ -86,7 +87,7 @@ export class PlayerService {
     // Default to 2025 (current college season) - CFBD may not have future year data
     const currentYear = new Date().getFullYear();
     const syncYear = year || (currentYear > 2025 ? 2025 : currentYear);
-    console.log(`Starting college player sync from CFBD API for year ${syncYear}...`);
+    logger.info('Starting college player sync from CFBD API', { year: syncYear });
 
     // Get already-synced teams to skip (incremental sync)
     const skipTeams = incremental ? await this.playerRepo.getSyncedCollegeTeams() : [];
@@ -104,11 +105,11 @@ export class PlayerService {
       return true;
     });
 
-    console.log(`Found ${playersToSync.length} fantasy-relevant college players to sync...`);
+    logger.info('Found fantasy-relevant college players to sync', { count: playersToSync.length });
 
     const syncedCount = await this.playerRepo.batchUpsertFromCFBD(playersToSync, 100);
 
-    console.log(`College player sync complete. Synced ${syncedCount} players.`);
+    logger.info('College player sync complete', { synced: syncedCount });
 
     const totalCount = await this.playerRepo.getCollegePlayerCount();
 

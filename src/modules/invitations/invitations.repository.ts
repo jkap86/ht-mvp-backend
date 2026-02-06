@@ -135,6 +135,44 @@ export class InvitationsRepository {
     return invitationFromDatabase(result.rows[0]);
   }
 
+  /**
+   * Atomically update status only if current status matches expected.
+   * Returns null if the row wasn't updated (status already changed).
+   */
+  async updateStatusConditional(
+    id: number,
+    newStatus: 'accepted' | 'declined',
+    expectedStatus: 'pending'
+  ): Promise<LeagueInvitation | null> {
+    const result = await this.db.query(
+      `UPDATE league_invitations
+       SET status = $2, responded_at = CURRENT_TIMESTAMP
+       WHERE id = $1 AND status = $3
+       RETURNING *`,
+      [id, newStatus, expectedStatus]
+    );
+
+    if (result.rows.length === 0) return null;
+    return invitationFromDatabase(result.rows[0]);
+  }
+
+  /**
+   * Revert invitation status back to pending (for rollback scenarios).
+   * Clears responded_at when reverting.
+   */
+  async revertToPending(id: number): Promise<LeagueInvitation | null> {
+    const result = await this.db.query(
+      `UPDATE league_invitations
+       SET status = 'pending', responded_at = NULL
+       WHERE id = $1
+       RETURNING *`,
+      [id]
+    );
+
+    if (result.rows.length === 0) return null;
+    return invitationFromDatabase(result.rows[0]);
+  }
+
   async delete(id: number): Promise<boolean> {
     const result = await this.db.query('DELETE FROM league_invitations WHERE id = $1', [id]);
     return result.rowCount !== null && result.rowCount > 0;

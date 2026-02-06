@@ -136,19 +136,33 @@ export class InvitationsService {
       throw new ValidationException('Invitation has expired');
     }
 
-    // Join the league via roster service
-    const result = await this.rosterService.joinLeague(invitation.leagueId, userId);
+    // Mark accepted FIRST (conditional - only if still pending)
+    // This prevents race conditions where two accepts could succeed
+    const updated = await this.invitationsRepo.updateStatusConditional(
+      invitationId,
+      'accepted',
+      'pending'
+    );
+    if (!updated) {
+      throw new ConflictException('Invitation already processed');
+    }
 
-    // Update invitation status
-    await this.invitationsRepo.updateStatus(invitationId, 'accepted');
+    try {
+      // Join the league via roster service
+      const result = await this.rosterService.joinLeague(invitation.leagueId, userId);
 
-    // Get full league details to return
-    const league = await this.leagueRepo.findByIdWithUserRoster(invitation.leagueId, userId);
+      // Get full league details to return
+      const league = await this.leagueRepo.findByIdWithUserRoster(invitation.leagueId, userId);
 
-    return {
-      message: result.message,
-      league: league?.toResponse(),
-    };
+      return {
+        message: result.message,
+        league: league?.toResponse(),
+      };
+    } catch (error) {
+      // Revert invitation status on join failure
+      await this.invitationsRepo.revertToPending(invitationId);
+      throw error;
+    }
   }
 
   /**

@@ -59,10 +59,12 @@ export class PlayoffService {
 
     const season = parseInt(league.season, 10);
 
-    // Check for existing bracket
+    // Check for existing bracket - block all regeneration
     const existingBracket = await this.playoffRepo.findByLeagueSeason(leagueId, season);
-    if (existingBracket && existingBracket.status !== 'pending') {
-      throw new ConflictException('Cannot regenerate bracket once playoffs have started');
+    if (existingBracket) {
+      throw new ConflictException(
+        'Playoff bracket already exists for this season. Use the regenerate endpoint to recreate.'
+      );
     }
 
     // Get standings for seeding
@@ -76,12 +78,6 @@ export class PlayoffService {
     const client = await this.db.connect();
     try {
       await client.query('BEGIN');
-
-      // Delete existing bracket if exists
-      if (existingBracket) {
-        await this.playoffRepo.deletePlayoffMatchups(leagueId, season, client);
-        await this.playoffRepo.deleteBracket(existingBracket.id, client);
-      }
 
       // Calculate rounds and championship week
       const totalRounds = calculateTotalRounds(config.playoffTeams);

@@ -3,6 +3,7 @@ import { tryGetSocketService } from '../../../socket';
 import { getTradeLockId } from '../../../utils/locks';
 import { executeTrade, AcceptTradeContext, PickTradedEvent } from './accept-trade.use-case';
 import { EventListenerService } from '../../chat/event-listener.service';
+import { logger } from '../../../config/logger.config';
 
 const DEFAULT_VETO_COUNT = 4;
 
@@ -158,7 +159,12 @@ export async function processReviewCompleteTrades(ctx: ProcessTradesContext): Pr
         if (ctx.eventListenerService) {
           ctx.eventListenerService
             .handleTradeVetoed(trade.leagueId, trade.id)
-            .catch((err) => console.error('Failed to emit trade vetoed system message:', err));
+            .catch((err) => logger.warn('Failed to emit system message', {
+              type: 'trade_vetoed',
+              leagueId: trade.leagueId,
+              tradeId: trade.id,
+              error: err.message
+            }));
         }
       } else if (pendingEvent === 'completed') {
         emitTradeCompletedEvent(trade.leagueId, trade.id);
@@ -167,7 +173,12 @@ export async function processReviewCompleteTrades(ctx: ProcessTradesContext): Pr
         if (ctx.eventListenerService) {
           ctx.eventListenerService
             .handleTradeAccepted(trade.leagueId, trade.id, true)
-            .catch((err) => console.error('Failed to emit trade completed system message:', err));
+            .catch((err) => logger.warn('Failed to emit system message', {
+              type: 'trade_completed',
+              leagueId: trade.leagueId,
+              tradeId: trade.id,
+              error: err.message
+            }));
         }
       }
 

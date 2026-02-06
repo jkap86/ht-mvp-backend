@@ -92,14 +92,18 @@ export class DraftStateService {
     }
     // For slow auctions, no pick deadline (nominations are open to all teams)
 
-    const updatedDraft = await this.draftRepo.update(draftId, {
-      status: 'in_progress',
-      startedAt: new Date(),
-      currentPick: 1,
-      currentRound: 1,
-      currentRosterId: firstPickerRosterId,
-      pickDeadline,
-    });
+    const updatedDraft = await this.draftRepo.updateWithLock(
+      draftId,
+      {
+        status: 'in_progress',
+        startedAt: new Date(),
+        currentPick: 1,
+        currentRound: 1,
+        currentRosterId: firstPickerRosterId,
+        pickDeadline,
+      },
+      'not_started'
+    );
 
     const response = draftToResponse(updatedDraft);
 
@@ -109,7 +113,7 @@ export class DraftStateService {
     socket?.emitNextPick(draftId, {
       currentPick: 1,
       currentRound: 1,
-      currentRosterId: firstPicker?.rosterId,
+      currentRosterId: firstPickerRosterId,  // Use traded-pick-aware ID
       pickDeadline,
       status: 'in_progress',
     });
@@ -151,16 +155,20 @@ export class DraftStateService {
         : draft.pickTimeSeconds;
     }
 
-    const updatedDraft = await this.draftRepo.update(draftId, {
-      status: 'paused',
-      pickDeadline: null,
-      draftState: {
-        ...draft.draftState,
-        pausedAt: now.toISOString(),
-        pausedBy: userId,
-        remainingSeconds,
+    const updatedDraft = await this.draftRepo.updateWithLock(
+      draftId,
+      {
+        status: 'paused',
+        pickDeadline: null,
+        draftState: {
+          ...draft.draftState,
+          pausedAt: now.toISOString(),
+          pausedBy: userId,
+          remainingSeconds,
+        },
       },
-    });
+      'in_progress'
+    );
 
     const response = draftToResponse(updatedDraft);
 
@@ -194,16 +202,20 @@ export class DraftStateService {
       pickDeadline.setSeconds(pickDeadline.getSeconds() + remainingSeconds);
     }
 
-    const updatedDraft = await this.draftRepo.update(draftId, {
-      status: 'in_progress',
-      pickDeadline,
-      draftState: {
-        ...draft.draftState,
-        pausedAt: null,
-        pausedBy: null,
-        remainingSeconds: null,
+    const updatedDraft = await this.draftRepo.updateWithLock(
+      draftId,
+      {
+        status: 'in_progress',
+        pickDeadline,
+        draftState: {
+          ...draft.draftState,
+          pausedAt: null,
+          pausedBy: null,
+          remainingSeconds: null,
+        },
       },
-    });
+      'paused'
+    );
 
     const response = draftToResponse(updatedDraft);
 
@@ -249,7 +261,8 @@ export class DraftStateService {
       draft.leagueId
     );
 
-    const updatedDraft = await this.draftRepo.update(draftId, {
+    // Use updateWithLock to ensure atomic update and prevent races with in-flight picks
+    const updatedDraft = await this.draftRepo.updateWithLock(draftId, {
       status: 'completed',
       completedAt: new Date(),
       pickDeadline: null,

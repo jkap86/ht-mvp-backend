@@ -1,4 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
+import { logger } from '../../config/logger.config';
 
 export interface CFBDPlayer {
   id: string;
@@ -53,7 +54,7 @@ export class CFBDApiClient {
         if (axios.isAxiosError(error) && error.response?.status === 429) {
           lastError = error;
           const delay = this.baseDelayMs * Math.pow(2, attempt);
-          console.log(`Rate limited on ${context}, retrying in ${delay}ms (attempt ${attempt + 1}/${this.maxRetries})`);
+          logger.warn('CFBD rate limited, retrying', { context, delay, attempt: attempt + 1, maxRetries: this.maxRetries });
           await new Promise(resolve => setTimeout(resolve, delay));
         } else {
           throw error;
@@ -116,11 +117,11 @@ export class CFBDApiClient {
     const teams = allTeams.filter(t => !skipSet.has(t.school.toLowerCase()));
 
     if (teams.length === 0) {
-      console.log(`All ${allTeams.length} FBS teams already synced, nothing to do`);
+      logger.info('All FBS teams already synced, nothing to do', { totalTeams: allTeams.length });
       return [];
     }
 
-    console.log(`Fetching rosters for ${teams.length} FBS teams (${skipTeams.length} already synced)...`);
+    logger.info('Fetching FBS team rosters', { teamsToFetch: teams.length, alreadySynced: skipTeams.length });
 
     const allPlayers: CFBDPlayer[] = [];
 
@@ -137,7 +138,7 @@ export class CFBDApiClient {
           const roster = await this.fetchRoster(year, team.school);
           return roster;
         } catch (error) {
-          console.warn(`Failed to fetch roster for ${team.school}:`, error);
+          logger.warn('Failed to fetch roster for team', { team: team.school, error });
           return [];
         }
       });
@@ -149,7 +150,7 @@ export class CFBDApiClient {
 
       // Log progress
       const processed = Math.min(i + batchSize, teams.length);
-      console.log(`Processed ${processed}/${teams.length} teams (${allPlayers.length} players so far)`);
+      logger.debug('CFBD roster fetch progress', { processed, total: teams.length, playersSoFar: allPlayers.length });
 
       // Delay between batches to stay under rate limits
       if (i + batchSize < teams.length) {
@@ -157,7 +158,7 @@ export class CFBDApiClient {
       }
     }
 
-    console.log(`Fetched ${allPlayers.length} total players from ${teams.length} teams`);
+    logger.info('CFBD roster fetch complete', { totalPlayers: allPlayers.length, teamsProcessed: teams.length });
     return allPlayers;
   }
 }

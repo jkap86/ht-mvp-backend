@@ -25,6 +25,7 @@ import {
   ValidatePickTradeContext,
 } from './validate-pick-trade.use-case';
 import { EventListenerService } from '../../chat/event-listener.service';
+import { logger } from '../../../config/logger.config';
 
 const DEFAULT_TRADE_EXPIRY_HOURS = 48;
 
@@ -201,7 +202,12 @@ export async function proposeTrade(
       if (ctx.eventListenerService) {
         ctx.eventListenerService
           .handleTradeProposed(leagueId, trade.id, trade.notifyLeagueChat)
-          .catch((err) => console.error('Failed to emit trade proposed system message:', err));
+          .catch((err) => logger.warn('Failed to emit system message', {
+            type: 'trade_proposed',
+            leagueId,
+            tradeId: trade.id,
+            error: err.message
+          }));
       }
     }
 
