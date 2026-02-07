@@ -292,13 +292,22 @@ export class MatchupsRepository {
       ),
       median_agg AS (
         SELECT
-          roster_id,
-          SUM(CASE WHEN result = 'W' THEN 1 ELSE 0 END) as median_wins,
-          SUM(CASE WHEN result = 'L' THEN 1 ELSE 0 END) as median_losses,
-          SUM(CASE WHEN result = 'T' THEN 1 ELSE 0 END) as median_ties
-        FROM weekly_median_results
-        WHERE league_id = $1 AND season = $2
-        GROUP BY roster_id
+          wmr.roster_id,
+          SUM(CASE WHEN wmr.result = 'W' THEN 1 ELSE 0 END) as median_wins,
+          SUM(CASE WHEN wmr.result = 'L' THEN 1 ELSE 0 END) as median_losses,
+          SUM(CASE WHEN wmr.result = 'T' THEN 1 ELSE 0 END) as median_ties
+        FROM weekly_median_results wmr
+        WHERE wmr.league_id = $1 AND wmr.season = $2
+          -- Only count median for regular season weeks (safety check)
+          AND EXISTS (
+            SELECT 1 FROM matchups m
+            WHERE m.league_id = wmr.league_id
+              AND m.season = wmr.season
+              AND m.week = wmr.week
+              AND m.is_playoff = false
+            LIMIT 1
+          )
+        GROUP BY wmr.roster_id
       )
       SELECT
         h.roster_id,
