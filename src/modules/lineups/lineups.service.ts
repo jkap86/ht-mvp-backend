@@ -112,6 +112,11 @@ export class LineupService {
       throw new NotFoundException('League not found');
     }
 
+    // Block manual lineup changes for bestball leagues
+    if (league.leagueSettings?.rosterType === 'bestball') {
+      throw new ValidationException('Cannot manually set lineup in bestball leagues');
+    }
+
     const season = parseInt(league.season, 10);
 
     // Check if lineup is locked
@@ -157,6 +162,11 @@ export class LineupService {
     const league = await this.leagueRepo.findById(leagueId);
     if (!league) {
       throw new NotFoundException('League not found');
+    }
+
+    // Block manual lineup changes for bestball leagues
+    if (league.leagueSettings?.rosterType === 'bestball') {
+      throw new ValidationException('Cannot manually set lineup in bestball leagues');
     }
 
     const season = parseInt(league.season, 10);

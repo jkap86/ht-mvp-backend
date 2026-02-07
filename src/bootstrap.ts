@@ -73,6 +73,7 @@ import { InvitationsRepository } from './modules/invitations/invitations.reposit
 import { InvitationsService } from './modules/invitations/invitations.service';
 import { DuesRepository } from './modules/dues/dues.repository';
 import { DuesService } from './modules/dues/dues.service';
+import { BestballService } from './modules/bestball/bestball.service';
 
 // Engines
 import { DraftEngineFactory } from './engines';
@@ -488,7 +489,8 @@ function bootstrap(): void {
         container.resolve(KEYS.PLAYER_REPO),
         container.resolve(KEYS.PLAYER_STATS_REPO),
         container.resolve(KEYS.MEDIAN_SERVICE),
-        container.resolve(KEYS.GAME_PROGRESS_SERVICE)
+        container.resolve(KEYS.GAME_PROGRESS_SERVICE),
+        container.resolve(KEYS.BESTBALL_SERVICE)
       )
   );
 
@@ -574,6 +576,23 @@ function bootstrap(): void {
 
   // Helpers
   container.register(KEYS.LOCK_HELPER, () => new LockHelper());
+
+  // Bestball service
+  container.register(
+    KEYS.BESTBALL_SERVICE,
+    () =>
+      new BestballService(
+        container.resolve(KEYS.POOL),
+        container.resolve(KEYS.LEAGUE_REPO),
+        container.resolve(KEYS.ROSTER_REPO),
+        container.resolve(KEYS.ROSTER_PLAYERS_REPO),
+        container.resolve(KEYS.LINEUPS_REPO),
+        container.resolve(KEYS.PLAYER_STATS_REPO),
+        container.resolve(KEYS.PLAYER_PROJECTIONS_REPO),
+        container.resolve(KEYS.PLAYER_REPO),
+        container.resolve(KEYS.SCORING_SERVICE)
+      )
+  );
 }
 
 // Auto-run bootstrap when this module is imported

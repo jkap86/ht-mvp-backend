@@ -272,6 +272,8 @@ describe('Season Sanity Integration Tests', () => {
         totalPointsLive: null,
         totalPointsProjectedLive: null,
         isLocked: false,
+        isBestball: false,
+        bestballGeneratedAt: null,
         createdAt: new Date(),
         updatedAt: new Date(),
       };

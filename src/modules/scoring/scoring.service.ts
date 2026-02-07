@@ -236,9 +236,9 @@ export class ScoringService {
 
   /**
    * Get scoring rules for a league without user validation
-   * Used internally for batch operations
+   * Used internally for batch operations and by BestballService
    */
-  private async getScoringRulesInternal(leagueId: number): Promise<ScoringRules> {
+  async getScoringRulesInternal(leagueId: number): Promise<ScoringRules> {
     const league = await this.leagueRepo.findById(leagueId);
     if (!league) {
       throw new NotFoundException('League not found');

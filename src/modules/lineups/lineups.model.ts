@@ -38,6 +38,8 @@ export interface RosterLineup {
   totalPointsLive: number | null;
   totalPointsProjectedLive: number | null;
   isLocked: boolean;
+  isBestball: boolean;
+  bestballGeneratedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -73,6 +75,8 @@ export function rosterLineupFromDatabase(row: any): RosterLineup {
       ? parseFloat(row.total_points_projected_live)
       : null,
     isLocked: row.is_locked,
+    isBestball: row.is_bestball || false,
+    bestballGeneratedAt: row.bestball_generated_at || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -89,6 +93,8 @@ export function rosterLineupToResponse(lineup: RosterLineup) {
     total_points_live: lineup.totalPointsLive,
     total_points_projected_live: lineup.totalPointsProjectedLive,
     is_locked: lineup.isLocked,
+    is_bestball: lineup.isBestball,
+    bestball_generated_at: lineup.bestballGeneratedAt,
     created_at: lineup.createdAt,
     updated_at: lineup.updatedAt,
   };

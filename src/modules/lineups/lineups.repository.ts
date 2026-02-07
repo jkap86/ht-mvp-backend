@@ -204,4 +204,74 @@ export class LineupsRepository {
 
     return result.rowCount || 0;
   }
+
+  /**
+   * Upsert a bestball-generated lineup
+   */
+  async upsertBestball(
+    rosterId: number,
+    season: number,
+    week: number,
+    lineup: LineupSlots,
+    client?: PoolClient
+  ): Promise<RosterLineup> {
+    const db = client || this.db;
+    const result = await db.query(
+      `INSERT INTO roster_lineups (roster_id, season, week, lineup, is_bestball, bestball_generated_at)
+       VALUES ($1, $2, $3, $4, true, CURRENT_TIMESTAMP)
+       ON CONFLICT (roster_id, season, week)
+       DO UPDATE SET
+         lineup = $4,
+         is_bestball = true,
+         bestball_generated_at = CURRENT_TIMESTAMP,
+         updated_at = CURRENT_TIMESTAMP
+       RETURNING *`,
+      [rosterId, season, week, JSON.stringify(lineup)]
+    );
+
+    return rosterLineupFromDatabase(result.rows[0]);
+  }
+
+  /**
+   * Batch upsert bestball-generated lineups
+   */
+  async batchUpsertBestball(
+    updates: Array<{ rosterId: number; lineup: LineupSlots }>,
+    season: number,
+    week: number,
+    client?: PoolClient
+  ): Promise<void> {
+    if (updates.length === 0) return;
+
+    const db = client || this.db;
+
+    // Use individual upserts within a transaction for reliability
+    const conn = client || (await this.db.connect());
+    const shouldRelease = !client;
+
+    try {
+      if (!client) await conn.query('BEGIN');
+
+      for (const { rosterId, lineup } of updates) {
+        await conn.query(
+          `INSERT INTO roster_lineups (roster_id, season, week, lineup, is_bestball, bestball_generated_at)
+           VALUES ($1, $2, $3, $4, true, CURRENT_TIMESTAMP)
+           ON CONFLICT (roster_id, season, week)
+           DO UPDATE SET
+             lineup = $4,
+             is_bestball = true,
+             bestball_generated_at = CURRENT_TIMESTAMP,
+             updated_at = CURRENT_TIMESTAMP`,
+          [rosterId, season, week, JSON.stringify(lineup)]
+        );
+      }
+
+      if (!client) await conn.query('COMMIT');
+    } catch (error) {
+      if (!client) await conn.query('ROLLBACK');
+      throw error;
+    } finally {
+      if (shouldRelease) (conn as PoolClient).release();
+    }
+  }
 }

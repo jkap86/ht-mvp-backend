@@ -117,4 +117,7 @@ export const KEYS = {
 
   // Helpers
   LOCK_HELPER: 'lockHelper',
+
+  // Bestball
+  BESTBALL_SERVICE: 'bestballService',
 };

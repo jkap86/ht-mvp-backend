@@ -10,6 +10,7 @@ import { normalizeLeagueScoringSettings } from '../scoring/scoring-settings-norm
 import { calculatePlayerPoints } from '../scoring/scoring-calculator';
 import { PlayerRepository } from '../players/players.repository';
 import { MedianService } from './median.service';
+import { BestballService } from '../bestball/bestball.service';
 import {
   MatchupDetails,
   MatchupWithLineups,
@@ -40,7 +41,8 @@ export class MatchupService {
     private readonly playerRepo: PlayerRepository,
     private readonly statsRepo: PlayerStatsRepository,
     private readonly medianService?: MedianService,
-    private readonly gameProgressService?: GameProgressService
+    private readonly gameProgressService?: GameProgressService,
+    private readonly bestballService?: BestballService
   ) {}
 
   /**
@@ -311,6 +313,11 @@ export class MatchupService {
           'Cannot finalize week while NFL games are still in progress. Please wait until all games are complete.'
         );
       }
+    }
+
+    // Regenerate bestball lineups using final stats before calculating scores
+    if (league.leagueSettings?.rosterType === 'bestball' && this.bestballService) {
+      await this.bestballService.generateBestballLineupsForLeague(leagueId, season, week, 'final');
     }
 
     // First calculate all scores

@@ -3,6 +3,8 @@ import { StatsService } from '../modules/scoring/stats.service';
 import { ScoringService } from '../modules/scoring/scoring.service';
 import { MatchupsRepository } from '../modules/matchups/matchups.repository';
 import { LineupService } from '../modules/lineups/lineups.service';
+import { LeagueRepository } from '../modules/leagues/leagues.repository';
+import { BestballService } from '../modules/bestball/bestball.service';
 import { tryGetSocketService } from '../socket/socket.service';
 import { logger } from '../config/env.config';
 import { isInGameWindow, getOptimalSyncInterval, SYNC_INTERVALS } from '../utils/game-window';
@@ -100,6 +102,40 @@ async function checkAndLockLineups(season: number, week: number): Promise<void> 
 }
 
 /**
+ * Generate bestball lineups for all bestball leagues before scoring
+ */
+async function generateBestballLineups(
+  bestballService: BestballService,
+  leagueRepo: LeagueRepository,
+  leagueIds: number[],
+  season: number,
+  week: number
+): Promise<void> {
+  let bestballCount = 0;
+
+  for (const leagueId of leagueIds) {
+    try {
+      const league = await leagueRepo.findById(leagueId);
+      if (league?.leagueSettings?.rosterType === 'bestball') {
+        await bestballService.generateBestballLineupsForLeague(
+          leagueId,
+          season,
+          week,
+          'live_projected'
+        );
+        bestballCount++;
+      }
+    } catch (error) {
+      logger.warn(`Failed to generate bestball lineups for league ${leagueId}: ${error}`);
+    }
+  }
+
+  if (bestballCount > 0) {
+    logger.info(`Generated bestball lineups for ${bestballCount} leagues`);
+  }
+}
+
+/**
  * Calculate live scoring totals for all leagues with active matchups
  */
 async function calculateLiveScoringTotals(
@@ -167,6 +203,13 @@ export async function runStatsSync(): Promise<void> {
 
     // Get leagues with active matchups
     const leagueIds = await matchupsRepo.getLeaguesWithActiveMatchups(seasonNum, week);
+
+    // Generate bestball lineups before calculating totals
+    if (leagueIds.length > 0) {
+      const bestballService = container.resolve<BestballService>(KEYS.BESTBALL_SERVICE);
+      const leagueRepo = container.resolve<LeagueRepository>(KEYS.LEAGUE_REPO);
+      await generateBestballLineups(bestballService, leagueRepo, leagueIds, seasonNum, week);
+    }
 
     // Calculate live scoring totals for all leagues
     if (leagueIds.length > 0) {
