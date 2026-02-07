@@ -3,6 +3,7 @@ import { LineupsRepository } from '../lineups/lineups.repository';
 import { LeagueRepository } from '../leagues/leagues.repository';
 import { MatchupsRepository } from './matchups.repository';
 import { ForbiddenException, NotFoundException, ValidationException } from '../../utils/exceptions';
+import { runInTransaction } from '../../shared/transaction-runner';
 
 export interface MedianResult {
   rosterId: number;
@@ -181,30 +182,20 @@ export class MedianService {
     }
 
     // Recalculate within transaction
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
-
-      const medianPoints = await this.calculateAndStoreMedianResults(
+    const medianPoints = await runInTransaction(this.db, async (client) => {
+      return this.calculateAndStoreMedianResults(
         client,
         leagueId,
         season,
         week
       );
+    });
 
-      await client.query('COMMIT');
-
-      if (medianPoints === null) {
-        throw new ValidationException('Unable to calculate median - insufficient teams');
-      }
-
-      return { medianPoints };
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
+    if (medianPoints === null) {
+      throw new ValidationException('Unable to calculate median - insufficient teams');
     }
+
+    return { medianPoints };
   }
 
   /**

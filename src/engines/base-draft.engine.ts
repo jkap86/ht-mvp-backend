@@ -17,7 +17,6 @@ import { finalizeDraftCompletion } from '../modules/drafts/draft-completion.util
 import { container, KEYS } from '../container';
 import { DraftPickAssetRepository } from '../modules/drafts/draft-pick-asset.repository';
 import { VetDraftPickSelectionRepository } from '../modules/drafts/vet-draft-pick-selection.repository';
-import { getLockId, LockDomain } from '../shared/locks';
 import { Pool, PoolClient } from 'pg';
 
 /**
@@ -231,77 +230,78 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     // Check if pick already exists (race condition: pick was made but draft state not updated)
     const pickAlreadyExists = await this.draftRepo.pickExists(draftId, draft.currentPick);
     if (pickAlreadyExists) {
-      // Acquire lock before advancing to prevent race with other tickers
+      // Use runWithLock for proper transaction management
       const pool = container.resolve<Pool>(KEYS.POOL);
-      const client = await pool.connect();
-      try {
-        await client.query('BEGIN');
-        await client.query('SELECT pg_advisory_xact_lock($1)', [getLockId(LockDomain.DRAFT, draftId)]);
+      const { runWithLock, LockDomain: RunnerLockDomain } = await import('../shared/transaction-runner');
 
-        // Re-check under lock using client-aware methods to ensure consistency
-        const stillExists = await this.draftRepo.pickExistsWithClient(client, draftId, draft.currentPick);
-        const currentDraft = await this.draftRepo.findByIdWithClient(client, draftId);
+      const result = await runWithLock(
+        pool,
+        RunnerLockDomain.DRAFT,
+        draftId,
+        async (client) => {
+          // Re-check under lock using client-aware methods to ensure consistency
+          const stillExists = await this.draftRepo.pickExistsWithClient(client, draftId, draft.currentPick);
+          const currentDraft = await this.draftRepo.findByIdWithClient(client, draftId);
 
-        if (stillExists && currentDraft && currentDraft.currentPick === draft.currentPick) {
-          // Pick was made but draft state is stale - advance to next pick
-          logger.info(
-            `Draft ${draftId}: pick ${draft.currentPick} already exists, recovering stale state`
-          );
+          if (stillExists && currentDraft && currentDraft.currentPick === draft.currentPick) {
+            // Pick was made but draft state is stale - advance to next pick
+            logger.info(
+              `Draft ${draftId}: pick ${draft.currentPick} already exists, recovering stale state`
+            );
 
-          // Re-fetch draftOrder INSIDE the lock for consistency
-          const freshDraftOrder = await this.getDraftOrderWithClient(client, draftId);
+            // Re-fetch draftOrder INSIDE the lock for consistency
+            const freshDraftOrder = await this.getDraftOrderWithClient(client, draftId);
 
-          // Use client-aware advance method to ensure atomicity
-          const nextPickInfo = await this.advanceToNextPickWithClient(client, currentDraft, freshDraftOrder);
+            // Use client-aware advance method to ensure atomicity
+            const nextPickInfo = await this.advanceToNextPickWithClient(client, currentDraft, freshDraftOrder);
 
-          await client.query('COMMIT');
+            return { advanced: true, nextPickInfo };
+          } else {
+            // State was already updated by another ticker, nothing to do
+            return { advanced: false };
+          }
+        }
+      );
 
-          // Publish domain events (after commit)
-          const eventBus = container.resolve<DomainEventBus>(KEYS.DOMAIN_EVENT_BUS);
-          if (nextPickInfo) {
+      // Publish domain events AFTER transaction commits
+      if (result.advanced) {
+        const eventBus = container.resolve<DomainEventBus>(KEYS.DOMAIN_EVENT_BUS);
+        if (result.nextPickInfo) {
+          eventBus.publish({
+            type: EventTypes.DRAFT_NEXT_PICK,
+            payload: {
+              draftId,
+              ...result.nextPickInfo,
+            },
+          });
+        } else {
+          const completedDraft = await this.draftRepo.findById(draftId);
+          if (completedDraft) {
             eventBus.publish({
-              type: EventTypes.DRAFT_NEXT_PICK,
+              type: EventTypes.DRAFT_COMPLETED,
               payload: {
                 draftId,
-                ...nextPickInfo,
+                ...draftToResponse(completedDraft),
               },
             });
-          } else {
-            const completedDraft = await this.draftRepo.findById(draftId);
-            if (completedDraft) {
-              eventBus.publish({
-                type: EventTypes.DRAFT_COMPLETED,
-                payload: {
-                  draftId,
-                  ...draftToResponse(completedDraft),
-                },
-              });
-            }
           }
-
-          const updatedDraft = await this.draftRepo.findById(draftId);
-          return {
-            actionTaken: true,
-            draftCompleted: updatedDraft?.status === 'completed',
-            draft: updatedDraft!,
-            reason,
-          };
-        } else {
-          // State was already updated by another ticker, nothing to do
-          await client.query('COMMIT');
-          const updatedDraft = await this.draftRepo.findById(draftId);
-          return {
-            actionTaken: false,
-            draftCompleted: updatedDraft?.status === 'completed',
-            draft: updatedDraft!,
-            reason: 'none',
-          };
         }
-      } catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
-      } finally {
-        client.release();
+
+        const updatedDraft = await this.draftRepo.findById(draftId);
+        return {
+          actionTaken: true,
+          draftCompleted: updatedDraft?.status === 'completed',
+          draft: updatedDraft!,
+          reason,
+        };
+      } else {
+        const updatedDraft = await this.draftRepo.findById(draftId);
+        return {
+          actionTaken: false,
+          draftCompleted: updatedDraft?.status === 'completed',
+          draft: updatedDraft!,
+          reason: 'none',
+        };
       }
     }
 

@@ -3,7 +3,7 @@ import { container, KEYS } from '../container';
 import { SlowAuctionService } from '../modules/drafts/auction/slow-auction.service';
 import { FastAuctionService } from '../modules/drafts/auction/fast-auction.service';
 import { AuctionLotRepository } from '../modules/drafts/auction/auction-lot.repository';
-import { tryGetSocketService } from '../socket/socket.service';
+import { tryGetEventBus, EventTypes } from '../shared/events';
 import { logger } from '../config/logger.config';
 
 let intervalId: NodeJS.Timeout | null = null;
@@ -52,22 +52,32 @@ async function processExpiredLots(): Promise<void> {
           );
         }
 
-        // Emit socket events
-        const socket = tryGetSocketService();
+        // Emit domain events (routed to socket by SocketEventSubscriber)
+        const eventBus = tryGetEventBus();
 
         if (result.passed) {
           // Lot passed (no bids)
-          socket?.emitAuctionLotPassed(result.lot.draftId, {
-            lotId: result.lot.id,
-            playerId: result.lot.playerId,
+          eventBus?.publish({
+            type: EventTypes.AUCTION_LOT_PASSED,
+            leagueId: result.lot.draftId, // draftId is used for routing
+            payload: {
+              draftId: result.lot.draftId,
+              lotId: result.lot.id,
+              playerId: result.lot.playerId,
+            },
           });
         } else {
           // Lot won
-          socket?.emitAuctionLotWon(result.lot.draftId, {
-            lotId: result.lot.id,
-            playerId: result.lot.playerId,
-            winnerRosterId: result.winner!.rosterId,
-            price: result.winner!.amount,
+          eventBus?.publish({
+            type: EventTypes.AUCTION_LOT_SOLD,
+            leagueId: result.lot.draftId, // draftId is used for routing
+            payload: {
+              draftId: result.lot.draftId,
+              lotId: result.lot.id,
+              playerId: result.lot.playerId,
+              winnerRosterId: result.winner!.rosterId,
+              price: result.winner!.amount,
+            },
           });
         }
 

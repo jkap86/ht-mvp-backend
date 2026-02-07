@@ -1,5 +1,6 @@
 import { Pool, PoolClient } from 'pg';
 import { PlayerStats, playerStatsFromDatabase } from './scoring.model';
+import { runInTransaction } from '../../shared/transaction-runner';
 
 export class PlayerStatsRepository {
   constructor(private readonly db: Pool) {}
@@ -135,20 +136,10 @@ export class PlayerStatsRepository {
   ): Promise<void> {
     if (statsList.length === 0) return;
 
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
-
+    await runInTransaction(this.db, async (client) => {
       for (const stats of statsList) {
         await this.upsert(stats, client);
       }
-
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 }

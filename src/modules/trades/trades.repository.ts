@@ -308,6 +308,24 @@ export class TradesRepository {
   }
 
   /**
+   * Find pending trades that involve any of the specified players (batch query)
+   * Returns a Set of player IDs that are in pending trades
+   */
+  async findPendingPlayerIds(leagueId: number, playerIds: number[], client?: PoolClient): Promise<Set<number>> {
+    if (playerIds.length === 0) return new Set();
+
+    const db = client || this.db;
+    const result = await db.query(
+      `SELECT DISTINCT ti.player_id FROM trades t
+      JOIN trade_items ti ON ti.trade_id = t.id
+      WHERE t.league_id = $1 AND ti.player_id = ANY($2)
+      AND t.status IN ('pending', 'accepted', 'in_review')`,
+      [leagueId, playerIds]
+    );
+    return new Set(result.rows.map((row) => row.player_id));
+  }
+
+  /**
    * Find pending trades that involve a specific pick asset
    */
   async findPendingByPickAsset(leagueId: number, pickAssetId: number, client?: PoolClient): Promise<Trade[]> {

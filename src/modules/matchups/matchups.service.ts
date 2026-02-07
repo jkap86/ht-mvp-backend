@@ -24,6 +24,7 @@ import {
   ValidationException,
   BadRequestException,
 } from '../../utils/exceptions';
+import { runInTransaction } from '../../shared/transaction-runner';
 
 /**
  * Core matchup service handling CRUD operations, detail fetching, and scoring updates.
@@ -335,10 +336,7 @@ export class MatchupService {
     const isPlayoffWeek = matchups.some((m) => m.isPlayoff);
 
     // Update matchup scores and finalize
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
-
+    await runInTransaction(this.db, async (client) => {
       for (const matchup of matchups) {
         const lineup1 = lineupMap.get(matchup.roster1Id);
         const lineup2 = lineupMap.get(matchup.roster2Id);
@@ -355,13 +353,6 @@ export class MatchupService {
       if (useLeagueMedian && !isPlayoffWeek && this.medianService) {
         await this.medianService.calculateAndStoreMedianResults(client, leagueId, season, week);
       }
-
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 }

@@ -5,10 +5,13 @@
  * try/catch/finally blocks across repository and service files.
  *
  * Works alongside src/shared/locks.ts for lock-aware transactions.
+ * Integrates with DomainEventBus to ensure events are only dispatched
+ * after successful transaction commit.
  */
 
 import type { Pool, PoolClient } from 'pg';
 import { getLockId, LockDomain, type LockSpec } from './locks';
+import { tryGetEventBus } from './events';
 
 /**
  * Pool interface for dependency injection.
@@ -37,12 +40,16 @@ export async function runInTransaction<T>(
   fn: (client: PoolClient) => Promise<T>
 ): Promise<T> {
   const client = await pool.connect();
+  const eventBus = tryGetEventBus();
   try {
     await client.query('BEGIN');
+    eventBus?.beginTransaction();
     const result = await fn(client);
     await client.query('COMMIT');
+    eventBus?.commitTransaction();
     return result;
   } catch (error) {
+    eventBus?.rollbackTransaction();
     await client.query('ROLLBACK');
     throw error;
   } finally {
@@ -74,13 +81,17 @@ export async function runWithLock<T>(
   fn: (client: PoolClient) => Promise<T>
 ): Promise<T> {
   const client = await pool.connect();
+  const eventBus = tryGetEventBus();
   try {
     await client.query('BEGIN');
+    eventBus?.beginTransaction();
     await client.query('SELECT pg_advisory_xact_lock($1)', [getLockId(domain, id)]);
     const result = await fn(client);
     await client.query('COMMIT');
+    eventBus?.commitTransaction();
     return result;
   } catch (error) {
+    eventBus?.rollbackTransaction();
     await client.query('ROLLBACK');
     throw error;
   } finally {
@@ -113,8 +124,10 @@ export async function runWithLocks<T>(
   fn: (client: PoolClient) => Promise<T>
 ): Promise<T> {
   const client = await pool.connect();
+  const eventBus = tryGetEventBus();
   try {
     await client.query('BEGIN');
+    eventBus?.beginTransaction();
 
     // Sort locks by domain priority (lower = first), then by ID
     const sortedLocks = [...locks].sort((a, b) => {
@@ -132,8 +145,10 @@ export async function runWithLocks<T>(
 
     const result = await fn(client);
     await client.query('COMMIT');
+    eventBus?.commitTransaction();
     return result;
   } catch (error) {
+    eventBus?.rollbackTransaction();
     await client.query('ROLLBACK');
     throw error;
   } finally {
@@ -177,6 +192,7 @@ export async function runTransaction<T>(
   fn: (client: PoolClient) => Promise<T>
 ): Promise<T> {
   const client = await pool.connect();
+  const eventBus = tryGetEventBus();
   try {
     // Start transaction with optional isolation level
     if (options.isolationLevel) {
@@ -184,6 +200,7 @@ export async function runTransaction<T>(
     } else {
       await client.query('BEGIN');
     }
+    eventBus?.beginTransaction();
 
     // Acquire locks if specified
     if (options.locks && options.locks.length > 0) {
@@ -204,8 +221,10 @@ export async function runTransaction<T>(
 
     const result = await fn(client);
     await client.query('COMMIT');
+    eventBus?.commitTransaction();
     return result;
   } catch (error) {
+    eventBus?.rollbackTransaction();
     await client.query('ROLLBACK');
     throw error;
   } finally {

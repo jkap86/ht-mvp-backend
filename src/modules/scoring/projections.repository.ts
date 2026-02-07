@@ -1,5 +1,6 @@
 import { Pool, PoolClient } from 'pg';
 import { PlayerStats, playerProjectionFromDatabase } from './scoring.model';
+import { runInTransaction } from '../../shared/transaction-runner';
 
 /**
  * Repository for player projections.
@@ -126,20 +127,10 @@ export class PlayerProjectionsRepository {
   ): Promise<void> {
     if (projectionsList.length === 0) return;
 
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
-
+    await runInTransaction(this.db, async (client) => {
       for (const projection of projectionsList) {
         await this.upsert(projection, client);
       }
-
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 }

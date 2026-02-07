@@ -5,6 +5,7 @@ import {
   DirectMessageWithUser,
 } from './dm.model';
 import { logger } from '../../config/logger.config';
+import { runInTransaction } from '../../shared/transaction-runner';
 
 export class DmRepository {
   constructor(private readonly pool: Pool) {}
@@ -268,10 +269,7 @@ export class DmRepository {
     senderId: string,
     message: string
   ): Promise<DirectMessageWithUser> {
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
-
+    return runInTransaction(this.pool, async (client) => {
       // Insert message with CTE to join with users table
       const result = await client.query(
         `WITH inserted AS (
@@ -297,8 +295,6 @@ export class DmRepository {
         [conversationId]
       );
 
-      await client.query('COMMIT');
-
       // Log if COALESCE fallback was used (indicates data integrity issue)
       if (result.rows[0].senderUsername === 'Unknown') {
         logger.warn('Message created with unknown sender - possible data integrity issue', {
@@ -309,12 +305,7 @@ export class DmRepository {
       }
 
       return result.rows[0];
-    } catch (e) {
-      await client.query('ROLLBACK');
-      throw e;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   /**

@@ -6,7 +6,7 @@ import { LineupService } from '../modules/lineups/lineups.service';
 import { LeagueRepository } from '../modules/leagues/leagues.repository';
 import { BestballService } from '../modules/bestball/bestball.service';
 import { LeaderLock } from '../shared/leader-lock';
-import { tryGetSocketService } from '../socket/socket.service';
+import { tryGetEventBus, EventTypes } from '../shared/events';
 import { logger } from '../config/env.config';
 import { isInGameWindow, getOptimalSyncInterval, SYNC_INTERVALS } from '../utils/game-window';
 
@@ -62,13 +62,17 @@ async function notifyLeaguesOfScoreUpdate(
       return;
     }
 
-    const socketService = tryGetSocketService();
+    const eventBus = tryGetEventBus();
     for (const leagueId of leagueIds) {
-      socketService?.emitScoresUpdated(leagueId, { week, matchups: [] });
+      eventBus?.publish({
+        type: EventTypes.SCORES_UPDATED,
+        leagueId,
+        payload: { week, matchups: [] },
+      });
     }
     logger.info(`Notified ${leagueIds.length} leagues of score updates for week ${week}`);
   } catch (error) {
-    // Don't fail the sync if socket notification fails
+    // Don't fail the sync if event publishing fails
     logger.warn(`Failed to notify leagues of score update: ${error}`);
   }
 }

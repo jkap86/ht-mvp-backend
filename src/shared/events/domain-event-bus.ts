@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { logger } from '../../config/env.config';
 
 /**
@@ -27,8 +28,8 @@ export interface DomainEventSubscriber {
 }
 
 /**
- * Thread-local transaction context for event queuing.
- * Tracks pending events per async context.
+ * Transaction context for event queuing.
+ * Tracks pending events per async context using AsyncLocalStorage.
  */
 interface TransactionContext {
   pendingEvents: DomainEvent[];
@@ -40,12 +41,14 @@ interface TransactionContext {
  * Key features:
  * - Transaction awareness: events can be queued during a transaction and
  *   dispatched only after commit (prevents socket emits before DB commit)
+ * - AsyncLocalStorage: properly scopes transaction contexts to async operations,
+ *   safe for concurrent requests
  * - Multiple subscribers: Socket.IO, webhooks, logging, etc.
  * - Decoupling: Domain services don't depend on transport layer
  *
  * Usage:
  * ```typescript
- * // In domain service
+ * // In domain service (typically handled by transaction-runner.ts)
  * eventBus.beginTransaction();
  * try {
  *   // Do database work...
@@ -62,11 +65,11 @@ export class DomainEventBus {
   private subscribers: DomainEventSubscriber[] = [];
 
   /**
-   * Transaction contexts keyed by a unique ID.
-   * In a real implementation, this would use AsyncLocalStorage for proper
-   * async context tracking. For now, we use a simple stack approach.
+   * AsyncLocalStorage for transaction context.
+   * Each async context (request/transaction) gets its own isolated context,
+   * preventing cross-request event leakage in concurrent scenarios.
    */
-  private transactionStack: TransactionContext[] = [];
+  private asyncStorage = new AsyncLocalStorage<TransactionContext>();
 
   /**
    * Register a subscriber to receive all published events.
@@ -95,7 +98,7 @@ export class DomainEventBus {
       timestamp: new Date(),
     };
 
-    const currentTx = this.getCurrentTransaction();
+    const currentTx = this.asyncStorage.getStore();
     if (currentTx) {
       currentTx.pendingEvents.push(fullEvent);
     } else {
@@ -106,23 +109,37 @@ export class DomainEventBus {
   /**
    * Begin a new transaction context.
    * Events published after this will be queued until commit/rollback.
+   * Returns a function that must be called with the async work to execute.
+   *
+   * Note: For integration with transaction-runner.ts, use runInTransaction()
+   * which wraps the callback automatically.
    */
   beginTransaction(): void {
-    this.transactionStack.push({ pendingEvents: [] });
+    // Enter a new async context with a fresh transaction
+    // This is called at the start of a transaction, and the context
+    // will be available to all async operations within the same call stack
+    const context: TransactionContext = { pendingEvents: [] };
+    this.asyncStorage.enterWith(context);
   }
 
   /**
    * Commit the current transaction, dispatching all queued events.
    */
   commitTransaction(): void {
-    const tx = this.transactionStack.pop();
+    const tx = this.asyncStorage.getStore();
     if (!tx) {
       logger.warn('commitTransaction called without active transaction');
       return;
     }
 
+    // Capture events before clearing context
+    const events = [...tx.pendingEvents];
+
+    // Clear the pending events (context will be cleared when async scope ends)
+    tx.pendingEvents = [];
+
     // Dispatch all queued events
-    for (const event of tx.pendingEvents) {
+    for (const event of events) {
       this.dispatch(event);
     }
   }
@@ -131,31 +148,41 @@ export class DomainEventBus {
    * Rollback the current transaction, discarding all queued events.
    */
   rollbackTransaction(): void {
-    const tx = this.transactionStack.pop();
+    const tx = this.asyncStorage.getStore();
     if (!tx) {
       logger.warn('rollbackTransaction called without active transaction');
       return;
     }
-    // Events are discarded (not dispatched)
+    // Clear pending events (discard, don't dispatch)
+    tx.pendingEvents = [];
   }
 
   /**
    * Check if currently in a transaction.
    */
   isInTransaction(): boolean {
-    return this.transactionStack.length > 0;
+    return this.asyncStorage.getStore() !== undefined;
   }
 
   /**
    * Get the number of pending events in the current transaction.
    */
   getPendingEventCount(): number {
-    const tx = this.getCurrentTransaction();
+    const tx = this.asyncStorage.getStore();
     return tx?.pendingEvents.length ?? 0;
   }
 
-  private getCurrentTransaction(): TransactionContext | undefined {
-    return this.transactionStack[this.transactionStack.length - 1];
+  /**
+   * Run a function within a transaction context.
+   * This is the preferred way to use transactions as it properly
+   * scopes the AsyncLocalStorage context.
+   *
+   * @param fn - Async function to execute within transaction context
+   * @returns Result of the callback function
+   */
+  async runInTransaction<T>(fn: () => Promise<T>): Promise<T> {
+    const context: TransactionContext = { pendingEvents: [] };
+    return this.asyncStorage.run(context, fn);
   }
 
   private dispatch(event: DomainEvent): void {

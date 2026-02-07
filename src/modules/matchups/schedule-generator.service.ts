@@ -2,6 +2,7 @@ import { Pool } from 'pg';
 import { MatchupsRepository } from './matchups.repository';
 import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import { NotFoundException, ForbiddenException, ValidationException, ConflictException } from '../../utils/exceptions';
+import { runInTransaction } from '../../shared/transaction-runner';
 
 /**
  * Generated matchup data for a single game
@@ -68,21 +69,11 @@ export class ScheduleGeneratorService {
     const matchups = this.generateRoundRobinMatchups(rosterIds, weeks);
 
     // Create matchups in database
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
-
+    await runInTransaction(this.db, async (client) => {
       for (const { week, roster1Id, roster2Id } of matchups) {
         await this.matchupsRepo.create(leagueId, season, week, roster1Id, roster2Id, false, client);
       }
-
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   /**
@@ -114,21 +105,11 @@ export class ScheduleGeneratorService {
     const matchups = this.generateRoundRobinMatchups(rosterIds, weeks);
 
     // Create matchups in database
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
-
+    await runInTransaction(this.db, async (client) => {
       for (const { week, roster1Id, roster2Id } of matchups) {
         await this.matchupsRepo.create(leagueId, season, week, roster1Id, roster2Id, false, client);
       }
-
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   /**

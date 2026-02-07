@@ -241,12 +241,11 @@ async function validateOfferingPlayers(
     throw new ValidationException(`You do not own player ${validation.missing[0]}`);
   }
 
-  // Check players not in another pending trade (still need individual checks for pending trades)
-  for (const playerId of playerIds) {
-    const pendingTrades = await ctx.tradesRepo.findPendingByPlayer(leagueId, playerId);
-    if (pendingTrades.length > 0) {
-      throw new ConflictException(`Player ${playerId} is already in a pending trade`);
-    }
+  // Batch check for players in pending trades
+  const playersInPendingTrades = await ctx.tradesRepo.findPendingPlayerIds(leagueId, playerIds, client);
+  if (playersInPendingTrades.size > 0) {
+    const conflictingPlayerId = [...playersInPendingTrades][0];
+    throw new ConflictException(`Player ${conflictingPlayerId} is already in a pending trade`);
   }
 }
 
@@ -265,12 +264,11 @@ async function validateRequestingPlayers(
     throw new ValidationException(`Recipient does not own player ${validation.missing[0]}`);
   }
 
-  // Check players not in another pending trade (still need individual checks for pending trades)
-  for (const playerId of playerIds) {
-    const pendingTrades = await ctx.tradesRepo.findPendingByPlayer(leagueId, playerId);
-    if (pendingTrades.length > 0) {
-      throw new ConflictException(`Player ${playerId} is already in a pending trade`);
-    }
+  // Batch check for players in pending trades
+  const playersInPendingTrades = await ctx.tradesRepo.findPendingPlayerIds(leagueId, playerIds, client);
+  if (playersInPendingTrades.size > 0) {
+    const conflictingPlayerId = [...playersInPendingTrades][0];
+    throw new ConflictException(`Player ${conflictingPlayerId} is already in a pending trade`);
   }
 }
 

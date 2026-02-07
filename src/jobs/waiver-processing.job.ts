@@ -2,7 +2,7 @@ import { Pool } from 'pg';
 import { container, KEYS } from '../container';
 import { WaiversService } from '../modules/waivers/waivers.service';
 import { parseWaiverSettings } from '../modules/waivers/waivers.model';
-import { tryGetSocketService } from '../socket/socket.service';
+import { tryGetEventBus, EventTypes } from '../shared/events';
 import { logger } from '../config/logger.config';
 
 let intervalId: NodeJS.Timeout | null = null;
@@ -115,11 +115,15 @@ async function processWaivers(): Promise<void> {
             { jobName: 'waiver-processing', leagueId: league.id }
           );
 
-          // Emit socket event for waiver processing completion
-          const socket = tryGetSocketService();
-          socket?.emitWaiversProcessed(league.id, {
-            processed: result.processed,
-            successful: result.successful,
+          // Emit domain event for waiver processing completion
+          const eventBus = tryGetEventBus();
+          eventBus?.publish({
+            type: EventTypes.WAIVER_PROCESSED,
+            leagueId: league.id,
+            payload: {
+              processed: result.processed,
+              successful: result.successful,
+            },
           });
         } catch (leagueError) {
           logger.error(`Failed to process waivers for league ${league.id}`, {
