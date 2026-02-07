@@ -121,7 +121,8 @@ export function calculateRemainingStats(
     defSacks: Math.max(0, projectionStats.defSacks - actualStats.defSacks),
     defFumbleRec: Math.max(0, projectionStats.defFumbleRec - actualStats.defFumbleRec),
     defSafety: Math.max(0, projectionStats.defSafety - actualStats.defSafety),
-    defPointsAllowed: 0, // Points allowed not projected for remaining
+    // Project remaining points allowed (can worsen DEF score)
+    defPointsAllowed: Math.max(0, projectionStats.defPointsAllowed - actualStats.defPointsAllowed),
   };
 }
 

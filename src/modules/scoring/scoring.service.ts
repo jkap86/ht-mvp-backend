@@ -401,7 +401,8 @@ export class ScoringService {
             const scaledRemaining = remainingPoints * pctRemaining;
 
             const projectedBonuses = calculateProjectedBonuses(actualStats, projStats, rules);
-            projectedTotal += actualPoints + scaledRemaining + projectedBonuses;
+            const scaledBonuses = projectedBonuses * pctRemaining;
+            projectedTotal += actualPoints + scaledRemaining + scaledBonuses;
           } else if (projStats) {
             // Have projection but no actual stats yet - use full projection
             projectedTotal += this.calculatePlayerPoints(projStats, rules, position);
