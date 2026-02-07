@@ -25,6 +25,7 @@ const mockDraft: Draft = {
   rounds: 15,
   pickTimeSeconds: 90,
   status: 'not_started',
+  phase: 'SETUP',
   currentPick: 1,
   currentRound: 1,
   currentRosterId: null,

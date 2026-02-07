@@ -49,6 +49,7 @@ const mockFastDraft: Draft = {
   rounds: 15,
   pickTimeSeconds: 60,
   status: 'in_progress',
+  phase: 'LIVE',
   currentPick: 1,
   currentRound: 1,
   currentRosterId: 1,
