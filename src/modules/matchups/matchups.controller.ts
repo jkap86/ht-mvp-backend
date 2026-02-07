@@ -43,8 +43,10 @@ export class MatchupsController {
 
       // Parse optional week parameter - if not provided, return all matchups
       const weekParam = req.query.week as string | undefined;
-      const weekParsed = weekParam ? parseInt(weekParam, 10) : undefined;
-      const week = weekParsed && !isNaN(weekParsed) ? weekParsed : undefined;
+      const weekParsed = weekParam !== undefined ? parseInt(weekParam, 10) : undefined;
+      const week = weekParsed !== undefined && !isNaN(weekParsed) && weekParsed >= 1
+        ? weekParsed
+        : undefined;
 
       // Parse optional season parameter
       const seasonParam = req.query.season as string | undefined;
