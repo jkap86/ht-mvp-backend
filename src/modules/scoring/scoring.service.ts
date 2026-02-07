@@ -376,10 +376,16 @@ export class ScoringService {
 
         // Determine projected final based on game state
         if (!gameStatus || (!gameStatus.isInProgress && !gameStatus.isComplete)) {
-          // Game not started: use full projection
-          projectedTotal += projStats
-            ? this.calculatePlayerPoints(projStats, rules, position)
-            : actualPoints;
+          // No game status info - check if we have actual stats
+          if (actualStats && actualStats.passYards + actualStats.rushYards + actualStats.recYards > 0) {
+            // Have stats but no game status - treat as complete to avoid snap-back
+            projectedTotal += actualPoints;
+          } else {
+            // Game not started: use full projection
+            projectedTotal += projStats
+              ? this.calculatePlayerPoints(projStats, rules, position)
+              : actualPoints;
+          }
         } else if (gameStatus.isComplete) {
           // Game complete: projected = actual
           projectedTotal += actualPoints;
