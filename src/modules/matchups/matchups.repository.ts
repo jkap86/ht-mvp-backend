@@ -54,9 +54,35 @@ export class MatchupsRepository {
       ...matchupFromDatabase(row),
       roster1TeamName: row.roster1_team_name,
       roster2TeamName: row.roster2_team_name,
-      roster1Record: { wins: 0, losses: 0, ties: 0 },
-      roster2Record: { wins: 0, losses: 0, ties: 0 },
+      // Records omitted - use standings endpoint to get real records
     }));
+  }
+
+  /**
+   * Get a single matchup by ID with team names (efficient single-matchup fetch)
+   */
+  async findByIdWithDetails(matchupId: number): Promise<MatchupDetails | null> {
+    const result = await this.db.query(
+      `SELECT m.*,
+              COALESCE(r1.settings->>'team_name', u1.username, 'Team ' || r1.roster_id) as roster1_team_name,
+              COALESCE(r2.settings->>'team_name', u2.username, 'Team ' || r2.roster_id) as roster2_team_name
+       FROM matchups m
+       JOIN rosters r1 ON m.roster1_id = r1.id
+       JOIN rosters r2 ON m.roster2_id = r2.id
+       LEFT JOIN users u1 ON r1.user_id = u1.id
+       LEFT JOIN users u2 ON r2.user_id = u2.id
+       WHERE m.id = $1`,
+      [matchupId]
+    );
+
+    if (result.rows.length === 0) return null;
+
+    const row = result.rows[0];
+    return {
+      ...matchupFromDatabase(row),
+      roster1TeamName: row.roster1_team_name,
+      roster2TeamName: row.roster2_team_name,
+    };
   }
 
   /**

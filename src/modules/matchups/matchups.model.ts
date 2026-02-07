@@ -51,8 +51,9 @@ export function matchupToResponse(matchup: Matchup) {
 export interface MatchupDetails extends Matchup {
   roster1TeamName: string;
   roster2TeamName: string;
-  roster1Record: { wins: number; losses: number; ties: number };
-  roster2Record: { wins: number; losses: number; ties: number };
+  // Records are optional - computed from standings when needed
+  roster1Record?: { wins: number; losses: number; ties: number };
+  roster2Record?: { wins: number; losses: number; ties: number };
 }
 
 export function matchupDetailsToResponse(matchup: MatchupDetails) {
@@ -60,8 +61,9 @@ export function matchupDetailsToResponse(matchup: MatchupDetails) {
     ...matchupToResponse(matchup),
     roster1_team_name: matchup.roster1TeamName,
     roster2_team_name: matchup.roster2TeamName,
-    roster1_record: matchup.roster1Record,
-    roster2_record: matchup.roster2Record,
+    // Only include records if they exist (computed from standings)
+    ...(matchup.roster1Record && { roster1_record: matchup.roster1Record }),
+    ...(matchup.roster2Record && { roster2_record: matchup.roster2Record }),
   };
 }
 

@@ -56,7 +56,8 @@ export class MatchupService {
    * Get a single matchup with full details
    */
   async getMatchup(matchupId: number, userId: string): Promise<MatchupDetails | null> {
-    const matchup = await this.matchupsRepo.findById(matchupId);
+    // Use efficient single-matchup fetch instead of loading all week's matchups
+    const matchup = await this.matchupsRepo.findByIdWithDetails(matchupId);
     if (!matchup) return null;
 
     // Validate league membership
@@ -65,13 +66,7 @@ export class MatchupService {
       throw new ForbiddenException('You are not a member of this league');
     }
 
-    const matchups = await this.matchupsRepo.findByLeagueAndWeekWithDetails(
-      matchup.leagueId,
-      matchup.season,
-      matchup.week
-    );
-
-    return matchups.find((m) => m.id === matchupId) || null;
+    return matchup;
   }
 
   /**
@@ -85,8 +80,9 @@ export class MatchupService {
     const matchupDetails = await this.getMatchup(matchupId, userId);
     if (!matchupDetails) return null;
 
-    // Get lineups for both rosters
-    const [lineup1, lineup2] = await Promise.all([
+    // Fetch league + lineups in parallel (avoid double-fetch in buildTeamLineup)
+    const [league, lineup1, lineup2] = await Promise.all([
+      this.leagueRepo.findById(matchupDetails.leagueId),
       this.lineupsRepo.findByRosterAndWeek(
         matchupDetails.roster1Id,
         matchupDetails.season,
@@ -99,24 +95,34 @@ export class MatchupService {
       ),
     ]);
 
-    // Build team lineups
-    const team1 = await this.buildTeamLineup(
-      matchupDetails.roster1Id,
-      matchupDetails.roster1TeamName,
-      lineup1?.lineup,
-      matchupDetails.season,
-      matchupDetails.week,
-      matchupDetails.roster1Points
-    );
+    // Compute scoring rules once for both teams
+    const scoringType: ScoringType = league?.scoringSettings?.type || 'ppr';
+    const customRules = league?.scoringSettings?.rules;
+    const scoringRules: ScoringRules = customRules
+      ? { ...DEFAULT_SCORING_RULES[scoringType], ...customRules }
+      : DEFAULT_SCORING_RULES[scoringType];
 
-    const team2 = await this.buildTeamLineup(
-      matchupDetails.roster2Id,
-      matchupDetails.roster2TeamName,
-      lineup2?.lineup,
-      matchupDetails.season,
-      matchupDetails.week,
-      matchupDetails.roster2Points
-    );
+    // Build team lineups in parallel with shared scoring rules
+    const [team1, team2] = await Promise.all([
+      this.buildTeamLineup(
+        matchupDetails.roster1Id,
+        matchupDetails.roster1TeamName,
+        lineup1?.lineup,
+        matchupDetails.season,
+        matchupDetails.week,
+        matchupDetails.roster1Points,
+        scoringRules
+      ),
+      this.buildTeamLineup(
+        matchupDetails.roster2Id,
+        matchupDetails.roster2TeamName,
+        lineup2?.lineup,
+        matchupDetails.season,
+        matchupDetails.week,
+        matchupDetails.roster2Points,
+        scoringRules
+      ),
+    ]);
 
     return {
       ...matchupDetails,
@@ -127,6 +133,7 @@ export class MatchupService {
 
   /**
    * Build team lineup with player details and points
+   * @param scoringRules - Scoring rules passed in to avoid redundant league lookups
    */
   private async buildTeamLineup(
     rosterId: number,
@@ -134,7 +141,8 @@ export class MatchupService {
     lineup: LineupSlots | undefined,
     season: number,
     week: number,
-    totalPoints: number | null
+    totalPoints: number | null,
+    scoringRules: ScoringRules
   ): Promise<MatchupTeamLineup> {
     if (!lineup) {
       return {
@@ -145,10 +153,14 @@ export class MatchupService {
       };
     }
 
+    // Derive starter slots dynamically from lineup keys (excludes BN, IR, TAXI)
+    const reserveSlots = ['BN', 'IR', 'TAXI'];
+    const starterSlots = (Object.keys(lineup) as PositionSlot[]).filter(
+      (slot) => !reserveSlots.includes(slot) && Array.isArray(lineup[slot]) && lineup[slot].length > 0
+    );
+
     // Collect all player IDs
     const allPlayerIds: number[] = [];
-    const starterSlots: PositionSlot[] = ['QB', 'RB', 'WR', 'TE', 'FLEX', 'K', 'DEF'];
-
     for (const slot of starterSlots) {
       allPlayerIds.push(...(lineup[slot] || []));
     }
@@ -172,15 +184,6 @@ export class MatchupService {
     // Create maps for lookup
     const playerMap = new Map(players.map((p) => [p.id, p]));
     const statsMap = new Map(stats.map((s) => [s.playerId, s]));
-
-    // Get scoring rules for this league
-    const roster = await this.rosterRepo.findById(rosterId);
-    const league = roster ? await this.leagueRepo.findById(roster.leagueId) : null;
-    const scoringType: ScoringType = league?.scoringSettings?.type || 'ppr';
-    const customRules = league?.scoringSettings?.rules;
-    const scoringRules: ScoringRules = customRules
-      ? { ...DEFAULT_SCORING_RULES[scoringType], ...customRules }
-      : DEFAULT_SCORING_RULES[scoringType];
 
     // Build player performance list
     const performances: MatchupPlayerPerformance[] = [];
