@@ -64,6 +64,10 @@ export class MedianService {
    * Calculate and store median results for a week.
    * Should be called within a transaction during week finalization.
    *
+   * Important: Includes ALL rosters, even those without a lineup row.
+   * Rosters without a lineup get 0 points to ensure they're included in the median
+   * calculation and receive a median result.
+   *
    * @param client - Database client (must be within a transaction)
    * @param leagueId - League ID
    * @param season - Season year
@@ -76,13 +80,23 @@ export class MedianService {
     season: number,
     week: number
   ): Promise<number | null> {
-    // Get all lineup scores for the week
-    const lineups = await this.lineupsRepo.getByLeagueAndWeek(leagueId, season, week);
+    // Get ALL rosters with their lineup points (0 if no lineup row exists)
+    // This ensures rosters without lineups are included in median calculation
+    const result = await client.query(
+      `SELECT r.id AS roster_id,
+              COALESCE(rl.total_points, 0) AS points
+       FROM rosters r
+       LEFT JOIN roster_lineups rl
+         ON rl.roster_id = r.id
+        AND rl.season = $2
+        AND rl.week = $3
+       WHERE r.league_id = $1`,
+      [leagueId, season, week]
+    );
 
-    // Build score list - use 0 for null total_points
-    const scores = lineups.map((l) => ({
-      rosterId: l.rosterId,
-      points: l.totalPoints ?? 0,
+    const scores = result.rows.map((row) => ({
+      rosterId: Number(row.roster_id),
+      points: Number(row.points) || 0,
     }));
 
     // Skip if insufficient teams (need at least 2 for meaningful median)
@@ -105,12 +119,12 @@ export class MedianService {
 
     // Insert new results for each roster
     for (const { rosterId, points } of scores) {
-      const result = this.getMedianResult(points, median);
+      const medianResult = this.getMedianResult(points, median);
       await client.query(
         `INSERT INTO weekly_median_results
          (league_id, season, week, median_points, roster_id, roster_points, result)
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [leagueId, season, week, roundedMedian, rosterId, points, result]
+        [leagueId, season, week, roundedMedian, rosterId, points, medianResult]
       );
     }
 

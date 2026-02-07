@@ -250,10 +250,16 @@ export class MatchupsRepository {
   /**
    * Calculate standings from finalized matchups.
    * Includes H2H and median record breakdown when median data exists.
+   * Totals are gated by the useLeagueMedian setting - when OFF, only H2H counts.
    */
   async getStandings(leagueId: number, season: number): Promise<Standing[]> {
     const result = await this.db.query(
-      `WITH h2h_results AS (
+      `WITH league_cfg AS (
+        SELECT (COALESCE(league_settings->>'useLeagueMedian', 'false'))::boolean AS use_median
+        FROM leagues
+        WHERE id = $1
+      ),
+      h2h_results AS (
         SELECT
           r.id as roster_id,
           COALESCE(r.settings->>'team_name', u.username, 'Team ' || r.roster_id) as team_name,
@@ -319,13 +325,26 @@ export class MatchupsRepository {
         m.median_wins,
         m.median_losses,
         m.median_ties,
-        (h.h2h_wins + COALESCE(m.median_wins, 0)) as total_wins,
-        (h.h2h_losses + COALESCE(m.median_losses, 0)) as total_losses,
-        (h.h2h_ties + COALESCE(m.median_ties, 0)) as total_ties,
+        -- Totals gated by setting: when OFF, only H2H counts
+        CASE WHEN (SELECT use_median FROM league_cfg)
+          THEN h.h2h_wins + COALESCE(m.median_wins, 0)
+          ELSE h.h2h_wins
+        END as total_wins,
+        CASE WHEN (SELECT use_median FROM league_cfg)
+          THEN h.h2h_losses + COALESCE(m.median_losses, 0)
+          ELSE h.h2h_losses
+        END as total_losses,
+        CASE WHEN (SELECT use_median FROM league_cfg)
+          THEN h.h2h_ties + COALESCE(m.median_ties, 0)
+          ELSE h.h2h_ties
+        END as total_ties,
         h.points_for,
         h.points_against,
         ROW_NUMBER() OVER (ORDER BY
-          (h.h2h_wins + COALESCE(m.median_wins, 0)) DESC,
+          CASE WHEN (SELECT use_median FROM league_cfg)
+            THEN h.h2h_wins + COALESCE(m.median_wins, 0)
+            ELSE h.h2h_wins
+          END DESC,
           h.points_for DESC
         ) as rank
       FROM h2h_results h
