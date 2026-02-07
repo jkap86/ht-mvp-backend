@@ -14,7 +14,7 @@ import {
   MatchupPlayerPerformance,
 } from './matchups.model';
 import { LineupSlots, PositionSlot } from '../lineups/lineups.model';
-import { NotFoundException, ForbiddenException } from '../../utils/exceptions';
+import { NotFoundException, ForbiddenException, ValidationException } from '../../utils/exceptions';
 
 /**
  * Core matchup service handling CRUD operations, detail fetching, and scoring updates.
@@ -50,6 +50,30 @@ export class MatchupService {
 
     const season = parseInt(league.season, 10);
     return this.matchupsRepo.findByLeagueAndWeekWithDetails(leagueId, season, week);
+  }
+
+  /**
+   * Get all matchups for a season (no week filter)
+   * Used for finding max scheduled week and getting full schedule
+   */
+  async getAllMatchups(
+    leagueId: number,
+    userId: string,
+    seasonOverride?: number
+  ): Promise<MatchupDetails[]> {
+    // Validate league membership
+    const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
+    if (!isMember) {
+      throw new ForbiddenException('You are not a member of this league');
+    }
+
+    const league = await this.leagueRepo.findById(leagueId);
+    if (!league) {
+      throw new NotFoundException('League not found');
+    }
+
+    const season = seasonOverride ?? parseInt(league.season, 10);
+    return this.matchupsRepo.findAllByLeagueAndSeasonWithDetails(leagueId, season);
   }
 
   /**
@@ -175,10 +199,13 @@ export class MatchupService {
       };
     }
 
+    // Deduplicate player IDs before DB query to prevent duplicate fetches
+    const uniquePlayerIds = [...new Set(allPlayerIds)];
+
     // Fetch players and stats in parallel
     const [players, stats] = await Promise.all([
-      this.playerRepo.findByIds(allPlayerIds),
-      this.statsRepo.findByPlayersAndWeek(allPlayerIds, season, week),
+      this.playerRepo.findByIds(uniquePlayerIds),
+      this.statsRepo.findByPlayersAndWeek(uniquePlayerIds, season, week),
     ]);
 
     // Create maps for lookup
@@ -250,6 +277,15 @@ export class MatchupService {
     }
 
     const season = parseInt(league.season, 10);
+
+    // Validate week is within scheduled range
+    const maxWeek = await this.matchupsRepo.getMaxScheduledWeek(leagueId, season);
+    if (maxWeek === null) {
+      throw new ValidationException('No matchups have been scheduled for this league');
+    }
+    if (week > maxWeek) {
+      throw new ValidationException(`Week ${week} is beyond the scheduled weeks (max: ${maxWeek})`);
+    }
 
     // First calculate all scores
     await this.scoringService.calculateWeeklyScores(leagueId, week, userId);

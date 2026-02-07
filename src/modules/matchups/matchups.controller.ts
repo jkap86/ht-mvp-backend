@@ -32,13 +32,34 @@ export class MatchupsController {
   }
 
   // GET /api/leagues/:leagueId/matchups
+  // Query params:
+  //   - week (optional): If provided, returns matchups for that week only.
+  //                      If omitted, returns all matchups for the season.
+  //   - season (optional): Filter by season year. Defaults to league's current season.
   async getMatchups(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const leagueId = requireLeagueId(req);
       const userId = requireUserId(req);
-      const week = parseInt(req.query.week as string, 10) || 1;
 
-      const matchups = await this.matchupService.getWeekMatchups(leagueId, week, userId);
+      // Parse optional week parameter - if not provided, return all matchups
+      const weekParam = req.query.week as string | undefined;
+      const weekParsed = weekParam ? parseInt(weekParam, 10) : undefined;
+      const week = weekParsed && !isNaN(weekParsed) ? weekParsed : undefined;
+
+      // Parse optional season parameter
+      const seasonParam = req.query.season as string | undefined;
+      const seasonParsed = seasonParam ? parseInt(seasonParam, 10) : undefined;
+      const season = seasonParsed && !isNaN(seasonParsed) ? seasonParsed : undefined;
+
+      let matchups;
+      if (week !== undefined) {
+        // Fetch matchups for specific week
+        matchups = await this.matchupService.getWeekMatchups(leagueId, week, userId);
+      } else {
+        // Fetch all matchups for the season (no week filter)
+        matchups = await this.matchupService.getAllMatchups(leagueId, userId, season);
+      }
+
       res.json({ matchups: matchups.map(matchupDetailsToResponse) });
     } catch (error) {
       next(error);
@@ -48,6 +69,7 @@ export class MatchupsController {
   // GET /api/leagues/:leagueId/matchups/:matchupId
   async getMatchup(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
+      const leagueId = requireLeagueId(req);
       const matchupId = parseIntParam(req.params.matchupId);
       const userId = requireUserId(req);
 
@@ -58,6 +80,13 @@ export class MatchupsController {
         res.status(404).json({ error: 'Matchup not found' });
         return;
       }
+
+      // Verify the matchup belongs to the specified league
+      if (matchup.leagueId !== leagueId) {
+        res.status(404).json({ error: 'Matchup not found' });
+        return;
+      }
+
       res.json({ matchup: matchupDetailsToResponse(matchup) });
     } catch (error) {
       next(error);
@@ -67,6 +96,7 @@ export class MatchupsController {
   // GET /api/leagues/:leagueId/matchups/:matchupId/detail
   async getMatchupWithLineups(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
+      const leagueId = requireLeagueId(req);
       const matchupId = parseIntParam(req.params.matchupId);
       const userId = requireUserId(req);
 
@@ -77,6 +107,13 @@ export class MatchupsController {
         res.status(404).json({ error: 'Matchup not found' });
         return;
       }
+
+      // Verify the matchup belongs to the specified league
+      if (matchup.leagueId !== leagueId) {
+        res.status(404).json({ error: 'Matchup not found' });
+        return;
+      }
+
       res.json({ matchup: matchupWithLineupsToResponse(matchup) });
     } catch (error) {
       next(error);
@@ -125,8 +162,17 @@ export class MatchupsController {
       const userId = requireUserId(req);
       const { week } = req.body;
 
-      await this.matchupService.finalizeWeekMatchups(leagueId, week, userId);
-      res.json({ success: true, message: `Week ${week} matchups finalized` });
+      // Validate week parameter
+      if (week === undefined || week === null) {
+        throw new ValidationException('Week is required');
+      }
+      const weekNum = parseInt(week, 10);
+      if (isNaN(weekNum) || weekNum < 1) {
+        throw new ValidationException('Week must be a positive integer');
+      }
+
+      await this.matchupService.finalizeWeekMatchups(leagueId, weekNum, userId);
+      res.json({ success: true, message: `Week ${weekNum} matchups finalized` });
     } catch (error) {
       next(error);
     }
@@ -152,8 +198,17 @@ export class MatchupsController {
       const userId = requireUserId(req);
       const { week } = req.body;
 
-      await this.scoringService.calculateWeeklyScores(leagueId, week, userId);
-      res.json({ success: true, message: `Scores calculated for week ${week}` });
+      // Validate week parameter
+      if (week === undefined || week === null) {
+        throw new ValidationException('Week is required');
+      }
+      const weekNum = parseInt(week, 10);
+      if (isNaN(weekNum) || weekNum < 1) {
+        throw new ValidationException('Week must be a positive integer');
+      }
+
+      await this.scoringService.calculateWeeklyScores(leagueId, weekNum, userId);
+      res.json({ success: true, message: `Scores calculated for week ${weekNum}` });
     } catch (error) {
       next(error);
     }

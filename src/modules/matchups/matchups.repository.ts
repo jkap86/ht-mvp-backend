@@ -29,6 +29,58 @@ export class MatchupsRepository {
   }
 
   /**
+   * Get all matchups for a league/season (no week filter)
+   * Used for finding max scheduled week
+   */
+  async findAllByLeagueAndSeason(leagueId: number, season: number): Promise<Matchup[]> {
+    const result = await this.db.query(
+      `SELECT * FROM matchups
+       WHERE league_id = $1 AND season = $2
+       ORDER BY week, id`,
+      [leagueId, season]
+    );
+
+    return result.rows.map(matchupFromDatabase);
+  }
+
+  /**
+   * Get all matchups for a league/season with team names
+   */
+  async findAllByLeagueAndSeasonWithDetails(leagueId: number, season: number): Promise<MatchupDetails[]> {
+    const result = await this.db.query(
+      `SELECT m.*,
+              COALESCE(r1.settings->>'team_name', u1.username, 'Team ' || r1.roster_id) as roster1_team_name,
+              COALESCE(r2.settings->>'team_name', u2.username, 'Team ' || r2.roster_id) as roster2_team_name
+       FROM matchups m
+       JOIN rosters r1 ON m.roster1_id = r1.id
+       JOIN rosters r2 ON m.roster2_id = r2.id
+       LEFT JOIN users u1 ON r1.user_id = u1.id
+       LEFT JOIN users u2 ON r2.user_id = u2.id
+       WHERE m.league_id = $1 AND m.season = $2
+       ORDER BY m.week, m.id`,
+      [leagueId, season]
+    );
+
+    return result.rows.map((row) => ({
+      ...matchupFromDatabase(row),
+      roster1TeamName: row.roster1_team_name,
+      roster2TeamName: row.roster2_team_name,
+    }));
+  }
+
+  /**
+   * Get the maximum week number with scheduled matchups for a league/season
+   */
+  async getMaxScheduledWeek(leagueId: number, season: number): Promise<number | null> {
+    const result = await this.db.query(
+      `SELECT MAX(week) as max_week FROM matchups WHERE league_id = $1 AND season = $2`,
+      [leagueId, season]
+    );
+
+    return result.rows[0]?.max_week ?? null;
+  }
+
+  /**
    * Get matchups for a league/week with team names
    */
   async findByLeagueAndWeekWithDetails(
