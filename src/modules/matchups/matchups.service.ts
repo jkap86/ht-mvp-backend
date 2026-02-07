@@ -253,10 +253,15 @@ export class MatchupService {
       });
     }
 
+    // Compute total from starters if stored total is null (matchup not yet finalized)
+    const computedTotal = performances
+      .filter((p) => p.isStarter)
+      .reduce((sum, p) => sum + p.points, 0);
+
     return {
       rosterId,
       teamName,
-      totalPoints: totalPoints ?? 0,
+      totalPoints: totalPoints ?? computedTotal,
       players: performances,
     };
   }

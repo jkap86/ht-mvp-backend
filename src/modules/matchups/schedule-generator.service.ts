@@ -160,12 +160,9 @@ export class ScheduleGeneratorService {
         // Skip bye matchups
         if (team1 === -1 || team2 === -1) continue;
 
-        // Alternate home/away based on week
-        if (week % 2 === 0) {
-          matchups.push({ week, roster1Id: team2, roster2Id: team1 });
-        } else {
-          matchups.push({ week, roster1Id: team1, roster2Id: team2 });
-        }
+        // Always use canonical order (smaller ID first) to prevent duplicate matchups
+        const [lowId, highId] = team1 < team2 ? [team1, team2] : [team2, team1];
+        matchups.push({ week, roster1Id: lowId, roster2Id: highId });
       }
     }
 
