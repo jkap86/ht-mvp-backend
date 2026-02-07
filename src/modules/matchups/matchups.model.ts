@@ -54,6 +54,11 @@ export interface MatchupDetails extends Matchup {
   // Records are optional - computed from standings when needed
   roster1Record?: { wins: number; losses: number; ties: number };
   roster2Record?: { wins: number; losses: number; ties: number };
+  // Live scores (for non-final matchups, from roster_lineups)
+  roster1PointsActual?: number | null;
+  roster1PointsProjected?: number | null;
+  roster2PointsActual?: number | null;
+  roster2PointsProjected?: number | null;
 }
 
 export function matchupDetailsToResponse(matchup: MatchupDetails) {
@@ -64,6 +69,11 @@ export function matchupDetailsToResponse(matchup: MatchupDetails) {
     // Only include records if they exist (computed from standings)
     ...(matchup.roster1Record && { roster1_record: matchup.roster1Record }),
     ...(matchup.roster2Record && { roster2_record: matchup.roster2Record }),
+    // Live scores (for non-final matchups)
+    roster1_points_actual: matchup.roster1PointsActual ?? null,
+    roster1_points_projected: matchup.roster1PointsProjected ?? null,
+    roster2_points_actual: matchup.roster2PointsActual ?? null,
+    roster2_points_projected: matchup.roster2PointsProjected ?? null,
   };
 }
 

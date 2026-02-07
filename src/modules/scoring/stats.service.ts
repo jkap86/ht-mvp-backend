@@ -1,5 +1,6 @@
 import { SleeperApiClient, SleeperPlayerStats } from '../players/sleeper.client';
 import { PlayerStatsRepository } from './scoring.repository';
+import { PlayerProjectionsRepository } from './projections.repository';
 import { PlayerRepository } from '../players/players.repository';
 import { PlayerStats } from './scoring.model';
 import { logger } from '../../config/env.config';
@@ -14,7 +15,8 @@ export class StatsService {
   constructor(
     private readonly sleeperClient: SleeperApiClient,
     private readonly statsRepo: PlayerStatsRepository,
-    private readonly playerRepo: PlayerRepository
+    private readonly playerRepo: PlayerRepository,
+    private readonly projectionsRepo?: PlayerProjectionsRepository
   ) {}
 
   /**
@@ -68,11 +70,17 @@ export class StatsService {
 
   /**
    * Sync weekly player projections from Sleeper API
-   * Projections are stored in the same player_stats table with a different source marker
+   * Projections are stored in a separate player_projections table to avoid
+   * overwriting actual stats during live games.
    * @param season - NFL season year
    * @param week - Week number (1-18)
    */
   async syncWeeklyProjections(season: number, week: number): Promise<StatsSyncResult> {
+    if (!this.projectionsRepo) {
+      logger.warn('ProjectionsRepository not configured, skipping projections sync');
+      return { synced: 0, skipped: 0, total: 0 };
+    }
+
     logger.info(`Syncing projections for ${season} week ${week}...`);
 
     // Fetch projections from Sleeper
@@ -86,7 +94,7 @@ export class StatsService {
     // Get sleeper_id -> player_id mapping
     const sleeperIdMap = await this.playerRepo.getSleeperIdMap();
 
-    // Transform and prepare stats for bulk upsert
+    // Transform and prepare projections for bulk upsert
     const projectionsToUpsert: Array<
       Partial<PlayerStats> & { playerId: number; season: number; week: number }
     > = [];
@@ -104,10 +112,9 @@ export class StatsService {
       projectionsToUpsert.push(transformed);
     }
 
-    // Note: For projections, we might want a separate table in the future
-    // For now, actual stats will overwrite projections when the week is complete
+    // Store projections in dedicated player_projections table
     if (projectionsToUpsert.length > 0) {
-      await this.statsRepo.bulkUpsert(projectionsToUpsert);
+      await this.projectionsRepo.bulkUpsert(projectionsToUpsert);
     }
 
     logger.info(

@@ -81,7 +81,7 @@ export class MatchupsRepository {
   }
 
   /**
-   * Get matchups for a league/week with team names
+   * Get matchups for a league/week with team names and live scores
    */
   async findByLeagueAndWeekWithDetails(
     leagueId: number,
@@ -91,12 +91,20 @@ export class MatchupsRepository {
     const result = await this.db.query(
       `SELECT m.*,
               COALESCE(r1.settings->>'team_name', u1.username, 'Team ' || r1.roster_id) as roster1_team_name,
-              COALESCE(r2.settings->>'team_name', u2.username, 'Team ' || r2.roster_id) as roster2_team_name
+              COALESCE(r2.settings->>'team_name', u2.username, 'Team ' || r2.roster_id) as roster2_team_name,
+              rl1.total_points_live as roster1_points_live,
+              rl1.total_points_projected_live as roster1_points_projected,
+              rl2.total_points_live as roster2_points_live,
+              rl2.total_points_projected_live as roster2_points_projected
        FROM matchups m
        JOIN rosters r1 ON m.roster1_id = r1.id
        JOIN rosters r2 ON m.roster2_id = r2.id
        LEFT JOIN users u1 ON r1.user_id = u1.id
        LEFT JOIN users u2 ON r2.user_id = u2.id
+       LEFT JOIN roster_lineups rl1 ON m.roster1_id = rl1.roster_id
+         AND rl1.season = m.season AND rl1.week = m.week
+       LEFT JOIN roster_lineups rl2 ON m.roster2_id = rl2.roster_id
+         AND rl2.season = m.season AND rl2.week = m.week
        WHERE m.league_id = $1 AND m.season = $2 AND m.week = $3
        ORDER BY m.id`,
       [leagueId, season, week]
@@ -106,23 +114,39 @@ export class MatchupsRepository {
       ...matchupFromDatabase(row),
       roster1TeamName: row.roster1_team_name,
       roster2TeamName: row.roster2_team_name,
-      // Records omitted - use standings endpoint to get real records
+      // Live scores (for non-final matchups)
+      roster1PointsActual: row.roster1_points_live ? parseFloat(row.roster1_points_live) : null,
+      roster1PointsProjected: row.roster1_points_projected
+        ? parseFloat(row.roster1_points_projected)
+        : null,
+      roster2PointsActual: row.roster2_points_live ? parseFloat(row.roster2_points_live) : null,
+      roster2PointsProjected: row.roster2_points_projected
+        ? parseFloat(row.roster2_points_projected)
+        : null,
     }));
   }
 
   /**
-   * Get a single matchup by ID with team names (efficient single-matchup fetch)
+   * Get a single matchup by ID with team names and live scores (efficient single-matchup fetch)
    */
   async findByIdWithDetails(matchupId: number): Promise<MatchupDetails | null> {
     const result = await this.db.query(
       `SELECT m.*,
               COALESCE(r1.settings->>'team_name', u1.username, 'Team ' || r1.roster_id) as roster1_team_name,
-              COALESCE(r2.settings->>'team_name', u2.username, 'Team ' || r2.roster_id) as roster2_team_name
+              COALESCE(r2.settings->>'team_name', u2.username, 'Team ' || r2.roster_id) as roster2_team_name,
+              rl1.total_points_live as roster1_points_live,
+              rl1.total_points_projected_live as roster1_points_projected,
+              rl2.total_points_live as roster2_points_live,
+              rl2.total_points_projected_live as roster2_points_projected
        FROM matchups m
        JOIN rosters r1 ON m.roster1_id = r1.id
        JOIN rosters r2 ON m.roster2_id = r2.id
        LEFT JOIN users u1 ON r1.user_id = u1.id
        LEFT JOIN users u2 ON r2.user_id = u2.id
+       LEFT JOIN roster_lineups rl1 ON m.roster1_id = rl1.roster_id
+         AND rl1.season = m.season AND rl1.week = m.week
+       LEFT JOIN roster_lineups rl2 ON m.roster2_id = rl2.roster_id
+         AND rl2.season = m.season AND rl2.week = m.week
        WHERE m.id = $1`,
       [matchupId]
     );
@@ -134,6 +158,15 @@ export class MatchupsRepository {
       ...matchupFromDatabase(row),
       roster1TeamName: row.roster1_team_name,
       roster2TeamName: row.roster2_team_name,
+      // Live scores (for non-final matchups)
+      roster1PointsActual: row.roster1_points_live ? parseFloat(row.roster1_points_live) : null,
+      roster1PointsProjected: row.roster1_points_projected
+        ? parseFloat(row.roster1_points_projected)
+        : null,
+      roster2PointsActual: row.roster2_points_live ? parseFloat(row.roster2_points_live) : null,
+      roster2PointsProjected: row.roster2_points_projected
+        ? parseFloat(row.roster2_points_projected)
+        : null,
     };
   }
 

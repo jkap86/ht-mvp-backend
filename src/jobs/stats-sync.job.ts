@@ -1,15 +1,14 @@
 import { container, KEYS } from '../container';
 import { StatsService } from '../modules/scoring/stats.service';
+import { ScoringService } from '../modules/scoring/scoring.service';
 import { MatchupsRepository } from '../modules/matchups/matchups.repository';
 import { LineupService } from '../modules/lineups/lineups.service';
 import { tryGetSocketService } from '../socket/socket.service';
 import { logger } from '../config/env.config';
+import { isInGameWindow, getOptimalSyncInterval, SYNC_INTERVALS } from '../utils/game-window';
 
-let intervalId: NodeJS.Timeout | null = null;
+let timeoutId: NodeJS.Timeout | null = null;
 let isRunning = false;
-
-// 1 hour in milliseconds - check for stats updates hourly
-const SYNC_INTERVAL_MS = 60 * 60 * 1000;
 
 // Thursday 8:20 PM ET (20:20 in 24h format)
 const THURSDAY_LOCK_HOUR = 20;
@@ -101,6 +100,36 @@ async function checkAndLockLineups(season: number, week: number): Promise<void> 
 }
 
 /**
+ * Calculate live scoring totals for all leagues with active matchups
+ */
+async function calculateLiveScoringTotals(
+  scoringService: ScoringService,
+  leagueIds: number[],
+  season: number,
+  week: number
+): Promise<void> {
+  if (leagueIds.length === 0) return;
+
+  const inGameWindow = isInGameWindow();
+  logger.info(
+    `Calculating live scoring for ${leagueIds.length} leagues (game window: ${inGameWindow})`
+  );
+
+  for (const leagueId of leagueIds) {
+    try {
+      // Always calculate actual totals
+      await scoringService.calculateWeeklyLiveActualTotalsForLeague(leagueId, season, week);
+
+      // Calculate projected totals (uses game progress for mid-game projections)
+      await scoringService.calculateWeeklyLiveProjectedTotalsForLeague(leagueId, season, week);
+    } catch (error) {
+      // Don't fail the entire sync if one league fails
+      logger.warn(`Failed to calculate live totals for league ${leagueId}: ${error}`);
+    }
+  }
+}
+
+/**
  * Run the weekly stats sync from Sleeper API
  * Protected against concurrent runs
  */
@@ -112,8 +141,11 @@ export async function runStatsSync(): Promise<void> {
 
   isRunning = true;
   try {
-    logger.info('Starting stats sync from Sleeper API...');
+    const inGameWindow = isInGameWindow();
+    logger.info(`Starting stats sync from Sleeper API (game window: ${inGameWindow})...`);
+
     const statsService = container.resolve<StatsService>(KEYS.STATS_SERVICE);
+    const scoringService = container.resolve<ScoringService>(KEYS.SCORING_SERVICE);
     const matchupsRepo = container.resolve<MatchupsRepository>(KEYS.MATCHUPS_REPO);
 
     // Get current NFL week
@@ -121,14 +153,28 @@ export async function runStatsSync(): Promise<void> {
     const seasonNum = parseInt(season, 10);
     logger.info(`Current NFL week: ${season} week ${week}`);
 
-    // Sync stats for the current week
-    const result = await statsService.syncWeeklyStats(seasonNum, week);
+    // Sync actual stats for the current week
+    const statsResult = await statsService.syncWeeklyStats(seasonNum, week);
     logger.info(
-      `Stats sync complete: ${result.synced} synced, ${result.skipped} skipped, ${result.total} total`
+      `Stats sync complete: ${statsResult.synced} synced, ${statsResult.skipped} skipped`
     );
 
+    // Sync projections (writes to separate player_projections table)
+    const projResult = await statsService.syncWeeklyProjections(seasonNum, week);
+    logger.info(
+      `Projections sync complete: ${projResult.synced} synced, ${projResult.skipped} skipped`
+    );
+
+    // Get leagues with active matchups
+    const leagueIds = await matchupsRepo.getLeaguesWithActiveMatchups(seasonNum, week);
+
+    // Calculate live scoring totals for all leagues
+    if (leagueIds.length > 0) {
+      await calculateLiveScoringTotals(scoringService, leagueIds, seasonNum, week);
+    }
+
     // Notify leagues with active matchups for this week
-    if (result.synced > 0) {
+    if (statsResult.synced > 0 || projResult.synced > 0) {
       await notifyLeaguesOfScoreUpdate(matchupsRepo, seasonNum, week);
     }
 
@@ -175,33 +221,59 @@ export async function syncWeekProjections(
 }
 
 /**
- * Start the stats sync job scheduler
+ * Schedule the next sync with dynamic interval based on game window
+ */
+function scheduleNextSync(): void {
+  const interval = getOptimalSyncInterval();
+  const intervalMinutes = interval / 1000 / 60;
+  const inGameWindow = isInGameWindow();
+
+  logger.info(
+    `Scheduling next stats sync in ${intervalMinutes} minutes (game window: ${inGameWindow})`
+  );
+
+  timeoutId = setTimeout(async () => {
+    await runStatsSync();
+    // Schedule the next sync after this one completes
+    if (timeoutId !== null) {
+      scheduleNextSync();
+    }
+  }, interval);
+}
+
+/**
+ * Start the stats sync job scheduler with dynamic intervals
+ * - 2 minutes during game windows
+ * - 60 minutes when no games are in progress
  * @param runImmediately - If true, runs sync immediately on startup
  */
 export function startStatsSyncJob(runImmediately = false): void {
-  if (intervalId) {
+  if (timeoutId) {
     logger.warn('Stats sync job already running');
     return;
   }
 
-  const intervalMinutes = SYNC_INTERVAL_MS / 1000 / 60;
-  logger.info(`Starting stats sync job (interval: ${intervalMinutes}min)`);
+  logger.info(
+    `Starting stats sync job with dynamic intervals (${SYNC_INTERVALS.LIVE / 1000 / 60}min live, ${SYNC_INTERVALS.OFF / 1000 / 60}min off)`
+  );
 
   // Run immediately on startup if requested
   if (runImmediately) {
-    runStatsSync();
+    runStatsSync().then(() => {
+      scheduleNextSync();
+    });
+  } else {
+    scheduleNextSync();
   }
-
-  intervalId = setInterval(runStatsSync, SYNC_INTERVAL_MS);
 }
 
 /**
  * Stop the stats sync job scheduler
  */
 export function stopStatsSyncJob(): void {
-  if (intervalId) {
-    clearInterval(intervalId);
-    intervalId = null;
+  if (timeoutId) {
+    clearTimeout(timeoutId);
+    timeoutId = null;
     logger.info('Stats sync job stopped');
   }
 }

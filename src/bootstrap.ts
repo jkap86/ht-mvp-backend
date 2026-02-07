@@ -17,6 +17,8 @@ import {
 } from './modules/rosters/rosters.repository';
 import { LineupsRepository } from './modules/lineups/lineups.repository';
 import { PlayerStatsRepository } from './modules/scoring/scoring.repository';
+import { PlayerProjectionsRepository } from './modules/scoring/projections.repository';
+import { GameProgressService } from './modules/scoring/game-progress.service';
 import { MatchupsRepository } from './modules/matchups/matchups.repository';
 import {
   TradesRepository,
@@ -102,6 +104,10 @@ function bootstrap(): void {
   container.register(
     KEYS.PLAYER_STATS_REPO,
     () => new PlayerStatsRepository(container.resolve(KEYS.POOL))
+  );
+  container.register(
+    KEYS.PLAYER_PROJECTIONS_REPO,
+    () => new PlayerProjectionsRepository(container.resolve(KEYS.POOL))
   );
   container.register(
     KEYS.MATCHUPS_REPO,
@@ -417,16 +423,26 @@ function bootstrap(): void {
       )
   );
 
-  container.register(
-    KEYS.SCORING_SERVICE,
-    () =>
-      new ScoringService(
-        container.resolve(KEYS.POOL),
-        container.resolve(KEYS.PLAYER_STATS_REPO),
-        container.resolve(KEYS.LINEUPS_REPO),
-        container.resolve(KEYS.LEAGUE_REPO)
-      )
-  );
+  // Game progress service for live scoring
+  container.register(KEYS.GAME_PROGRESS_SERVICE, () => new GameProgressService());
+
+  container.register(KEYS.SCORING_SERVICE, () => {
+    const scoringService = new ScoringService(
+      container.resolve(KEYS.POOL),
+      container.resolve(KEYS.PLAYER_STATS_REPO),
+      container.resolve(KEYS.LINEUPS_REPO),
+      container.resolve(KEYS.LEAGUE_REPO)
+    );
+
+    // Configure live scoring dependencies
+    scoringService.configureLiveScoring(
+      container.resolve(KEYS.PLAYER_PROJECTIONS_REPO),
+      container.resolve(KEYS.PLAYER_REPO),
+      container.resolve(KEYS.GAME_PROGRESS_SERVICE)
+    );
+
+    return scoringService;
+  });
 
   container.register(
     KEYS.STATS_SERVICE,
@@ -434,7 +450,8 @@ function bootstrap(): void {
       new StatsService(
         container.resolve(KEYS.SLEEPER_CLIENT),
         container.resolve(KEYS.PLAYER_STATS_REPO),
-        container.resolve(KEYS.PLAYER_REPO)
+        container.resolve(KEYS.PLAYER_REPO),
+        container.resolve(KEYS.PLAYER_PROJECTIONS_REPO)
       )
   );
 

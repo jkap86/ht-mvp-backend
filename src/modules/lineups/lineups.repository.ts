@@ -65,6 +65,73 @@ export class LineupsRepository {
   }
 
   /**
+   * Update live scoring totals for a lineup (used during live games)
+   * Does not affect the final total_points which is set during finalization
+   */
+  async updateLivePoints(
+    rosterId: number,
+    season: number,
+    week: number,
+    liveActual: number | null,
+    liveProjected: number | null,
+    client?: PoolClient
+  ): Promise<void> {
+    const db = client || this.db;
+    await db.query(
+      `UPDATE roster_lineups
+       SET total_points_live = $4,
+           total_points_projected_live = $5,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE roster_id = $1 AND season = $2 AND week = $3`,
+      [rosterId, season, week, liveActual, liveProjected]
+    );
+  }
+
+  /**
+   * Batch update live scoring totals for multiple lineups
+   */
+  async batchUpdateLivePoints(
+    updates: Array<{
+      rosterId: number;
+      season: number;
+      week: number;
+      liveActual: number;
+      liveProjected: number;
+    }>,
+    client?: PoolClient
+  ): Promise<void> {
+    if (updates.length === 0) return;
+
+    const db = client || this.db;
+
+    // Use a single query with UNNEST for better performance
+    const rosterIds = updates.map((u) => u.rosterId);
+    const seasons = updates.map((u) => u.season);
+    const weeks = updates.map((u) => u.week);
+    const liveActuals = updates.map((u) => u.liveActual);
+    const liveProjecteds = updates.map((u) => u.liveProjected);
+
+    await db.query(
+      `UPDATE roster_lineups rl
+       SET total_points_live = u.live_actual,
+           total_points_projected_live = u.live_projected,
+           updated_at = CURRENT_TIMESTAMP
+       FROM (
+         SELECT
+           UNNEST($1::int[]) as roster_id,
+           UNNEST($2::int[]) as season,
+           UNNEST($3::int[]) as week,
+           UNNEST($4::numeric[]) as live_actual,
+           UNNEST($5::numeric[]) as live_projected
+       ) u
+       WHERE rl.roster_id = u.roster_id
+         AND rl.season = u.season
+         AND rl.week = u.week`,
+      [rosterIds, seasons, weeks, liveActuals, liveProjecteds]
+    );
+  }
+
+  /**
    * Lock lineups for a league/week
    */
   async lockLineups(leagueId: number, season: number, week: number): Promise<void> {

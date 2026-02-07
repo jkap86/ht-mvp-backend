@@ -35,6 +35,8 @@ export interface RosterLineup {
   week: number;
   lineup: LineupSlots;
   totalPoints: number | null;
+  totalPointsLive: number | null;
+  totalPointsProjectedLive: number | null;
   isLocked: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -66,6 +68,10 @@ export function rosterLineupFromDatabase(row: any): RosterLineup {
       TAXI: lineup.TAXI || [],
     },
     totalPoints: row.total_points ? parseFloat(row.total_points) : null,
+    totalPointsLive: row.total_points_live ? parseFloat(row.total_points_live) : null,
+    totalPointsProjectedLive: row.total_points_projected_live
+      ? parseFloat(row.total_points_projected_live)
+      : null,
     isLocked: row.is_locked,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -80,6 +86,8 @@ export function rosterLineupToResponse(lineup: RosterLineup) {
     week: lineup.week,
     lineup: lineup.lineup,
     total_points: lineup.totalPoints,
+    total_points_live: lineup.totalPointsLive,
+    total_points_projected_live: lineup.totalPointsProjectedLive,
     is_locked: lineup.isLocked,
     created_at: lineup.createdAt,
     updated_at: lineup.updatedAt,
