@@ -197,6 +197,22 @@ export class ScoringService {
   // ============================================================
 
   /**
+   * Check if player has any meaningful stats (not just zeros)
+   * Used for snap-back guard to detect DEF/K stats that don't involve yards
+   */
+  private hasAnyStats(stats: PlayerStats): boolean {
+    return !!(
+      stats.passYards || stats.passTd || stats.passInt ||
+      stats.rushYards || stats.rushTd ||
+      stats.receptions || stats.recYards || stats.recTd ||
+      stats.fumblesLost || stats.twoPtConversions ||
+      stats.fgMade || stats.fgMissed || stats.patMade || stats.patMissed ||
+      stats.defTd || stats.defInt || stats.defSacks ||
+      stats.defFumbleRec || stats.defSafety || stats.defPointsAllowed
+    );
+  }
+
+  /**
    * Get all starter player IDs from a lineup
    */
   private getStarterIds(lineup: LineupSlots): number[] {
@@ -376,8 +392,8 @@ export class ScoringService {
 
         // Determine projected final based on game state
         if (!gameStatus || (!gameStatus.isInProgress && !gameStatus.isComplete)) {
-          // No game status info - check if we have actual stats
-          if (actualStats && actualStats.passYards + actualStats.rushYards + actualStats.recYards > 0) {
+          // No game status info - check if we have actual stats (including DEF/K)
+          if (actualStats && this.hasAnyStats(actualStats)) {
             // Have stats but no game status - treat as complete to avoid snap-back
             projectedTotal += actualPoints;
           } else {
