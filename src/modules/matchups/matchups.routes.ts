@@ -2,13 +2,21 @@ import { Router } from 'express';
 import { MatchupsController } from './matchups.controller';
 import { MatchupService } from './matchups.service';
 import { ScoringService } from '../scoring/scoring.service';
+import { MedianService } from './median.service';
 import { apiReadLimiter } from '../../middleware/rate-limit.middleware';
 import { container, KEYS } from '../../container';
 
 // Resolve dependencies from container
 const matchupService = container.resolve<MatchupService>(KEYS.MATCHUP_SERVICE);
 const scoringService = container.resolve<ScoringService>(KEYS.SCORING_SERVICE);
-const matchupsController = new MatchupsController(matchupService, scoringService);
+const medianService = container.resolve<MedianService>(KEYS.MEDIAN_SERVICE);
+const matchupsController = new MatchupsController(
+  matchupService,
+  scoringService,
+  undefined, // scheduleGeneratorService
+  undefined, // standingsService
+  medianService
+);
 
 const router = Router({ mergeParams: true });
 
@@ -25,6 +33,9 @@ router.get('/:matchupId/detail', apiReadLimiter, matchupsController.getMatchupWi
 
 // POST /api/leagues/:leagueId/matchups/finalize
 router.post('/finalize', matchupsController.finalizeMatchups);
+
+// POST /api/leagues/:leagueId/matchups/median/recalculate
+router.post('/median/recalculate', matchupsController.recalculateMedian);
 
 // GET /api/leagues/:leagueId/standings
 // (Mounted separately on leagues router)

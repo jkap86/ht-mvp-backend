@@ -11,6 +11,7 @@ export interface LeagueSettings {
   auctionBudget?: number;
   rosterSlots?: number;
   rosterType?: 'lineup' | 'bestball';
+  useLeagueMedian?: boolean; // When enabled, teams also play against the weekly median score
 }
 
 export class League {

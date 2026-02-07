@@ -71,9 +71,19 @@ export interface Standing {
   rosterId: number;
   teamName: string;
   userId: string | null;
+  // Total record (H2H + Median when league median is enabled)
   wins: number;
   losses: number;
   ties: number;
+  // H2H breakdown
+  h2hWins: number;
+  h2hLosses: number;
+  h2hTies: number;
+  // Median breakdown (null if league doesn't use median)
+  medianWins: number | null;
+  medianLosses: number | null;
+  medianTies: number | null;
+  // Other stats
   pointsFor: number;
   pointsAgainst: number;
   streak: string; // "W3", "L1", "T1"
@@ -88,6 +98,12 @@ export function standingToResponse(standing: Standing) {
     wins: standing.wins,
     losses: standing.losses,
     ties: standing.ties,
+    h2h_wins: standing.h2hWins,
+    h2h_losses: standing.h2hLosses,
+    h2h_ties: standing.h2hTies,
+    median_wins: standing.medianWins,
+    median_losses: standing.medianLosses,
+    median_ties: standing.medianTies,
     points_for: standing.pointsFor,
     points_against: standing.pointsAgainst,
     streak: standing.streak,

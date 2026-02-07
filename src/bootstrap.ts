@@ -62,6 +62,7 @@ import { StatsService } from './modules/scoring/stats.service';
 import { MatchupService } from './modules/matchups/matchups.service';
 import { ScheduleGeneratorService } from './modules/matchups/schedule-generator.service';
 import { StandingsService } from './modules/matchups/standings.service';
+import { MedianService } from './modules/matchups/median.service';
 import { TradesService } from './modules/trades/trades.service';
 import { WaiversService } from './modules/waivers/waivers.service';
 import { PlayoffRepository } from './modules/playoffs/playoff.repository';
@@ -264,7 +265,8 @@ function bootstrap(): void {
         container.resolve(KEYS.ROSTER_REPO),
         container.resolve(KEYS.ROSTER_SERVICE),
         container.resolve(KEYS.DRAFT_SERVICE),
-        container.resolve(KEYS.EVENT_LISTENER_SERVICE)
+        container.resolve(KEYS.EVENT_LISTENER_SERVICE),
+        container.resolve(KEYS.MATCHUPS_REPO)
       )
   );
 
@@ -446,6 +448,17 @@ function bootstrap(): void {
   );
 
   container.register(
+    KEYS.MEDIAN_SERVICE,
+    () =>
+      new MedianService(
+        container.resolve(KEYS.POOL),
+        container.resolve(KEYS.LINEUPS_REPO),
+        container.resolve(KEYS.LEAGUE_REPO),
+        container.resolve(KEYS.MATCHUPS_REPO)
+      )
+  );
+
+  container.register(
     KEYS.MATCHUP_SERVICE,
     () =>
       new MatchupService(
@@ -456,7 +469,8 @@ function bootstrap(): void {
         container.resolve(KEYS.LEAGUE_REPO),
         container.resolve(KEYS.SCORING_SERVICE),
         container.resolve(KEYS.PLAYER_REPO),
-        container.resolve(KEYS.PLAYER_STATS_REPO)
+        container.resolve(KEYS.PLAYER_STATS_REPO),
+        container.resolve(KEYS.MEDIAN_SERVICE)
       )
   );
 

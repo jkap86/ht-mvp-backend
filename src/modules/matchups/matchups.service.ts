@@ -7,6 +7,7 @@ import { PlayerStatsRepository } from '../scoring/scoring.repository';
 import { ScoringRules, DEFAULT_SCORING_RULES, ScoringType } from '../scoring/scoring.model';
 import { calculatePlayerPoints } from '../scoring/scoring-calculator';
 import { PlayerRepository } from '../players/players.repository';
+import { MedianService } from './median.service';
 import {
   MatchupDetails,
   MatchupWithLineups,
@@ -30,7 +31,8 @@ export class MatchupService {
     private readonly leagueRepo: LeagueRepository,
     private readonly scoringService: ScoringService,
     private readonly playerRepo: PlayerRepository,
-    private readonly statsRepo: PlayerStatsRepository
+    private readonly statsRepo: PlayerStatsRepository,
+    private readonly medianService?: MedianService
   ) {}
 
   /**
@@ -267,7 +269,8 @@ export class MatchupService {
   }
 
   /**
-   * Calculate and finalize matchup results for a week
+   * Calculate and finalize matchup results for a week.
+   * If league median is enabled, also calculates median results.
    */
   async finalizeWeekMatchups(leagueId: number, week: number, userId: string): Promise<void> {
     // Only commissioner can finalize matchups
@@ -302,6 +305,10 @@ export class MatchupService {
     const lineups = await this.lineupsRepo.getByLeagueAndWeek(leagueId, season, week);
     const lineupMap = new Map(lineups.map((l) => [l.rosterId, l]));
 
+    // Check if league median is enabled and this is not a playoff week
+    const useLeagueMedian = league.leagueSettings?.useLeagueMedian === true;
+    const isPlayoffWeek = matchups.some((m) => m.isPlayoff);
+
     // Update matchup scores and finalize
     const client = await this.db.connect();
     try {
@@ -317,6 +324,11 @@ export class MatchupService {
         await this.matchupsRepo.updatePoints(matchup.id, roster1Points, roster2Points, client);
 
         await this.matchupsRepo.finalize(matchup.id, client);
+      }
+
+      // Calculate and store median results if enabled and not playoff
+      if (useLeagueMedian && !isPlayoffWeek && this.medianService) {
+        await this.medianService.calculateAndStoreMedianResults(client, leagueId, season, week);
       }
 
       await client.query('COMMIT');

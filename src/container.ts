@@ -77,6 +77,7 @@ export const KEYS = {
   SCHEDULE_GENERATOR_SERVICE: 'scheduleGeneratorService',
   STANDINGS_SERVICE: 'standingsService',
   MATCHUP_SERVICE: 'matchupService',
+  MEDIAN_SERVICE: 'medianService',
   DRAFT_SERVICE: 'draftService',
   DRAFT_ORDER_SERVICE: 'draftOrderService',
   DRAFT_PICK_SERVICE: 'draftPickService',

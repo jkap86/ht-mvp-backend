@@ -248,11 +248,12 @@ export class MatchupsRepository {
   }
 
   /**
-   * Calculate standings from finalized matchups
+   * Calculate standings from finalized matchups.
+   * Includes H2H and median record breakdown when median data exists.
    */
   async getStandings(leagueId: number, season: number): Promise<Standing[]> {
     const result = await this.db.query(
-      `WITH roster_results AS (
+      `WITH h2h_results AS (
         SELECT
           r.id as roster_id,
           COALESCE(r.settings->>'team_name', u.username, 'Team ' || r.roster_id) as team_name,
@@ -261,16 +262,16 @@ export class MatchupsRepository {
             WHEN m.roster1_id = r.id AND m.roster1_points > m.roster2_points THEN 1
             WHEN m.roster2_id = r.id AND m.roster2_points > m.roster1_points THEN 1
             ELSE 0
-          END), 0) as wins,
+          END), 0) as h2h_wins,
           COALESCE(SUM(CASE
             WHEN m.roster1_id = r.id AND m.roster1_points < m.roster2_points THEN 1
             WHEN m.roster2_id = r.id AND m.roster2_points < m.roster1_points THEN 1
             ELSE 0
-          END), 0) as losses,
+          END), 0) as h2h_losses,
           COALESCE(SUM(CASE
             WHEN m.roster1_points = m.roster2_points AND m.is_final THEN 1
             ELSE 0
-          END), 0) as ties,
+          END), 0) as h2h_ties,
           COALESCE(SUM(CASE
             WHEN m.roster1_id = r.id THEN m.roster1_points
             WHEN m.roster2_id = r.id THEN m.roster2_points
@@ -288,19 +289,39 @@ export class MatchupsRepository {
           AND m.is_final = true
         WHERE r.league_id = $1
         GROUP BY r.id, r.settings, u.username
+      ),
+      median_agg AS (
+        SELECT
+          roster_id,
+          SUM(CASE WHEN result = 'W' THEN 1 ELSE 0 END) as median_wins,
+          SUM(CASE WHEN result = 'L' THEN 1 ELSE 0 END) as median_losses,
+          SUM(CASE WHEN result = 'T' THEN 1 ELSE 0 END) as median_ties
+        FROM weekly_median_results
+        WHERE league_id = $1 AND season = $2
+        GROUP BY roster_id
       )
       SELECT
-        roster_id,
-        team_name,
-        user_id,
-        wins,
-        losses,
-        ties,
-        points_for,
-        points_against,
-        ROW_NUMBER() OVER (ORDER BY wins DESC, points_for DESC) as rank
-      FROM roster_results
-      ORDER BY wins DESC, points_for DESC`,
+        h.roster_id,
+        h.team_name,
+        h.user_id,
+        h.h2h_wins,
+        h.h2h_losses,
+        h.h2h_ties,
+        m.median_wins,
+        m.median_losses,
+        m.median_ties,
+        (h.h2h_wins + COALESCE(m.median_wins, 0)) as total_wins,
+        (h.h2h_losses + COALESCE(m.median_losses, 0)) as total_losses,
+        (h.h2h_ties + COALESCE(m.median_ties, 0)) as total_ties,
+        h.points_for,
+        h.points_against,
+        ROW_NUMBER() OVER (ORDER BY
+          (h.h2h_wins + COALESCE(m.median_wins, 0)) DESC,
+          h.points_for DESC
+        ) as rank
+      FROM h2h_results h
+      LEFT JOIN median_agg m ON h.roster_id = m.roster_id
+      ORDER BY rank`,
       [leagueId, season]
     );
 
@@ -311,12 +332,22 @@ export class MatchupsRepository {
       rosterId: row.roster_id,
       teamName: row.team_name,
       userId: row.user_id,
-      wins: parseInt(row.wins, 10),
-      losses: parseInt(row.losses, 10),
-      ties: parseInt(row.ties, 10),
+      // Total record (H2H + Median)
+      wins: parseInt(row.total_wins, 10),
+      losses: parseInt(row.total_losses, 10),
+      ties: parseInt(row.total_ties, 10),
+      // H2H breakdown
+      h2hWins: parseInt(row.h2h_wins, 10),
+      h2hLosses: parseInt(row.h2h_losses, 10),
+      h2hTies: parseInt(row.h2h_ties, 10),
+      // Median breakdown (null if no median data exists)
+      medianWins: row.median_wins != null ? parseInt(row.median_wins, 10) : null,
+      medianLosses: row.median_losses != null ? parseInt(row.median_losses, 10) : null,
+      medianTies: row.median_ties != null ? parseInt(row.median_ties, 10) : null,
+      // Other stats
       pointsFor: roundPoints(parseFloat(row.points_for) || 0),
       pointsAgainst: roundPoints(parseFloat(row.points_against) || 0),
-      streak: '', // Would need to calculate from recent matchups
+      streak: '', // Calculated separately in StandingsService
       rank: parseInt(row.rank, 10),
     }));
   }
@@ -354,5 +385,21 @@ export class MatchupsRepository {
     );
 
     return result.rows.map((row) => row.league_id);
+  }
+
+  /**
+   * Check if a league has any finalized matchups for a season.
+   * Used to enforce toggle lock for league median setting.
+   */
+  async hasAnyFinalizedMatchups(leagueId: number, season: number): Promise<boolean> {
+    const result = await this.db.query(
+      `SELECT EXISTS(
+        SELECT 1 FROM matchups
+        WHERE league_id = $1 AND season = $2 AND is_final = true
+      ) as has_finalized`,
+      [leagueId, season]
+    );
+
+    return result.rows[0].has_finalized;
   }
 }

@@ -113,7 +113,9 @@ export class LeagueController {
 
       const updates: any = {};
       if (req.body.name) updates.name = req.body.name;
+      if (req.body.mode) updates.mode = req.body.mode;
       if (req.body.settings) updates.settings = req.body.settings;
+      if (req.body.league_settings) updates.leagueSettings = req.body.league_settings;
       if (req.body.scoring_settings) updates.scoringSettings = req.body.scoring_settings;
       if (req.body.status) updates.status = req.body.status;
       if (req.body.is_public !== undefined) updates.isPublic = req.body.is_public;

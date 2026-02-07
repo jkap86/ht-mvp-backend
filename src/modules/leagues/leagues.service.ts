@@ -4,6 +4,7 @@ import { League } from './leagues.model';
 import { DraftService } from '../drafts/drafts.service';
 import { getDraftStructure } from '../drafts/draft-structure-presets';
 import { EventListenerService } from '../chat/event-listener.service';
+import { MatchupsRepository } from '../matchups/matchups.repository';
 import { NotFoundException, ForbiddenException, ValidationException } from '../../utils/exceptions';
 
 export class LeagueService {
@@ -12,7 +13,8 @@ export class LeagueService {
     private readonly rosterRepo: RosterRepository,
     private readonly rosterService: RosterService,
     private readonly draftService: DraftService,
-    private readonly eventListenerService?: EventListenerService
+    private readonly eventListenerService?: EventListenerService,
+    private readonly matchupsRepo?: MatchupsRepository
   ) {}
 
   async getUserLeagues(userId: string, limit?: number, offset?: number): Promise<any[]> {
@@ -118,6 +120,22 @@ export class LeagueService {
         const modeChangeCheck = await this.leagueRepo.canChangeLeagueMode(leagueId);
         if (!modeChangeCheck.allowed) {
           throw new ValidationException(modeChangeCheck.reason!);
+        }
+      }
+    }
+
+    // Validate league median toggle lock - cannot change after first week is finalized
+    if (updates.leagueSettings?.useLeagueMedian !== undefined) {
+      const currentUseMedian = currentLeague.leagueSettings?.useLeagueMedian ?? false;
+      const newUseMedian = updates.leagueSettings.useLeagueMedian;
+
+      if (newUseMedian !== currentUseMedian && this.matchupsRepo) {
+        const season = parseInt(currentLeague.season, 10);
+        const hasFinalized = await this.matchupsRepo.hasAnyFinalizedMatchups(leagueId, season);
+        if (hasFinalized) {
+          throw new ValidationException(
+            'League median setting cannot be changed after the first week is finalized'
+          );
         }
       }
     }
