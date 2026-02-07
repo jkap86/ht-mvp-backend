@@ -5,7 +5,8 @@ import { LeagueRepository, RosterRepository } from '../leagues/leagues.repositor
 import { ScoringService } from '../scoring/scoring.service';
 import { PlayerStatsRepository } from '../scoring/scoring.repository';
 import { GameProgressService } from '../scoring/game-progress.service';
-import { ScoringRules, DEFAULT_SCORING_RULES, ScoringType } from '../scoring/scoring.model';
+import { ScoringRules } from '../scoring/scoring.model';
+import { normalizeLeagueScoringSettings } from '../scoring/scoring-settings-normalizer';
 import { calculatePlayerPoints } from '../scoring/scoring-calculator';
 import { PlayerRepository } from '../players/players.repository';
 import { MedianService } from './median.service';
@@ -129,11 +130,7 @@ export class MatchupService {
     ]);
 
     // Compute scoring rules once for both teams
-    const scoringType: ScoringType = league?.scoringSettings?.type || 'ppr';
-    const customRules = league?.scoringSettings?.rules;
-    const scoringRules: ScoringRules = customRules
-      ? { ...DEFAULT_SCORING_RULES[scoringType], ...customRules }
-      : DEFAULT_SCORING_RULES[scoringType];
+    const { rules: scoringRules } = normalizeLeagueScoringSettings(league?.scoringSettings);
 
     // Build team lineups in parallel with shared scoring rules
     const [team1, team2] = await Promise.all([

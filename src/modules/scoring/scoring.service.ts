@@ -5,7 +5,8 @@ import { LineupsRepository } from '../lineups/lineups.repository';
 import { LeagueRepository } from '../leagues/leagues.repository';
 import { PlayerRepository } from '../players/players.repository';
 import { GameProgressService, TeamGameStatus } from './game-progress.service';
-import { PlayerStats, ScoringRules, DEFAULT_SCORING_RULES, ScoringType } from './scoring.model';
+import { PlayerStats, ScoringRules, ScoringType, DEFAULT_SCORING_RULES } from './scoring.model';
+import { normalizeLeagueScoringSettings } from './scoring-settings-normalizer';
 import { LineupSlots, RosterLineup } from '../lineups/lineups.model';
 import { NotFoundException, ForbiddenException } from '../../utils/exceptions';
 import {
@@ -56,19 +57,8 @@ export class ScoringService {
       throw new NotFoundException('League not found');
     }
 
-    // Get scoring type from league settings
-    const scoringType: ScoringType = league.scoringSettings?.type || 'ppr';
-    const customRules = league.scoringSettings?.rules;
-
-    if (customRules) {
-      // Merge custom rules with defaults
-      return {
-        ...DEFAULT_SCORING_RULES[scoringType],
-        ...customRules,
-      };
-    }
-
-    return DEFAULT_SCORING_RULES[scoringType];
+    const { rules } = normalizeLeagueScoringSettings(league.scoringSettings);
+    return rules;
   }
 
   /**
@@ -231,17 +221,8 @@ export class ScoringService {
       throw new NotFoundException('League not found');
     }
 
-    const scoringType: ScoringType = league.scoringSettings?.type || 'ppr';
-    const customRules = league.scoringSettings?.rules;
-
-    if (customRules) {
-      return {
-        ...DEFAULT_SCORING_RULES[scoringType],
-        ...customRules,
-      };
-    }
-
-    return DEFAULT_SCORING_RULES[scoringType];
+    const { rules } = normalizeLeagueScoringSettings(league.scoringSettings);
+    return rules;
   }
 
   /**
