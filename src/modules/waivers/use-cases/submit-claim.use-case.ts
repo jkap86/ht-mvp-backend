@@ -19,7 +19,7 @@ import {
   ValidationException,
   ConflictException,
 } from '../../../utils/exceptions';
-import { getWaiverLockId } from '../../../utils/locks';
+import { runWithLock, LockDomain } from '../../../shared/transaction-runner';
 
 export interface SubmitClaimContext {
   db: Pool;
@@ -40,7 +40,7 @@ export async function submitClaim(
   userId: string,
   request: SubmitClaimRequest
 ): Promise<WaiverClaimWithDetails> {
-  // Validate user owns a roster in this league
+  // Validate user owns a roster in this league (fail fast outside transaction)
   const roster = await ctx.rosterRepo.findByLeagueAndUser(leagueId, userId);
   if (!roster) {
     throw new ForbiddenException('You are not a member of this league');
@@ -58,84 +58,79 @@ export async function submitClaim(
   const season = parseInt(league.season, 10);
   const currentWeek = league.currentWeek || 1;
 
-  const client = await ctx.db.connect();
-  try {
-    await client.query('BEGIN');
-    await client.query('SELECT pg_advisory_xact_lock($1)', [getWaiverLockId(leagueId)]);
-
-    // Check if player is already owned
-    const playerOwner = await ctx.rosterPlayersRepo.findOwner(leagueId, request.playerId, client);
-    if (playerOwner) {
-      throw new ValidationException('Player is already on a roster');
-    }
-
-    // Check if user already has a pending claim for this player
-    const existingClaim = await ctx.claimsRepo.hasPendingClaim(roster.id, request.playerId, client);
-    if (existingClaim) {
-      throw new ConflictException('You already have a pending claim for this player');
-    }
-
-    // Validate FAAB bid if applicable
-    const bidAmount = request.bidAmount || 0;
-    if (settings.waiverType === 'faab') {
-      const budget = await ctx.faabRepo.getByRoster(roster.id, season, client);
-      if (!budget) {
-        throw new ValidationException('FAAB budget not initialized');
+  // Execute in transaction with lock
+  const claim = await runWithLock(
+    ctx.db,
+    LockDomain.WAIVER,
+    leagueId,
+    async (client) => {
+      // Check if player is already owned
+      const playerOwner = await ctx.rosterPlayersRepo.findOwner(leagueId, request.playerId, client);
+      if (playerOwner) {
+        throw new ValidationException('Player is already on a roster');
       }
-      if (bidAmount > budget.remainingBudget) {
-        throw new ValidationException(`Bid exceeds available budget ($${budget.remainingBudget})`);
-      }
-      if (bidAmount < 0) {
-        throw new ValidationException('Bid amount cannot be negative');
-      }
-    }
 
-    // Validate drop player if provided
-    if (request.dropPlayerId) {
-      const hasPlayer = await ctx.rosterPlayersRepo.findByRosterAndPlayer(
+      // Check if user already has a pending claim for this player
+      const existingClaim = await ctx.claimsRepo.hasPendingClaim(roster.id, request.playerId, client);
+      if (existingClaim) {
+        throw new ConflictException('You already have a pending claim for this player');
+      }
+
+      // Validate FAAB bid if applicable
+      const bidAmount = request.bidAmount || 0;
+      if (settings.waiverType === 'faab') {
+        const budget = await ctx.faabRepo.getByRoster(roster.id, season, client);
+        if (!budget) {
+          throw new ValidationException('FAAB budget not initialized');
+        }
+        if (bidAmount > budget.remainingBudget) {
+          throw new ValidationException(`Bid exceeds available budget ($${budget.remainingBudget})`);
+        }
+        if (bidAmount < 0) {
+          throw new ValidationException('Bid amount cannot be negative');
+        }
+      }
+
+      // Validate drop player if provided
+      if (request.dropPlayerId) {
+        const hasPlayer = await ctx.rosterPlayersRepo.findByRosterAndPlayer(
+          roster.id,
+          request.dropPlayerId,
+          client
+        );
+        if (!hasPlayer) {
+          throw new ValidationException('You do not own the player to drop');
+        }
+      }
+
+      // Get priority snapshot for ALL claim types (used as tiebreaker in FAAB mode)
+      let priorityAtClaim: number | null = null;
+      const priority = await ctx.priorityRepo.getByRoster(roster.id, season, client);
+      priorityAtClaim = priority?.priority ?? null;
+
+      // Create the claim
+      return await ctx.claimsRepo.create(
+        leagueId,
         roster.id,
-        request.dropPlayerId,
+        request.playerId,
+        request.dropPlayerId || null,
+        bidAmount,
+        priorityAtClaim,
+        season,
+        currentWeek,
         client
       );
-      if (!hasPlayer) {
-        throw new ValidationException('You do not own the player to drop');
-      }
     }
+  );
 
-    // Get priority snapshot for ALL claim types (used as tiebreaker in FAAB mode)
-    let priorityAtClaim: number | null = null;
-    const priority = await ctx.priorityRepo.getByRoster(roster.id, season, client);
-    priorityAtClaim = priority?.priority ?? null;
+  // Get full details for response (after transaction commits)
+  const claimWithDetails = await ctx.claimsRepo.findByIdWithDetails(claim.id);
+  if (!claimWithDetails) throw new Error('Failed to get claim details');
 
-    // Create the claim
-    const claim = await ctx.claimsRepo.create(
-      leagueId,
-      roster.id,
-      request.playerId,
-      request.dropPlayerId || null,
-      bidAmount,
-      priorityAtClaim,
-      season,
-      currentWeek,
-      client
-    );
+  // Emit event via domain event bus (AFTER transaction commit)
+  emitClaimSubmitted(leagueId, claimWithDetails);
 
-    await client.query('COMMIT');
-
-    // Get full details for response
-    const claimWithDetails = await ctx.claimsRepo.findByIdWithDetails(claim.id);
-    if (!claimWithDetails) throw new Error('Failed to get claim details');
-
-    // Emit event via domain event bus (AFTER transaction commit)
-    emitClaimSubmitted(leagueId, claimWithDetails);
-
-    return claimWithDetails;
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
+  return claimWithDetails;
 }
 
 function emitClaimSubmitted(leagueId: number, claim: WaiverClaimWithDetails): void {

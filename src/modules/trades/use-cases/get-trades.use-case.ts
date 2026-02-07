@@ -42,10 +42,16 @@ export async function getTradesForLeague(
 export async function getTradeById(
   ctx: GetTradesContext,
   tradeId: number,
-  userId: string
+  userId: string,
+  leagueId: number
 ): Promise<TradeWithDetails> {
   const trade = await ctx.tradesRepo.findById(tradeId);
   if (!trade) throw new NotFoundException('Trade not found');
+
+  // Verify trade belongs to the requested league
+  if (trade.leagueId !== leagueId) {
+    throw new NotFoundException('Trade not found');
+  }
 
   const isMember = await ctx.leagueRepo.isUserMember(trade.leagueId, userId);
   if (!isMember) throw new ForbiddenException('Not a league member');

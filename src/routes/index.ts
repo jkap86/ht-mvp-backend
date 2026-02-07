@@ -33,14 +33,16 @@ router.get('/health', async (req, res) => {
   });
 });
 
-// Metrics endpoint
-router.get('/metrics', (req, res) => {
-  res.json({
-    timestamp: new Date().toISOString(),
-    ...metrics.getMetrics(),
-    pool: getPoolMetrics(),
+// Metrics endpoint (development only)
+if (process.env.NODE_ENV === 'development') {
+  router.get('/metrics', (req, res) => {
+    res.json({
+      timestamp: new Date().toISOString(),
+      ...metrics.getMetrics(),
+      pool: getPoolMetrics(),
+    });
   });
-});
+}
 
 // Auth routes
 router.use('/auth', authRoutes);

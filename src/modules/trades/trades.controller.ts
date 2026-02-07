@@ -43,13 +43,14 @@ export class TradesController {
   getTrade = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const userId = requireUserId(req);
+      const leagueId = requireLeagueId(req);
       const tradeId = parseInt(req.params.tradeId as string, 10);
 
       if (isNaN(tradeId)) {
         throw new ValidationException('Invalid trade ID');
       }
 
-      const trade = await this.tradesService.getTradeById(tradeId, userId);
+      const trade = await this.tradesService.getTradeById(tradeId, userId, leagueId);
       res.status(200).json(tradeWithDetailsToResponse(trade));
     } catch (error) {
       next(error);

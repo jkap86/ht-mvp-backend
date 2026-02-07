@@ -1,4 +1,4 @@
-export { proposeTrade, ProposeTradeContext } from './propose-trade.use-case';
+export { proposeTrade, proposeTradeStandalone, ProposeTradeContext, ProposeTradeContextWithPool } from './propose-trade.use-case';
 export {
   acceptTrade,
   executeTrade,

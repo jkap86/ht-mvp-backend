@@ -1,5 +1,6 @@
 import { Pool, PoolClient } from 'pg';
 import { RosterLineup, LineupSlots, rosterLineupFromDatabase } from './lineups.model';
+import { runInTransaction } from '../../shared/transaction-runner';
 
 export class LineupsRepository {
   constructor(private readonly db: Pool) {}
@@ -243,17 +244,10 @@ export class LineupsRepository {
   ): Promise<void> {
     if (updates.length === 0) return;
 
-    const db = client || this.db;
-
-    // Use individual upserts within a transaction for reliability
-    const conn = client || (await this.db.connect());
-    const shouldRelease = !client;
-
-    try {
-      if (!client) await conn.query('BEGIN');
-
+    // If a client is provided, use it directly (caller manages transaction)
+    if (client) {
       for (const { rosterId, lineup } of updates) {
-        await conn.query(
+        await client.query(
           `INSERT INTO roster_lineups (roster_id, season, week, lineup, is_bestball, bestball_generated_at)
            VALUES ($1, $2, $3, $4, true, CURRENT_TIMESTAMP)
            ON CONFLICT (roster_id, season, week)
@@ -265,13 +259,24 @@ export class LineupsRepository {
           [rosterId, season, week, JSON.stringify(lineup)]
         );
       }
-
-      if (!client) await conn.query('COMMIT');
-    } catch (error) {
-      if (!client) await conn.query('ROLLBACK');
-      throw error;
-    } finally {
-      if (shouldRelease) (conn as PoolClient).release();
+      return;
     }
+
+    // Otherwise, use transaction runner for reliable batch upserts
+    await runInTransaction(this.db, async (txClient) => {
+      for (const { rosterId, lineup } of updates) {
+        await txClient.query(
+          `INSERT INTO roster_lineups (roster_id, season, week, lineup, is_bestball, bestball_generated_at)
+           VALUES ($1, $2, $3, $4, true, CURRENT_TIMESTAMP)
+           ON CONFLICT (roster_id, season, week)
+           DO UPDATE SET
+             lineup = $4,
+             is_bestball = true,
+             bestball_generated_at = CURRENT_TIMESTAMP,
+             updated_at = CURRENT_TIMESTAMP`,
+          [rosterId, season, week, JSON.stringify(lineup)]
+        );
+      }
+    });
   }
 }

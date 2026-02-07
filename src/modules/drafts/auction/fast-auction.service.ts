@@ -144,14 +144,21 @@ export class FastAuctionService {
           throw new NotFoundException('Player not found');
         }
 
-        // Check player not already drafted
-        const isDrafted = await this.draftRepo.isPlayerDrafted(draftId, playerId);
-        if (isDrafted) {
+        // Check player not already drafted (using transaction client for atomicity)
+        const draftedResult = await client.query(
+          'SELECT EXISTS(SELECT 1 FROM draft_picks WHERE draft_id = $1 AND player_id = $2) as exists',
+          [draftId, playerId]
+        );
+        if (draftedResult.rows[0].exists) {
           throw new ValidationException('Player has already been drafted');
         }
 
-        // Check player not already nominated (active or won lot)
-        const existingLot = await this.lotRepo.findLotByDraftAndPlayer(draftId, playerId);
+        // Check player not already nominated (using transaction client for atomicity)
+        const existingLot = await this.lotRepo.findLotByDraftAndPlayerWithClient(
+          client,
+          draftId,
+          playerId
+        );
         if (existingLot) {
           throw new ValidationException('Player has already been nominated in this draft');
         }

@@ -14,68 +14,88 @@ export interface ProcessTradesContext extends AcceptTradeContext {
 
 /**
  * Invalidate pending trades containing a dropped player
- * Uses conditional updates to handle concurrent modifications safely
+ * Uses TRADE lock to prevent race conditions during invalidation
  */
 export async function invalidateTradesWithPlayer(
-  ctx: { tradesRepo: TradesRepository },
+  ctx: { tradesRepo: TradesRepository; db: import('pg').Pool },
   leagueId: number,
   playerId: number
 ): Promise<void> {
-  const pendingTrades = await ctx.tradesRepo.findPendingByPlayer(leagueId, playerId);
+  // Collect trades that were invalidated to emit events after commit
+  const invalidatedTrades: Array<{ id: number; leagueId: number }> = [];
 
-  for (const trade of pendingTrades) {
-    // Try to expire - only succeeds if still in an active state
-    // Try 'pending' first, then 'in_review' if that fails
-    let updated = await ctx.tradesRepo.updateStatus(trade.id, 'expired', undefined, 'pending');
-    if (!updated) {
-      updated = await ctx.tradesRepo.updateStatus(trade.id, 'expired', undefined, 'in_review');
-    }
+  await runWithLock(ctx.db, LockDomain.TRADE, leagueId, async (client) => {
+    const pendingTrades = await ctx.tradesRepo.findPendingByPlayer(leagueId, playerId, client);
 
-    if (updated) {
-      const eventBus = tryGetEventBus();
-      eventBus?.publish({
-        type: EventTypes.TRADE_INVALIDATED,
-        leagueId: trade.leagueId,
-        payload: {
-          tradeId: trade.id,
-          reason: 'A player involved in this trade is no longer available',
-        },
-      });
+    for (const trade of pendingTrades) {
+      // Try to expire - only succeeds if still in an active state
+      // Try 'pending' first, then 'in_review' if that fails
+      let updated = await ctx.tradesRepo.updateStatus(trade.id, 'expired', client, 'pending');
+      if (!updated) {
+        updated = await ctx.tradesRepo.updateStatus(trade.id, 'expired', client, 'in_review');
+      }
+
+      if (updated) {
+        invalidatedTrades.push({ id: trade.id, leagueId: trade.leagueId });
+      }
     }
+  });
+
+  // Emit events AFTER transaction commits (per gotchas.md)
+  const eventBus = tryGetEventBus();
+  for (const trade of invalidatedTrades) {
+    eventBus?.publish({
+      type: EventTypes.TRADE_INVALIDATED,
+      leagueId: trade.leagueId,
+      payload: {
+        tradeId: trade.id,
+        reason: 'A player involved in this trade is no longer available',
+      },
+    });
   }
 }
 
 /**
  * Invalidate pending trades containing a pick asset that is no longer tradeable
  * (e.g., pick was used, round passed)
- * Uses conditional updates to handle concurrent modifications safely
+ * Uses TRADE lock to prevent race conditions during invalidation
  */
 export async function invalidateTradesWithPick(
-  ctx: { tradesRepo: TradesRepository },
+  ctx: { tradesRepo: TradesRepository; db: import('pg').Pool },
   leagueId: number,
   pickAssetId: number
 ): Promise<void> {
-  const pendingTrades = await ctx.tradesRepo.findPendingByPickAsset(leagueId, pickAssetId);
+  // Collect trades that were invalidated to emit events after commit
+  const invalidatedTrades: Array<{ id: number; leagueId: number }> = [];
 
-  for (const trade of pendingTrades) {
-    // Try to expire - only succeeds if still in an active state
-    // Try 'pending' first, then 'in_review' if that fails
-    let updated = await ctx.tradesRepo.updateStatus(trade.id, 'expired', undefined, 'pending');
-    if (!updated) {
-      updated = await ctx.tradesRepo.updateStatus(trade.id, 'expired', undefined, 'in_review');
-    }
+  await runWithLock(ctx.db, LockDomain.TRADE, leagueId, async (client) => {
+    const pendingTrades = await ctx.tradesRepo.findPendingByPickAsset(leagueId, pickAssetId, client);
 
-    if (updated) {
-      const eventBus = tryGetEventBus();
-      eventBus?.publish({
-        type: EventTypes.TRADE_INVALIDATED,
-        leagueId: trade.leagueId,
-        payload: {
-          tradeId: trade.id,
-          reason: 'A draft pick involved in this trade is no longer available',
-        },
-      });
+    for (const trade of pendingTrades) {
+      // Try to expire - only succeeds if still in an active state
+      // Try 'pending' first, then 'in_review' if that fails
+      let updated = await ctx.tradesRepo.updateStatus(trade.id, 'expired', client, 'pending');
+      if (!updated) {
+        updated = await ctx.tradesRepo.updateStatus(trade.id, 'expired', client, 'in_review');
+      }
+
+      if (updated) {
+        invalidatedTrades.push({ id: trade.id, leagueId: trade.leagueId });
+      }
     }
+  });
+
+  // Emit events AFTER transaction commits (per gotchas.md)
+  const eventBus = tryGetEventBus();
+  for (const trade of invalidatedTrades) {
+    eventBus?.publish({
+      type: EventTypes.TRADE_INVALIDATED,
+      leagueId: trade.leagueId,
+      payload: {
+        tradeId: trade.id,
+        reason: 'A draft pick involved in this trade is no longer available',
+      },
+    });
   }
 }
 

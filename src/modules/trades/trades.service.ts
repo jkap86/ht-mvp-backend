@@ -11,7 +11,7 @@ import { EventListenerService } from '../chat/event-listener.service';
 
 // Import use-cases
 import {
-  proposeTrade as proposeTradeUseCase,
+  proposeTradeStandalone as proposeTradeUseCase,
   acceptTrade as acceptTradeUseCase,
   rejectTrade as rejectTradeUseCase,
   cancelTrade as cancelTradeUseCase,
@@ -52,26 +52,20 @@ export class TradesService {
     userId: string,
     request: ProposeTradeRequest
   ): Promise<TradeWithDetails> {
-    const client = await this.db.connect();
-    try {
-      return await proposeTradeUseCase(
-        {
-          tradesRepo: this.tradesRepo,
-          tradeItemsRepo: this.tradeItemsRepo,
-          rosterRepo: this.rosterRepo,
-          rosterPlayersRepo: this.rosterPlayersRepo,
-          leagueRepo: this.leagueRepo,
-          eventListenerService: this.eventListenerService,
-        },
-        client,
-        leagueId,
-        userId,
-        request,
-        true // manage transaction
-      );
-    } finally {
-      client.release();
-    }
+    return await proposeTradeUseCase(
+      {
+        db: this.db,
+        tradesRepo: this.tradesRepo,
+        tradeItemsRepo: this.tradeItemsRepo,
+        rosterRepo: this.rosterRepo,
+        rosterPlayersRepo: this.rosterPlayersRepo,
+        leagueRepo: this.leagueRepo,
+        eventListenerService: this.eventListenerService,
+      },
+      leagueId,
+      userId,
+      request
+    );
   }
 
   /**
@@ -201,7 +195,7 @@ export class TradesService {
   /**
    * Get a single trade with details
    */
-  async getTradeById(tradeId: number, userId: string): Promise<TradeWithDetails> {
+  async getTradeById(tradeId: number, userId: string, leagueId: number): Promise<TradeWithDetails> {
     return getTradeByIdUseCase(
       {
         tradesRepo: this.tradesRepo,
@@ -209,7 +203,8 @@ export class TradesService {
         leagueRepo: this.leagueRepo,
       },
       tradeId,
-      userId
+      userId,
+      leagueId
     );
   }
 
@@ -217,7 +212,7 @@ export class TradesService {
    * Invalidate pending trades containing a dropped player
    */
   async invalidateTradesWithPlayer(leagueId: number, playerId: number): Promise<void> {
-    return invalidateTradesWithPlayerUseCase({ tradesRepo: this.tradesRepo }, leagueId, playerId);
+    return invalidateTradesWithPlayerUseCase({ db: this.db, tradesRepo: this.tradesRepo }, leagueId, playerId);
   }
 
   /**

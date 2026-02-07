@@ -34,7 +34,7 @@
  * - src/modules/drafts/auction/fast-auction.service.ts - ✓ migrated
  * - src/modules/drafts/auction/slow-auction.service.ts - ✓ migrated
  *
- * TRADE OPERATIONS (uses getTradeLockId from src/utils/locks.ts):
+ * TRADE OPERATIONS (pending migration - uses getTradeLockId from src/utils/locks.ts):
  * - src/modules/trades/use-cases/propose-trade.use-case.ts: locks league for trade proposal
  * - src/modules/trades/use-cases/accept-trade.use-case.ts: locks league for trade acceptance
  * - src/modules/trades/use-cases/reject-trade.use-case.ts: locks league for trade rejection
@@ -42,11 +42,11 @@
  * - src/modules/trades/use-cases/counter-trade.use-case.ts: locks league for counter-offers
  * - src/modules/trades/use-cases/process-trades.use-case.ts: locks league for trade processing
  *
- * WAIVER OPERATIONS (uses getWaiverLockId from src/utils/locks.ts):
+ * WAIVER OPERATIONS (MIGRATED to LockDomain.WAIVER):
  * - src/modules/waivers/use-cases/process-waivers.use-case.ts: locks league for waiver processing
- * - src/modules/waivers/use-cases/submit-claim.use-case.ts: locks league for claim submission
+ * - src/modules/waivers/use-cases/submit-claim.use-case.ts: ✓ migrated
  *
- * ROSTER OPERATIONS (direct lock IDs):
+ * ROSTER OPERATIONS (pending migration - direct lock IDs):
  * - src/modules/leagues/roster.service.ts
  *   - joinLeague(): locks league (using raw leagueId) for concurrent join prevention
  *   - kickMember(): locks roster (using rosterId + 1000000 offset) for member removal
@@ -55,11 +55,11 @@
  *   - dropPlayer(): locks league for player drops
  *   - addDropPlayer(): locks league for add/drop transactions
  *
- * AUCTION OPERATIONS (uses getAuctionRosterLockId from src/utils/locks.ts):
- * - src/modules/drafts/auction/fast-auction.service.ts
+ * AUCTION OPERATIONS (MIGRATED to LockDomain.ROSTER):
+ * - src/modules/drafts/auction/fast-auction.service.ts - ✓ migrated
  *   - placeBid(): locks roster for bid placement
- * - src/modules/drafts/auction/slow-auction.service.ts
- *   - placeBid(): locks roster using hashtext('auction_roster', rosterId)
+ * - src/modules/drafts/auction/slow-auction.service.ts - ✓ migrated
+ *   - placeBid(): locks roster using LockDomain.ROSTER
  *   - settleLot(): locks winner's roster for settlement
  *
  * JOB-LEVEL LOCKS (session-level locks, not transaction-level):
@@ -68,9 +68,9 @@
  * - src/jobs/trade-expiration.job.ts: TRADE_EXPIRATION_LOCK_ID = 999999003
  * - src/jobs/slow-auction.job.ts: SLOW_AUCTION_LOCK_ID = 999999004
  *
- * NOTE: The existing src/utils/locks.ts provides namespace-based lock IDs but
- * does not enforce ordering. This new helper (src/shared/locks.ts) should be
- * used for all new code requiring multiple locks to prevent deadlocks.
+ * NOTE: The legacy src/utils/locks.ts uses 1M-5M namespace offsets.
+ * This modern helper (src/shared/locks.ts) uses 100M-900M offsets.
+ * All new code should use this helper to prevent lock ID collisions.
  * ============================================================================
  */
 

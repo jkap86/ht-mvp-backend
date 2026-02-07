@@ -322,9 +322,14 @@ export function startStatsSyncJob(runImmediately = false): void {
 
   // Run immediately on startup if requested
   if (runImmediately) {
-    runStatsSync().then(() => {
-      scheduleNextSync();
-    });
+    runStatsSync()
+      .then(() => {
+        scheduleNextSync();
+      })
+      .catch((error) => {
+        logger.error('Stats sync failed', { error });
+        scheduleNextSync(); // Still schedule next attempt
+      });
   } else {
     scheduleNextSync();
   }

@@ -12,6 +12,7 @@ import {
   parseWaiverSettings,
 } from '../waivers.model';
 import { NotFoundException, ForbiddenException } from '../../../utils/exceptions';
+import { runInTransaction } from '../../../shared/transaction-runner';
 
 export interface WaiverInfoContext {
   db: Pool;
@@ -92,10 +93,7 @@ export async function initializeForSeason(
   const rosters = await ctx.rosterRepo.findByLeagueId(leagueId);
   const rosterIds = rosters.map((r) => r.id);
 
-  const client = await ctx.db.connect();
-  try {
-    await client.query('BEGIN');
-
+  await runInTransaction(ctx.db, async (client) => {
     // Initialize priorities
     await ctx.priorityRepo.initializeForLeague(leagueId, season, rosterIds, client);
 
@@ -109,14 +107,7 @@ export async function initializeForSeason(
         client
       );
     }
-
-    await client.query('COMMIT');
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 /**

@@ -1,5 +1,6 @@
 import { Pool, PoolClient } from 'pg';
 import { League, Roster } from './leagues.model';
+import { runWithLock, LockDomain } from '../../shared/transaction-runner';
 
 // Re-export RosterRepository from its new location for backward compatibility
 export { RosterRepository } from '../rosters/roster.repository';
@@ -197,13 +198,7 @@ export class LeagueRepository {
     newSeason: string,
     options: { keepMembers?: boolean; clearChat?: boolean }
   ): Promise<League> {
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
-
-      // Lock the league to prevent concurrent modifications
-      await client.query('SELECT pg_advisory_xact_lock($1)', [leagueId]);
-
+    return await runWithLock(this.db, LockDomain.LEAGUE, leagueId, async (client) => {
       // Clear season data (CASCADE handles child tables)
       await client.query('DELETE FROM drafts WHERE league_id = $1', [leagueId]);
       await client.query('DELETE FROM matchups WHERE league_id = $1', [leagueId]);
@@ -282,14 +277,8 @@ export class LeagueRepository {
         [leagueId, newSeason]
       );
 
-      await client.query('COMMIT');
       return League.fromDatabase(result.rows[0]);
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   async updateCommissionerRosterId(leagueId: number, rosterId: number): Promise<void> {

@@ -119,7 +119,9 @@ router.delete('/:id/members/:rosterId', leagueController.kickMember);
 router.post('/:id/members/:rosterId/reinstate', leagueController.reinstateMember);
 
 // POST /api/leagues/:id/dev/add-users - Dev endpoint to add multiple users to league
-router.post('/:id/dev/add-users', leagueController.devAddUsers);
+if (process.env.NODE_ENV === 'development') {
+  router.post('/:id/dev/add-users', leagueController.devAddUsers);
+}
 
 // Mount draft routes - /api/leagues/:leagueId/drafts/*
 router.use('/:leagueId/drafts', draftRoutes);

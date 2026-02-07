@@ -1,4 +1,4 @@
-import { PoolClient } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import { TradesRepository, TradeItemsRepository } from '../trades.repository';
 import { RosterPlayersRepository } from '../../rosters/rosters.repository';
 import { LeagueRepository, RosterRepository } from '../../leagues/leagues.repository';
@@ -16,7 +16,7 @@ import {
   ValidationException,
   ConflictException,
 } from '../../../utils/exceptions';
-import { getLockId, LockDomain } from '../../../shared/locks';
+import { runWithLock, LockDomain } from '../../../shared/transaction-runner';
 import { batchValidateRosterPlayers } from '../../../shared/batch-queries';
 import { League } from '../../leagues/leagues.model';
 import { Roster } from '../../leagues/leagues.model';
@@ -40,9 +40,91 @@ export interface ProposeTradeContext {
   eventListenerService?: EventListenerService;
 }
 
+export interface ProposeTradeContextWithPool extends ProposeTradeContext {
+  db: Pool;
+}
+
 /**
- * Propose a new trade
- * @param existingClient - Optional: If provided, uses this client and skips transaction management (for counter trades)
+ * Propose a new trade (standalone version - manages its own transaction)
+ * Use this when proposing a trade as a standalone operation.
+ */
+export async function proposeTradeStandalone(
+  ctx: ProposeTradeContextWithPool,
+  leagueId: number,
+  userId: string,
+  request: ProposeTradeRequest
+): Promise<TradeWithDetails> {
+  // Pre-validate outside transaction (fail fast)
+  const proposerRoster = await ctx.rosterRepo.findByLeagueAndUser(leagueId, userId);
+  if (!proposerRoster) {
+    throw new ForbiddenException('You are not a member of this league');
+  }
+
+  const recipientRoster = await ctx.rosterRepo.findByLeagueAndRosterId(
+    leagueId,
+    request.recipientRosterId
+  );
+  if (!recipientRoster) {
+    throw new NotFoundException('Recipient roster not found in this league');
+  }
+
+  if (proposerRoster.id === recipientRoster.id) {
+    throw new ValidationException('Cannot trade with yourself');
+  }
+
+  const league = await ctx.leagueRepo.findById(leagueId);
+  if (!league) throw new NotFoundException('League not found');
+
+  const tradeDeadline = league.settings?.trade_deadline;
+  if (tradeDeadline && new Date(tradeDeadline) < new Date()) {
+    throw new ValidationException('Trade deadline has passed');
+  }
+
+  const hasPlayers = request.offeringPlayerIds.length > 0 || request.requestingPlayerIds.length > 0;
+  const hasPicks =
+    (request.offeringPickAssetIds?.length ?? 0) > 0 ||
+    (request.requestingPickAssetIds?.length ?? 0) > 0;
+  if (!hasPlayers && !hasPicks) {
+    throw new ValidationException('Trade must include at least one player or draft pick');
+  }
+
+  // Execute in transaction with lock
+  const tradeWithDetails = await runWithLock(
+    ctx.db,
+    LockDomain.TRADE,
+    leagueId,
+    async (client) => {
+      return await proposeTradeCore(ctx, client, leagueId, userId, request, proposerRoster, recipientRoster, league);
+    }
+  );
+
+  // Emit domain event AFTER transaction commits
+  const eventBus = tryGetEventBus();
+  eventBus?.publish({
+    type: EventTypes.TRADE_PROPOSED,
+    leagueId,
+    payload: tradeWithDetailsToResponse(tradeWithDetails),
+  });
+
+  // Emit system message to league chat
+  if (ctx.eventListenerService) {
+    ctx.eventListenerService
+      .handleTradeProposed(leagueId, tradeWithDetails.id, tradeWithDetails.notifyLeagueChat)
+      .catch((err) => logger.warn('Failed to emit system message', {
+        type: 'trade_proposed',
+        leagueId,
+        tradeId: tradeWithDetails.id,
+        error: err.message
+      }));
+  }
+
+  return tradeWithDetails;
+}
+
+/**
+ * Propose a new trade (uses existing client/transaction)
+ * Use this when proposing a trade as part of another transaction (e.g., counter trade).
+ * The caller is responsible for transaction management.
  */
 export async function proposeTrade(
   ctx: ProposeTradeContext,
@@ -52,6 +134,9 @@ export async function proposeTrade(
   request: ProposeTradeRequest,
   manageTransaction: boolean
 ): Promise<TradeWithDetails> {
+  // Note: manageTransaction is now ignored - always uses caller's transaction
+  // Kept for backward compatibility with counter-trade.use-case.ts
+
   // Validate user owns a roster in this league
   const proposerRoster = await ctx.rosterRepo.findByLeagueAndUser(leagueId, userId);
   if (!proposerRoster) {
@@ -90,140 +175,118 @@ export async function proposeTrade(
     throw new ValidationException('Trade must include at least one player or draft pick');
   }
 
-  if (manageTransaction) {
-    await client.query('BEGIN');
-    await client.query('SELECT pg_advisory_xact_lock($1)', [getLockId(LockDomain.TRADE, leagueId)]);
-  }
+  return await proposeTradeCore(ctx, client, leagueId, userId, request, proposerRoster, recipientRoster, league);
+}
 
-  try {
-    // Validate offering players belong to proposer
-    await validateOfferingPlayers(ctx, client, proposerRoster, request.offeringPlayerIds, leagueId);
+/**
+ * Core trade creation logic - assumes caller has already validated and is within a transaction
+ */
+async function proposeTradeCore(
+  ctx: ProposeTradeContext,
+  client: PoolClient,
+  leagueId: number,
+  userId: string,
+  request: ProposeTradeRequest,
+  proposerRoster: Roster,
+  recipientRoster: Roster,
+  league: League
+): Promise<TradeWithDetails> {
+  // Validate offering players belong to proposer
+  await validateOfferingPlayers(ctx, client, proposerRoster, request.offeringPlayerIds, leagueId);
 
-    // Validate requested players belong to recipient
-    await validateRequestingPlayers(
-      ctx,
-      client,
+  // Validate requested players belong to recipient
+  await validateRequestingPlayers(
+    ctx,
+    client,
+    recipientRoster.id,
+    request.requestingPlayerIds,
+    leagueId
+  );
+
+  // Validate draft picks if included
+  const offeringPickAssetIds = request.offeringPickAssetIds || [];
+  const requestingPickAssetIds = request.requestingPickAssetIds || [];
+  let pickTradeItems: Array<{
+    itemType: 'draft_pick';
+    draftPickAssetId: number;
+    pickSeason: number;
+    pickRound: number;
+    pickOriginalTeam: string;
+    fromRosterId: number;
+    toRosterId: number;
+  }> = [];
+
+  if (
+    (offeringPickAssetIds.length > 0 || requestingPickAssetIds.length > 0) &&
+    ctx.pickAssetRepo
+  ) {
+    const pickCtx: ValidatePickTradeContext = { pickAssetRepo: ctx.pickAssetRepo };
+    const validatedPicks = await validatePickTrade(
+      pickCtx,
+      offeringPickAssetIds,
+      requestingPickAssetIds,
+      proposerRoster.id,
       recipientRoster.id,
-      request.requestingPlayerIds,
       leagueId
     );
-
-    // Validate draft picks if included
-    const offeringPickAssetIds = request.offeringPickAssetIds || [];
-    const requestingPickAssetIds = request.requestingPickAssetIds || [];
-    let pickTradeItems: Array<{
-      itemType: 'draft_pick';
-      draftPickAssetId: number;
-      pickSeason: number;
-      pickRound: number;
-      pickOriginalTeam: string;
-      fromRosterId: number;
-      toRosterId: number;
-    }> = [];
-
-    if (
-      (offeringPickAssetIds.length > 0 || requestingPickAssetIds.length > 0) &&
-      ctx.pickAssetRepo
-    ) {
-      const pickCtx: ValidatePickTradeContext = { pickAssetRepo: ctx.pickAssetRepo };
-      const validatedPicks = await validatePickTrade(
-        pickCtx,
-        offeringPickAssetIds,
-        requestingPickAssetIds,
-        proposerRoster.id,
-        recipientRoster.id,
-        leagueId
-      );
-      pickTradeItems = buildPickTradeItems(validatedPicks);
-    }
-
-    // Calculate roster size changes and validate
-    await validateRosterSizes(ctx, client, proposerRoster.id, recipientRoster.id, request, league);
-
-    // Create trade
-    const expiryHours = league.settings?.trade_expiry_hours || DEFAULT_TRADE_EXPIRY_HOURS;
-    const expiresAt = new Date(Date.now() + expiryHours * 60 * 60 * 1000);
-
-    const trade = await ctx.tradesRepo.create(
-      leagueId,
-      proposerRoster.id,
-      recipientRoster.id,
-      expiresAt,
-      parseInt(league.season, 10),
-      league.currentWeek || 1,
-      request.message,
-      undefined,
-      client,
-      request.notifyLeagueChat,
-      request.notifyDm
-    );
-
-    // Create trade items for players
-    const playerItems = await buildPlayerTradeItems(
-      client,
-      proposerRoster.id,
-      recipientRoster.id,
-      request.offeringPlayerIds,
-      request.requestingPlayerIds
-    );
-
-    // Combine player and pick items
-    const allItems: Array<{
-      itemType: TradeItemType;
-      playerId?: number;
-      playerName?: string;
-      playerPosition?: string;
-      playerTeam?: string;
-      draftPickAssetId?: number;
-      pickSeason?: number;
-      pickRound?: number;
-      pickOriginalTeam?: string;
-      fromRosterId: number;
-      toRosterId: number;
-    }> = [
-      ...playerItems.map((item) => ({ ...item, itemType: 'player' as TradeItemType })),
-      ...pickTradeItems,
-    ];
-
-    await ctx.tradeItemsRepo.createBulk(trade.id, allItems, client);
-
-    if (manageTransaction) {
-      await client.query('COMMIT');
-    }
-
-    // Get full trade details
-    const tradeWithDetails = await ctx.tradesRepo.findByIdWithDetails(trade.id, proposerRoster.id);
-    if (!tradeWithDetails) throw new Error('Failed to create trade');
-
-    // Emit domain event (only for standalone trades, counter emits its own event)
-    if (manageTransaction) {
-      const eventBus = tryGetEventBus();
-      eventBus?.publish({
-        type: EventTypes.TRADE_PROPOSED,
-        leagueId,
-        payload: tradeWithDetailsToResponse(tradeWithDetails),
-      });
-
-      // Emit system message to league chat
-      if (ctx.eventListenerService) {
-        ctx.eventListenerService
-          .handleTradeProposed(leagueId, trade.id, trade.notifyLeagueChat)
-          .catch((err) => logger.warn('Failed to emit system message', {
-            type: 'trade_proposed',
-            leagueId,
-            tradeId: trade.id,
-            error: err.message
-          }));
-      }
-    }
-
-    return tradeWithDetails;
-  } catch (error) {
-    if (manageTransaction) {
-      await client.query('ROLLBACK');
-    }
-    throw error;
+    pickTradeItems = buildPickTradeItems(validatedPicks);
   }
+
+  // Calculate roster size changes and validate
+  await validateRosterSizes(ctx, client, proposerRoster.id, recipientRoster.id, request, league);
+
+  // Create trade
+  const expiryHours = league.settings?.trade_expiry_hours || DEFAULT_TRADE_EXPIRY_HOURS;
+  const expiresAt = new Date(Date.now() + expiryHours * 60 * 60 * 1000);
+
+  const trade = await ctx.tradesRepo.create(
+    leagueId,
+    proposerRoster.id,
+    recipientRoster.id,
+    expiresAt,
+    parseInt(league.season, 10),
+    league.currentWeek || 1,
+    request.message,
+    undefined,
+    client,
+    request.notifyLeagueChat,
+    request.notifyDm
+  );
+
+  // Create trade items for players
+  const playerItems = await buildPlayerTradeItems(
+    client,
+    proposerRoster.id,
+    recipientRoster.id,
+    request.offeringPlayerIds,
+    request.requestingPlayerIds
+  );
+
+  // Combine player and pick items
+  const allItems: Array<{
+    itemType: TradeItemType;
+    playerId?: number;
+    playerName?: string;
+    playerPosition?: string;
+    playerTeam?: string;
+    draftPickAssetId?: number;
+    pickSeason?: number;
+    pickRound?: number;
+    pickOriginalTeam?: string;
+    fromRosterId: number;
+    toRosterId: number;
+  }> = [
+    ...playerItems.map((item) => ({ ...item, itemType: 'player' as TradeItemType })),
+    ...pickTradeItems,
+  ];
+
+  await ctx.tradeItemsRepo.createBulk(trade.id, allItems, client);
+
+  // Get full trade details
+  const tradeWithDetails = await ctx.tradesRepo.findByIdWithDetails(trade.id, proposerRoster.id);
+  if (!tradeWithDetails) throw new Error('Failed to create trade');
+
+  return tradeWithDetails;
 }
 
 async function validateOfferingPlayers(

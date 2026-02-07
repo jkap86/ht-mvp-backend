@@ -755,14 +755,21 @@ describe('TradesService', () => {
     it('should throw NotFoundException when trade not found', async () => {
       mockTradesRepo.findById.mockResolvedValue(null);
 
-      await expect(tradesService.getTradeById(1, 'user-123')).rejects.toThrow(NotFoundException);
+      await expect(tradesService.getTradeById(1, 'user-123', 1)).rejects.toThrow(NotFoundException);
+    });
+
+    it('should throw NotFoundException when trade does not belong to requested league', async () => {
+      mockTradesRepo.findById.mockResolvedValue(mockTrade);
+
+      // Request trade from league 999, but trade belongs to league 1
+      await expect(tradesService.getTradeById(1, 'user-123', 999)).rejects.toThrow(NotFoundException);
     });
 
     it('should throw ForbiddenException when not a league member', async () => {
       mockTradesRepo.findById.mockResolvedValue(mockTrade);
       mockLeagueRepo.isUserMember.mockResolvedValue(false);
 
-      await expect(tradesService.getTradeById(1, 'user-123')).rejects.toThrow(ForbiddenException);
+      await expect(tradesService.getTradeById(1, 'user-123', 1)).rejects.toThrow(ForbiddenException);
     });
 
     it('should return trade details', async () => {
@@ -771,7 +778,7 @@ describe('TradesService', () => {
       mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster);
       mockTradesRepo.findByIdWithDetails.mockResolvedValue(mockTradeWithDetails);
 
-      const result = await tradesService.getTradeById(1, 'user-123');
+      const result = await tradesService.getTradeById(1, 'user-123', 1);
 
       expect(result).toEqual(mockTradeWithDetails);
     });

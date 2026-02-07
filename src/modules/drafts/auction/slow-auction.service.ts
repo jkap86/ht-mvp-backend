@@ -13,9 +13,8 @@ import { PlayerRepository } from '../../players/players.repository';
 import { ValidationException, NotFoundException } from '../../../utils/exceptions';
 import { getRosterBudgetDataWithClient } from './auction-budget-calculator';
 import { resolvePriceWithClient, OutbidNotification } from './auction-price-resolver';
-import { getAuctionRosterLockId } from '../../../utils/locks';
 import { runInTransaction, runWithLock, runWithLocks, LockDomain } from '../../../shared/transaction-runner';
-import { getLockId } from '../../../shared/locks';
+import { getLockId, LockDomain as SharedLockDomain } from '../../../shared/locks';
 import { logger } from '../../../config/logger.config';
 
 export interface NominationResult {
@@ -349,8 +348,8 @@ export class SlowAuctionService {
   ): Promise<SetMaxBidResult> {
     return runInTransaction(this.pool, async (client) => {
       // 0. Acquire roster-level lock to prevent cross-lot race conditions
-      // Use centralized lock ID for consistency with fast auction
-      await client.query('SELECT pg_advisory_xact_lock($1)', [getAuctionRosterLockId(rosterId)]);
+      // Use modern LockDomain for consistency with fast auction
+      await client.query('SELECT pg_advisory_xact_lock($1)', [getLockId(SharedLockDomain.ROSTER, rosterId)]);
 
       // 1. Lock the lot row and validate it exists and is active
       const lotResult = await client.query('SELECT * FROM auction_lots WHERE id = $1 FOR UPDATE', [
@@ -612,7 +611,7 @@ export class SlowAuctionService {
 
         // Lock candidate's roster (after DRAFT lock per ordering)
         await client.query('SELECT pg_advisory_xact_lock($1)', [
-          getAuctionRosterLockId(candidateRosterId),
+          getLockId(SharedLockDomain.ROSTER, candidateRosterId),
         ]);
 
         // Validate budget and slots
