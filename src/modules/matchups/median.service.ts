@@ -2,7 +2,7 @@ import { Pool, PoolClient } from 'pg';
 import { LineupsRepository } from '../lineups/lineups.repository';
 import { LeagueRepository } from '../leagues/leagues.repository';
 import { MatchupsRepository } from './matchups.repository';
-import { ForbiddenException, ValidationException } from '../../utils/exceptions';
+import { ForbiddenException, NotFoundException, ValidationException } from '../../utils/exceptions';
 
 export interface MedianResult {
   rosterId: number;
@@ -136,14 +136,12 @@ export class MedianService {
    * Used by commissioners to fix data after score corrections.
    *
    * @param leagueId - League ID
-   * @param season - Season year
    * @param week - Week to recalculate
    * @param userId - User ID (must be commissioner)
    * @returns The new median points
    */
   async recalculateWeekMedian(
     leagueId: number,
-    season: number,
     week: number,
     userId: string
   ): Promise<{ medianPoints: number }> {
@@ -153,17 +151,30 @@ export class MedianService {
       throw new ForbiddenException('Only the commissioner can recalculate median results');
     }
 
-    // Validate league has median enabled
+    // Get league and derive season
     const league = await this.leagueRepo.findById(leagueId);
-    if (!league?.leagueSettings?.useLeagueMedian) {
+    if (!league) {
+      throw new NotFoundException('League not found');
+    }
+    const season = parseInt(league.season, 10);
+
+    // Validate league has median enabled
+    if (!league.leagueSettings?.useLeagueMedian) {
       throw new ValidationException('League median scoring is not enabled for this league');
     }
 
-    // Validate week is finalized
+    // Validate week exists and is finalized
     const matchups = await this.matchupsRepo.findByLeagueAndWeek(leagueId, season, week);
     if (matchups.length === 0) {
       throw new ValidationException(`No matchups found for week ${week}`);
     }
+
+    // Check for playoff week - median doesn't apply
+    const isPlayoffWeek = matchups.some((m) => m.isPlayoff === true);
+    if (isPlayoffWeek) {
+      throw new ValidationException('League median does not apply to playoff weeks');
+    }
+
     const allFinalized = matchups.every((m) => m.isFinal);
     if (!allFinalized) {
       throw new ValidationException(`Week ${week} is not fully finalized`);

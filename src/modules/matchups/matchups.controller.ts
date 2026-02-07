@@ -240,13 +240,8 @@ export class MatchupsController {
         throw new ValidationException('Median service not available');
       }
 
-      // MedianService handles commissioner validation internally
-      const result = await this.medianService.recalculateWeekMedian(
-        leagueId,
-        new Date().getFullYear(), // Current season
-        weekNum,
-        userId
-      );
+      // Service handles season resolution, playoff check, and all validation
+      const result = await this.medianService.recalculateWeekMedian(leagueId, weekNum, userId);
 
       res.json({
         success: true,
