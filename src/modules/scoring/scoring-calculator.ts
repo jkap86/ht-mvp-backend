@@ -8,7 +8,7 @@ import { PlayerStats, ScoringRules } from './scoring.model';
 /**
  * Get defense points allowed score based on points allowed bracket
  */
-function getDefensePointsAllowedScore(pointsAllowed: number, rules: ScoringRules): number {
+export function getDefensePointsAllowedScore(pointsAllowed: number, rules: ScoringRules): number {
   if (pointsAllowed === 0) return rules.defPointsAllowed0;
   if (pointsAllowed <= 6) return rules.defPointsAllowed1to6;
   if (pointsAllowed <= 13) return rules.defPointsAllowed7to13;
@@ -88,7 +88,8 @@ export function calculatePlayerPoints(
  * Calculate remaining projected stats by subtracting actual from projection.
  * Used for live projections: projectedFinal = score(actual) + score(remaining)
  *
- * Negative stats (INT, fumbles) are set to 0 - we don't project more turnovers.
+ * Turnovers (INT, fumbles, misses) are projected forward to account for remaining risk.
+ * DEF points allowed is set to 0 here - handled separately with bucket math in live scoring.
  */
 export function calculateRemainingStats(
   actualStats: PlayerStats,
@@ -96,10 +97,10 @@ export function calculateRemainingStats(
 ): PlayerStats {
   return {
     ...actualStats,
-    // Passing - don't project negative stats like INTs
+    // Passing
     passYards: Math.max(0, projectionStats.passYards - actualStats.passYards),
     passTd: Math.max(0, projectionStats.passTd - actualStats.passTd),
-    passInt: 0,
+    passInt: Math.max(0, (projectionStats.passInt ?? 0) - (actualStats.passInt ?? 0)),
     // Rushing
     rushYards: Math.max(0, projectionStats.rushYards - actualStats.rushYards),
     rushTd: Math.max(0, projectionStats.rushTd - actualStats.rushTd),
@@ -107,22 +108,22 @@ export function calculateRemainingStats(
     receptions: Math.max(0, projectionStats.receptions - actualStats.receptions),
     recYards: Math.max(0, projectionStats.recYards - actualStats.recYards),
     recTd: Math.max(0, projectionStats.recTd - actualStats.recTd),
-    // Misc - don't project negative
-    fumblesLost: 0,
+    // Misc
+    fumblesLost: Math.max(0, (projectionStats.fumblesLost ?? 0) - (actualStats.fumblesLost ?? 0)),
     twoPtConversions: Math.max(0, projectionStats.twoPtConversions - actualStats.twoPtConversions),
     // Kicking
     fgMade: Math.max(0, projectionStats.fgMade - actualStats.fgMade),
-    fgMissed: 0,
+    fgMissed: Math.max(0, (projectionStats.fgMissed ?? 0) - (actualStats.fgMissed ?? 0)),
     patMade: Math.max(0, projectionStats.patMade - actualStats.patMade),
-    patMissed: 0,
+    patMissed: Math.max(0, (projectionStats.patMissed ?? 0) - (actualStats.patMissed ?? 0)),
     // Defense
     defTd: Math.max(0, projectionStats.defTd - actualStats.defTd),
     defInt: Math.max(0, projectionStats.defInt - actualStats.defInt),
     defSacks: Math.max(0, projectionStats.defSacks - actualStats.defSacks),
     defFumbleRec: Math.max(0, projectionStats.defFumbleRec - actualStats.defFumbleRec),
     defSafety: Math.max(0, projectionStats.defSafety - actualStats.defSafety),
-    // Project remaining points allowed (can worsen DEF score)
-    defPointsAllowed: Math.max(0, projectionStats.defPointsAllowed - actualStats.defPointsAllowed),
+    // DEF points allowed handled separately with bucket math in live scoring
+    defPointsAllowed: 0,
   };
 }
 

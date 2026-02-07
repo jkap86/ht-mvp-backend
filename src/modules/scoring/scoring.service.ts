@@ -13,6 +13,7 @@ import {
   calculatePlayerPoints as calculatePlayerPointsPure,
   calculateRemainingStats,
   calculateProjectedBonuses,
+  getDefensePointsAllowedScore,
 } from './scoring-calculator';
 import { logger } from '../../config/env.config';
 
@@ -416,9 +417,25 @@ export class ScoringService {
             // Scale remaining points by time left in game
             const scaledRemaining = remainingPoints * pctRemaining;
 
+            // DEF points-allowed is bucketed/nonlinear - handle with estimated final PA
+            let defPointsAllowedDelta = 0;
+            if (position === 'DEF') {
+              const actualPA = actualStats.defPointsAllowed ?? 0;
+              const projPA = projStats.defPointsAllowed ?? actualPA;
+
+              // Estimate final PA by interpolating based on time remaining
+              const estFinalPA = actualPA + Math.max(0, projPA - actualPA) * pctRemaining;
+
+              const actualPAPoints = getDefensePointsAllowedScore(actualPA, rules);
+              const estFinalPAPoints = getDefensePointsAllowedScore(estFinalPA, rules);
+
+              // Can be negative (more PA later lowers DEF points)
+              defPointsAllowedDelta = estFinalPAPoints - actualPAPoints;
+            }
+
             const projectedBonuses = calculateProjectedBonuses(actualStats, projStats, rules);
             const scaledBonuses = projectedBonuses * pctRemaining;
-            projectedTotal += actualPoints + scaledRemaining + scaledBonuses;
+            projectedTotal += actualPoints + scaledRemaining + scaledBonuses + defPointsAllowedDelta;
           } else if (projStats) {
             // Have projection but no actual stats yet - use full projection
             projectedTotal += this.calculatePlayerPoints(projStats, rules, position);
