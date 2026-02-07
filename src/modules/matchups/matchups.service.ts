@@ -227,7 +227,9 @@ export class MatchupService {
       for (const playerId of playerIds) {
         const player = playerMap.get(playerId);
         const playerStats = statsMap.get(playerId);
-        const points = playerStats ? calculatePlayerPoints(playerStats, scoringRules) : 0;
+        const points = playerStats
+          ? calculatePlayerPoints(playerStats, scoringRules, player?.position)
+          : 0;
 
         performances.push({
           playerId,
@@ -246,7 +248,9 @@ export class MatchupService {
     for (const playerId of benchIds) {
       const player = playerMap.get(playerId);
       const playerStats = statsMap.get(playerId);
-      const points = playerStats ? calculatePlayerPoints(playerStats, scoringRules) : 0;
+      const points = playerStats
+        ? calculatePlayerPoints(playerStats, scoringRules, player?.position)
+        : 0;
 
       performances.push({
         playerId,

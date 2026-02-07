@@ -20,8 +20,15 @@ function getDefensePointsAllowedScore(pointsAllowed: number, rules: ScoringRules
 
 /**
  * Calculate points for a player's stats using the given scoring rules
+ * @param stats - Player statistics
+ * @param rules - Scoring rules to apply
+ * @param position - Optional player position for position-based bonuses (e.g., TE premium)
  */
-export function calculatePlayerPoints(stats: PlayerStats, rules: ScoringRules): number {
+export function calculatePlayerPoints(
+  stats: PlayerStats,
+  rules: ScoringRules,
+  position?: string | null
+): number {
   let points = 0;
 
   // Passing
@@ -67,6 +74,11 @@ export function calculatePlayerPoints(stats: PlayerStats, rules: ScoringRules): 
   }
   if (rules.bonus300YardPass && stats.passYards >= 300) {
     points += rules.bonus300YardPass;
+  }
+
+  // TE Premium - extra points per reception for tight ends
+  if (position === 'TE' && rules.tePremium) {
+    points += stats.receptions * rules.tePremium;
   }
 
   return Math.round(points * 100) / 100; // Round to 2 decimal places

@@ -64,9 +64,10 @@ export class ScoringService {
   /**
    * Calculate points for a player's stats
    * Delegates to pure scoring calculator for single source of truth
+   * @param position - Optional player position for TE premium
    */
-  calculatePlayerPoints(stats: PlayerStats, rules: ScoringRules): number {
-    return calculatePlayerPointsPure(stats, rules);
+  calculatePlayerPoints(stats: PlayerStats, rules: ScoringRules, position?: string | null): number {
+    return calculatePlayerPointsPure(stats, rules, position);
   }
 
   /**
@@ -89,9 +90,13 @@ export class ScoringService {
       ...lineup.DEF,
     ];
 
-    // Get stats for all starters
-    const stats = await this.statsRepo.findByPlayersAndWeek(starterIds, season, week);
+    // Get stats and player data for all starters
+    const [stats, players] = await Promise.all([
+      this.statsRepo.findByPlayersAndWeek(starterIds, season, week),
+      this.playerRepo ? this.playerRepo.findByIds(starterIds) : Promise.resolve([]),
+    ]);
     const statsMap = new Map(stats.map((s) => [s.playerId, s]));
+    const positionMap = new Map(players.map((p) => [p.id, p.position]));
 
     // Calculate points for each player
     const playerPoints = new Map<number, number>();
@@ -100,7 +105,8 @@ export class ScoringService {
     for (const playerId of starterIds) {
       const playerStats = statsMap.get(playerId);
       if (playerStats) {
-        const points = this.calculatePlayerPoints(playerStats, rules);
+        const position = positionMap.get(playerId);
+        const points = this.calculatePlayerPoints(playerStats, rules, position);
         playerPoints.set(playerId, points);
         total += points;
       } else {
@@ -247,13 +253,15 @@ export class ScoringService {
       }
     }
 
-    // Batch fetch all stats
-    const stats = await this.statsRepo.findByPlayersAndWeek(
-      Array.from(allStarterIds),
-      season,
-      week
-    );
+    const starterIdArray = Array.from(allStarterIds);
+
+    // Batch fetch stats and player data
+    const [stats, players] = await Promise.all([
+      this.statsRepo.findByPlayersAndWeek(starterIdArray, season, week),
+      this.playerRepo ? this.playerRepo.findByIds(starterIdArray) : Promise.resolve([]),
+    ]);
     const statsMap = new Map(stats.map((s) => [s.playerId, s]));
+    const positionMap = new Map(players.map((p) => [p.id, p.position]));
 
     // Calculate live totals for each lineup
     const updates: Array<{
@@ -271,7 +279,8 @@ export class ScoringService {
       for (const playerId of starterIds) {
         const playerStats = statsMap.get(playerId);
         if (playerStats) {
-          total += this.calculatePlayerPoints(playerStats, rules);
+          const position = positionMap.get(playerId);
+          total += this.calculatePlayerPoints(playerStats, rules, position);
         }
       }
 
@@ -336,6 +345,7 @@ export class ScoringService {
     const statsMap = new Map(stats.map((s) => [s.playerId, s]));
     const projectionsMap = new Map(projections.map((p) => [p.playerId, p]));
     const playerTeamMap = new Map(players.map((p) => [p.id, p.team]));
+    const positionMap = new Map(players.map((p) => [p.id, p.position]));
 
     // Calculate live projected totals for each lineup
     const updates: Array<{
@@ -355,11 +365,12 @@ export class ScoringService {
         const actualStats = statsMap.get(playerId);
         const projStats = projectionsMap.get(playerId);
         const team = playerTeamMap.get(playerId);
+        const position = positionMap.get(playerId);
         const gameStatus = team ? gameStatusMap.get(team) : undefined;
 
         // Calculate actual points
         const actualPoints = actualStats
-          ? this.calculatePlayerPoints(actualStats, rules)
+          ? this.calculatePlayerPoints(actualStats, rules, position)
           : 0;
         actualTotal += actualPoints;
 
@@ -367,21 +378,27 @@ export class ScoringService {
         if (!gameStatus || (!gameStatus.isInProgress && !gameStatus.isComplete)) {
           // Game not started: use full projection
           projectedTotal += projStats
-            ? this.calculatePlayerPoints(projStats, rules)
+            ? this.calculatePlayerPoints(projStats, rules, position)
             : actualPoints;
         } else if (gameStatus.isComplete) {
           // Game complete: projected = actual
           projectedTotal += actualPoints;
         } else {
-          // Game in progress: actual + score(remaining stats) + projected bonuses
+          // Game in progress: actual + scaled(remaining stats) + projected bonuses
           if (actualStats && projStats) {
+            const pctRemaining = this.gameProgressService!.getPercentRemaining(gameStatus);
+
             const remainingStats = calculateRemainingStats(actualStats, projStats);
-            const remainingPoints = this.calculatePlayerPoints(remainingStats, rules);
+            const remainingPoints = this.calculatePlayerPoints(remainingStats, rules, position);
+
+            // Scale remaining points by time left in game
+            const scaledRemaining = remainingPoints * pctRemaining;
+
             const projectedBonuses = calculateProjectedBonuses(actualStats, projStats, rules);
-            projectedTotal += actualPoints + remainingPoints + projectedBonuses;
+            projectedTotal += actualPoints + scaledRemaining + projectedBonuses;
           } else if (projStats) {
             // Have projection but no actual stats yet - use full projection
-            projectedTotal += this.calculatePlayerPoints(projStats, rules);
+            projectedTotal += this.calculatePlayerPoints(projStats, rules, position);
           } else {
             projectedTotal += actualPoints;
           }
