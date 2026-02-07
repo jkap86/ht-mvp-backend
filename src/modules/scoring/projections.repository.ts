@@ -1,5 +1,5 @@
 import { Pool, PoolClient } from 'pg';
-import { PlayerStats, playerStatsFromDatabase } from './scoring.model';
+import { PlayerStats, playerProjectionFromDatabase } from './scoring.model';
 
 /**
  * Repository for player projections.
@@ -24,7 +24,7 @@ export class PlayerProjectionsRepository {
     );
 
     if (result.rows.length === 0) return null;
-    return playerStatsFromDatabase(result.rows[0]);
+    return playerProjectionFromDatabase(result.rows[0]);
   }
 
   /**
@@ -43,7 +43,7 @@ export class PlayerProjectionsRepository {
       [playerIds, season, week]
     );
 
-    return result.rows.map(playerStatsFromDatabase);
+    return result.rows.map(playerProjectionFromDatabase);
   }
 
   /**
@@ -115,7 +115,7 @@ export class PlayerProjectionsRepository {
       ]
     );
 
-    return playerStatsFromDatabase(result.rows[0]);
+    return playerProjectionFromDatabase(result.rows[0]);
   }
 
   /**

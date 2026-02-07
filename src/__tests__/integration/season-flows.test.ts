@@ -269,6 +269,8 @@ describe('Season Sanity Integration Tests', () => {
         week: 1,
         lineup: mockLineup,
         totalPoints: null,
+        totalPointsLive: null,
+        totalPointsProjectedLive: null,
         isLocked: false,
         createdAt: new Date(),
         updatedAt: new Date(),

@@ -8,7 +8,11 @@ import { GameProgressService, TeamGameStatus } from './game-progress.service';
 import { PlayerStats, ScoringRules, DEFAULT_SCORING_RULES, ScoringType } from './scoring.model';
 import { LineupSlots, RosterLineup } from '../lineups/lineups.model';
 import { NotFoundException, ForbiddenException } from '../../utils/exceptions';
-import { calculatePlayerPoints as calculatePlayerPointsPure } from './scoring-calculator';
+import {
+  calculatePlayerPoints as calculatePlayerPointsPure,
+  calculateRemainingStats,
+  calculateProjectedBonuses,
+} from './scoring-calculator';
 import { logger } from '../../config/env.config';
 
 export class ScoringService {
@@ -309,7 +313,10 @@ export class ScoringService {
 
   /**
    * Calculate and update live projected totals for all lineups in a league
-   * Uses formula: projectedFinal = actualPoints + (originalProjection × gamePercentRemaining)
+   * Uses correct formula: projectedFinal = actualPoints + score(remainingStats) + projectedBonuses
+   *
+   * This properly calculates remaining stats per field rather than applying a
+   * percentage to total projected points.
    */
   async calculateWeeklyLiveProjectedTotalsForLeague(
     leagueId: number,
@@ -364,35 +371,40 @@ export class ScoringService {
       let projectedTotal = 0;
 
       for (const playerId of starterIds) {
-        const playerStats = statsMap.get(playerId);
-        const playerProj = projectionsMap.get(playerId);
+        const actualStats = statsMap.get(playerId);
+        const projStats = projectionsMap.get(playerId);
         const team = playerTeamMap.get(playerId);
+        const gameStatus = team ? gameStatusMap.get(team) : undefined;
 
         // Calculate actual points
-        const actualPoints = playerStats
-          ? this.calculatePlayerPoints(playerStats, rules)
+        const actualPoints = actualStats
+          ? this.calculatePlayerPoints(actualStats, rules)
           : 0;
         actualTotal += actualPoints;
 
-        // Calculate projected final points
-        const projectedPoints = playerProj
-          ? this.calculatePlayerPoints(playerProj, rules)
-          : 0;
-
-        // Get game progress for this player's team
-        const gameStatus = team ? gameStatusMap.get(team) : undefined;
-        const percentRemaining = gameStatus
-          ? this.gameProgressService!.getPercentRemaining(gameStatus)
-          : 1; // Default to 100% remaining if no game info
-
-        // projectedFinal = actualPoints + (originalProjection × gamePercentRemaining)
-        const projectedFinal = this.gameProgressService!.calculateProjectedFinal(
-          actualPoints,
-          projectedPoints,
-          percentRemaining
-        );
-
-        projectedTotal += projectedFinal;
+        // Determine projected final based on game state
+        if (!gameStatus || (!gameStatus.isInProgress && !gameStatus.isComplete)) {
+          // Game not started: use full projection
+          projectedTotal += projStats
+            ? this.calculatePlayerPoints(projStats, rules)
+            : actualPoints;
+        } else if (gameStatus.isComplete) {
+          // Game complete: projected = actual
+          projectedTotal += actualPoints;
+        } else {
+          // Game in progress: actual + score(remaining stats) + projected bonuses
+          if (actualStats && projStats) {
+            const remainingStats = calculateRemainingStats(actualStats, projStats);
+            const remainingPoints = this.calculatePlayerPoints(remainingStats, rules);
+            const projectedBonuses = calculateProjectedBonuses(actualStats, projStats, rules);
+            projectedTotal += actualPoints + remainingPoints + projectedBonuses;
+          } else if (projStats) {
+            // Have projection but no actual stats yet - use full projection
+            projectedTotal += this.calculatePlayerPoints(projStats, rules);
+          } else {
+            projectedTotal += actualPoints;
+          }
+        }
       }
 
       updates.push({

@@ -134,6 +134,12 @@ export interface ScoringRules {
   defPointsAllowed21to27: number;
   defPointsAllowed28to34: number;
   defPointsAllowed35plus: number;
+  // Yardage bonuses (optional, default 0 = disabled)
+  bonus100YardRush?: number; // Bonus for 100+ rushing yards
+  bonus100YardRec?: number; // Bonus for 100+ receiving yards
+  bonus300YardPass?: number; // Bonus for 300+ passing yards
+  // TE Premium (extra points per reception for TEs)
+  tePremium?: number;
 }
 
 export const DEFAULT_SCORING_RULES: Record<ScoringType, ScoringRules> = {
@@ -164,6 +170,10 @@ export const DEFAULT_SCORING_RULES: Record<ScoringType, ScoringRules> = {
     defPointsAllowed21to27: 0,
     defPointsAllowed28to34: -1,
     defPointsAllowed35plus: -4,
+    bonus100YardRush: 0,
+    bonus100YardRec: 0,
+    bonus300YardPass: 0,
+    tePremium: 0,
   },
   half_ppr: {
     passYards: 0.04,
@@ -192,6 +202,10 @@ export const DEFAULT_SCORING_RULES: Record<ScoringType, ScoringRules> = {
     defPointsAllowed21to27: 0,
     defPointsAllowed28to34: -1,
     defPointsAllowed35plus: -4,
+    bonus100YardRush: 0,
+    bonus100YardRec: 0,
+    bonus300YardPass: 0,
+    tePremium: 0,
   },
   standard: {
     passYards: 0.04,
@@ -220,5 +234,44 @@ export const DEFAULT_SCORING_RULES: Record<ScoringType, ScoringRules> = {
     defPointsAllowed21to27: 0,
     defPointsAllowed28to34: -1,
     defPointsAllowed35plus: -4,
+    bonus100YardRush: 0,
+    bonus100YardRec: 0,
+    bonus300YardPass: 0,
+    tePremium: 0,
   },
 };
+
+/**
+ * Map projection row to PlayerStats format.
+ * Similar to playerStatsFromDatabase but explicitly for projections table.
+ */
+export function playerProjectionFromDatabase(row: any): PlayerStats {
+  return {
+    id: row.id || 0,
+    playerId: row.player_id,
+    season: row.season,
+    week: row.week,
+    passYards: parseFloat(row.pass_yards) || 0,
+    passTd: parseFloat(row.pass_td) || 0,
+    passInt: parseFloat(row.pass_int) || 0,
+    rushYards: parseFloat(row.rush_yards) || 0,
+    rushTd: parseFloat(row.rush_td) || 0,
+    receptions: parseFloat(row.receptions) || 0,
+    recYards: parseFloat(row.rec_yards) || 0,
+    recTd: parseFloat(row.rec_td) || 0,
+    fumblesLost: parseFloat(row.fumbles_lost) || 0,
+    twoPtConversions: parseFloat(row.two_pt_conversions) || 0,
+    fgMade: parseFloat(row.fg_made) || 0,
+    fgMissed: parseFloat(row.fg_missed) || 0,
+    patMade: parseFloat(row.pat_made) || 0,
+    patMissed: parseFloat(row.pat_missed) || 0,
+    defTd: parseFloat(row.def_td) || 0,
+    defInt: parseFloat(row.def_int) || 0,
+    defSacks: parseFloat(row.def_sacks) || 0,
+    defFumbleRec: parseFloat(row.def_fumble_rec) || 0,
+    defSafety: parseFloat(row.def_safety) || 0,
+    defPointsAllowed: parseFloat(row.def_points_allowed) || 0,
+    createdAt: row.created_at || new Date(),
+    updatedAt: row.updated_at || new Date(),
+  };
+}

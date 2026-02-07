@@ -70,6 +70,16 @@ export class ValidationException extends AppException {
 }
 
 /**
+ * Thrown when a request is invalid but not a validation error
+ * (e.g., trying to perform an action that's not currently allowed)
+ */
+export class BadRequestException extends AppException {
+  constructor(message: string, errorCode: ErrorCodeType = ErrorCode.VALIDATION_ERROR) {
+    super(message, 400, errorCode);
+  }
+}
+
+/**
  * Thrown when credentials are invalid
  */
 export class InvalidCredentialsException extends AppException {

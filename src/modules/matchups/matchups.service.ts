@@ -4,6 +4,7 @@ import { LineupsRepository } from '../lineups/lineups.repository';
 import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import { ScoringService } from '../scoring/scoring.service';
 import { PlayerStatsRepository } from '../scoring/scoring.repository';
+import { GameProgressService } from '../scoring/game-progress.service';
 import { ScoringRules, DEFAULT_SCORING_RULES, ScoringType } from '../scoring/scoring.model';
 import { calculatePlayerPoints } from '../scoring/scoring-calculator';
 import { PlayerRepository } from '../players/players.repository';
@@ -15,7 +16,12 @@ import {
   MatchupPlayerPerformance,
 } from './matchups.model';
 import { LineupSlots, PositionSlot } from '../lineups/lineups.model';
-import { NotFoundException, ForbiddenException, ValidationException } from '../../utils/exceptions';
+import {
+  NotFoundException,
+  ForbiddenException,
+  ValidationException,
+  BadRequestException,
+} from '../../utils/exceptions';
 
 /**
  * Core matchup service handling CRUD operations, detail fetching, and scoring updates.
@@ -32,7 +38,8 @@ export class MatchupService {
     private readonly scoringService: ScoringService,
     private readonly playerRepo: PlayerRepository,
     private readonly statsRepo: PlayerStatsRepository,
-    private readonly medianService?: MedianService
+    private readonly medianService?: MedianService,
+    private readonly gameProgressService?: GameProgressService
   ) {}
 
   /**
@@ -293,6 +300,16 @@ export class MatchupService {
     }
     if (week > maxWeek) {
       throw new ValidationException(`Week ${week} is beyond the scheduled weeks (max: ${maxWeek})`);
+    }
+
+    // Guard: Check if NFL games are still in progress
+    if (this.gameProgressService) {
+      const gamesInProgress = await this.gameProgressService.hasGamesInProgress(season, week);
+      if (gamesInProgress) {
+        throw new BadRequestException(
+          'Cannot finalize week while NFL games are still in progress. Please wait until all games are complete.'
+        );
+      }
     }
 
     // First calculate all scores

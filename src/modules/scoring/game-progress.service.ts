@@ -164,26 +164,25 @@ export class GameProgressService {
   }
 
   /**
-   * Calculate projected final points for a player based on game progress
-   * Formula: projectedFinal = actualPoints + (originalProjection × gamePercentRemaining)
-   *
-   * @param actualPoints - Points scored so far
-   * @param projectedPoints - Original full-game projection
-   * @param percentRemaining - Fraction of game remaining (0.0 to 1.0)
-   * @returns Projected final points
+   * Check if any NFL games are currently in progress for a given week
    */
-  calculateProjectedFinal(
-    actualPoints: number,
-    projectedPoints: number,
-    percentRemaining: number
-  ): number {
-    // If game is complete, just return actual
-    if (percentRemaining <= 0) return actualPoints;
+  async hasGamesInProgress(season: number, week: number): Promise<boolean> {
+    const statusMap = await this.getWeekGameStatus(season, week);
+    for (const status of statusMap.values()) {
+      if (status.isInProgress) return true;
+    }
+    return false;
+  }
 
-    // If game hasn't started, return projection
-    if (percentRemaining >= 1) return projectedPoints;
-
-    // Mid-game: actual + remaining projection
-    return actualPoints + projectedPoints * percentRemaining;
+  /**
+   * Check if all NFL games for a week are complete
+   */
+  async areAllGamesComplete(season: number, week: number): Promise<boolean> {
+    const statusMap = await this.getWeekGameStatus(season, week);
+    if (statusMap.size === 0) return false; // No games found
+    for (const status of statusMap.values()) {
+      if (!status.isComplete) return false;
+    }
+    return true;
   }
 }
