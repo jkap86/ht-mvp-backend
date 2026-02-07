@@ -8,6 +8,7 @@ import {
   duesPaymentWithRosterFromDatabase,
   PayoutStructure,
 } from './dues.model';
+import { runInTransaction } from '../../shared/transaction-runner';
 
 export interface UpsertDuesConfigParams {
   leagueId: number;
@@ -71,23 +72,15 @@ export class DuesRepository {
    * Delete dues configuration for a league
    */
   async deleteDuesConfig(leagueId: number): Promise<boolean> {
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
+    return runInTransaction(this.db, async (client) => {
       const result = await client.query(
         'DELETE FROM league_dues WHERE league_id = $1',
         [leagueId]
       );
       // Also delete all payment records for this league
       await client.query('DELETE FROM dues_payments WHERE league_id = $1', [leagueId]);
-      await client.query('COMMIT');
       return result.rowCount !== null && result.rowCount > 0;
-    } catch (e) {
-      await client.query('ROLLBACK');
-      throw e;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   /**

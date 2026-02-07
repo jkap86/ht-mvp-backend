@@ -14,7 +14,7 @@ import { ValidationException, NotFoundException } from '../../../utils/exception
 import { getRosterBudgetDataWithClient } from './auction-budget-calculator';
 import { resolvePriceWithClient, OutbidNotification } from './auction-price-resolver';
 import { getAuctionRosterLockId } from '../../../utils/locks';
-import { runInTransaction, runWithLock, LockDomain } from '../../../shared/transaction-runner';
+import { runInTransaction, runWithLock, runWithLocks, LockDomain } from '../../../shared/transaction-runner';
 import { getLockId } from '../../../shared/locks';
 import { logger } from '../../../config/logger.config';
 
@@ -263,83 +263,80 @@ export class SlowAuctionService {
     const settings = this.getSettings(draft);
     const today = getEasternDateString();
 
-    // Use transaction with locks to prevent race conditions on limit checks
-    const client = await this.pool.connect();
+    // Use runWithLocks to acquire both locks in correct order (ROSTER before DRAFT)
     try {
-      await client.query('BEGIN');
+      return await runWithLocks(
+        this.pool,
+        [
+          { domain: LockDomain.ROSTER, id: rosterId },
+          { domain: LockDomain.DRAFT, id: draftId },
+        ],
+        async (client) => {
+          // 4. Check roster has remaining slots (re-check under lock)
+          const budgetData = await getRosterBudgetDataWithClient(client, draftId, rosterId);
+          if (budgetData.wonCount >= rosterSlots) {
+            throw new ValidationException('Your roster is full');
+          }
 
-      // Acquire roster lock first (for per-team + daily limits)
-      await client.query('SELECT pg_advisory_xact_lock($1)', [getAuctionRosterLockId(rosterId)]);
-      // Acquire draft lock (for global cap + player uniqueness)
-      await client.query('SELECT pg_advisory_xact_lock($1)', [getLockId(LockDomain.DRAFT, draftId)]);
+          // 5. Check per-team nomination limit (under lock)
+          const activeCount = await this.lotRepo.countActiveLotsForRosterWithClient(client, draftId, rosterId);
+          if (activeCount >= settings.maxActiveNominationsPerTeam) {
+            throw new ValidationException(
+              `Maximum of ${settings.maxActiveNominationsPerTeam} active nominations allowed per team`
+            );
+          }
 
-      // 4. Check roster has remaining slots (re-check under lock)
-      const budgetData = await getRosterBudgetDataWithClient(client, draftId, rosterId);
-      if (budgetData.wonCount >= rosterSlots) {
-        throw new ValidationException('Your roster is full');
-      }
+          // 5b. Check global nomination cap (under lock)
+          if (settings.maxActiveNominationsGlobal) {
+            const totalActive = await this.lotRepo.countAllActiveLotsWithClient(client, draftId);
+            if (totalActive >= settings.maxActiveNominationsGlobal) {
+              throw new ValidationException(
+                `Maximum of ${settings.maxActiveNominationsGlobal} active auctions allowed league-wide`
+              );
+            }
+          }
 
-      // 5. Check per-team nomination limit (under lock)
-      const activeCount = await this.lotRepo.countActiveLotsForRosterWithClient(client, draftId, rosterId);
-      if (activeCount >= settings.maxActiveNominationsPerTeam) {
-        throw new ValidationException(
-          `Maximum of ${settings.maxActiveNominationsPerTeam} active nominations allowed per team`
-        );
-      }
+          // 5c. Check daily nomination limit (under lock)
+          if (settings.dailyNominationLimit) {
+            const todayCount = await this.lotRepo.countDailyNominationsForRosterWithClient(
+              client,
+              draftId,
+              rosterId,
+              today
+            );
+            if (todayCount >= settings.dailyNominationLimit) {
+              throw new ValidationException(
+                `Daily nomination limit of ${settings.dailyNominationLimit} reached. Try again tomorrow.`
+              );
+            }
+          }
 
-      // 5b. Check global nomination cap (under lock)
-      if (settings.maxActiveNominationsGlobal) {
-        const totalActive = await this.lotRepo.countAllActiveLotsWithClient(client, draftId);
-        if (totalActive >= settings.maxActiveNominationsGlobal) {
-          throw new ValidationException(
-            `Maximum of ${settings.maxActiveNominationsGlobal} active auctions allowed league-wide`
+          // 6. Check player not already nominated (under lock)
+          const existing = await this.lotRepo.findLotByDraftAndPlayerWithClient(client, draftId, playerId);
+          if (existing) {
+            throw new ValidationException('Player has already been nominated in this draft');
+          }
+
+          // 7. Create lot with deadline (using transaction client)
+          const bidDeadline = new Date(Date.now() + settings.bidWindowSeconds * 1000);
+          const lot = await this.lotRepo.createLotWithClient(
+            client,
+            draftId,
+            playerId,
+            rosterId,
+            bidDeadline,
+            settings.minBid
           );
+
+          return { lot, message: 'Player nominated successfully' };
         }
-      }
-
-      // 5c. Check daily nomination limit (under lock)
-      if (settings.dailyNominationLimit) {
-        const todayCount = await this.lotRepo.countDailyNominationsForRosterWithClient(
-          client,
-          draftId,
-          rosterId,
-          today
-        );
-        if (todayCount >= settings.dailyNominationLimit) {
-          throw new ValidationException(
-            `Daily nomination limit of ${settings.dailyNominationLimit} reached. Try again tomorrow.`
-          );
-        }
-      }
-
-      // 6. Check player not already nominated (under lock)
-      const existing = await this.lotRepo.findLotByDraftAndPlayerWithClient(client, draftId, playerId);
-      if (existing) {
-        throw new ValidationException('Player has already been nominated in this draft');
-      }
-
-      // 7. Create lot with deadline (using transaction client)
-      const bidDeadline = new Date(Date.now() + settings.bidWindowSeconds * 1000);
-      const lot = await this.lotRepo.createLotWithClient(
-        client,
-        draftId,
-        playerId,
-        rosterId,
-        bidDeadline,
-        settings.minBid
       );
-
-      await client.query('COMMIT');
-      return { lot, message: 'Player nominated successfully' };
     } catch (error: any) {
-      await client.query('ROLLBACK');
       // Handle unique constraint violation from partial index on (draft_id, player_id)
       if (error.code === '23505') {
         throw new ValidationException('Player has already been nominated in this draft');
       }
       throw error;
-    } finally {
-      client.release();
     }
   }
 

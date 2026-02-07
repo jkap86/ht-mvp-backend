@@ -5,7 +5,7 @@ import { LeagueRepository } from '../leagues/leagues.repository';
 import { RosterPlayersRepository } from '../rosters/rosters.repository';
 import { DraftEngineFactory } from '../../engines';
 import { NotFoundException, ForbiddenException, ValidationException } from '../../utils/exceptions';
-import { tryGetSocketService } from '../../socket';
+import { EventTypes, tryGetEventBus } from '../../shared/events';
 import { finalizeDraftCompletion } from './draft-completion.utils';
 import { ScheduleGeneratorService } from '../matchups/schedule-generator.service';
 import { DraftPickAssetRepository } from './draft-pick-asset.repository';
@@ -109,23 +109,34 @@ export class DraftStateService {
 
     const response = draftToResponse(updatedDraft);
 
-    // Emit socket event
-    const socket = tryGetSocketService();
-    socket?.emitDraftStarted(draftId, response);
-    socket?.emitNextPick(draftId, {
-      currentPick: 1,
-      currentRound: 1,
-      currentRosterId: firstPickerRosterId,  // Use traded-pick-aware ID
-      pickDeadline,
-      status: 'in_progress',
+    // Emit events
+    const eventBus = tryGetEventBus();
+    eventBus?.publish({
+      type: EventTypes.DRAFT_STARTED,
+      payload: { draftId, draft: response },
+    });
+    eventBus?.publish({
+      type: EventTypes.DRAFT_NEXT_PICK,
+      payload: {
+        draftId,
+        currentPick: 1,
+        currentRound: 1,
+        currentRosterId: firstPickerRosterId,  // Use traded-pick-aware ID
+        pickDeadline,
+        status: 'in_progress',
+      },
     });
 
     // For fast auctions, also emit nominator changed so frontend shows correct nominator name
     if (isFastAuction && firstPicker) {
-      socket?.emitAuctionNominatorChanged(draftId, {
-        nominatorRosterId: firstPicker.rosterId,
-        nominationNumber: 1,
-        nominationDeadline: pickDeadline?.toISOString(),
+      eventBus?.publish({
+        type: EventTypes.AUCTION_NOMINATOR_CHANGED,
+        payload: {
+          draftId,
+          nominatorRosterId: firstPicker.rosterId,
+          nominationNumber: 1,
+          nominationDeadline: pickDeadline?.toISOString(),
+        },
       });
     }
 
@@ -174,8 +185,11 @@ export class DraftStateService {
 
     const response = draftToResponse(updatedDraft);
 
-    const socket = tryGetSocketService();
-    socket?.emitDraftPaused(draftId, response);
+    const eventBus = tryGetEventBus();
+    eventBus?.publish({
+      type: EventTypes.DRAFT_PAUSED,
+      payload: { draftId, draft: response },
+    });
 
     return response;
   }
@@ -221,14 +235,21 @@ export class DraftStateService {
 
     const response = draftToResponse(updatedDraft);
 
-    const socket = tryGetSocketService();
-    socket?.emitDraftResumed(draftId, response);
-    socket?.emitNextPick(draftId, {
-      currentPick: updatedDraft.currentPick,
-      currentRound: updatedDraft.currentRound,
-      currentRosterId: updatedDraft.currentRosterId,
-      pickDeadline,
-      status: 'in_progress',
+    const eventBus = tryGetEventBus();
+    eventBus?.publish({
+      type: EventTypes.DRAFT_RESUMED,
+      payload: { draftId, draft: response },
+    });
+    eventBus?.publish({
+      type: EventTypes.DRAFT_NEXT_PICK,
+      payload: {
+        draftId,
+        currentPick: updatedDraft.currentPick,
+        currentRound: updatedDraft.currentRound,
+        currentRosterId: updatedDraft.currentRosterId,
+        pickDeadline,
+        status: 'in_progress',
+      },
     });
 
     return response;
@@ -273,8 +294,11 @@ export class DraftStateService {
 
     const response = draftToResponse(updatedDraft);
 
-    const socket = tryGetSocketService();
-    socket?.emitDraftCompleted(draftId, response);
+    const eventBus = tryGetEventBus();
+    eventBus?.publish({
+      type: EventTypes.DRAFT_COMPLETED,
+      payload: { draftId, draft: response },
+    });
 
     return response;
   }
@@ -396,16 +420,23 @@ export class DraftStateService {
         };
       });
 
-    // Emit socket events AFTER transaction commits
-    const socket = tryGetSocketService();
-    socket?.emitPickUndone(draftId, { pick: undoneItem, draft: response });
+    // Emit events AFTER transaction commits
+    const eventBus = tryGetEventBus();
+    eventBus?.publish({
+      type: EventTypes.DRAFT_PICK_UNDONE,
+      payload: { draftId, pick: undoneItem, draft: response },
+    });
     if (updatedDraftStatus === 'in_progress') {
-      socket?.emitNextPick(draftId, {
-        currentPick: prevPick,
-        currentRound: prevRound,
-        currentRosterId: prevPickerRosterId,
-        pickDeadline,
-        status: 'in_progress',
+      eventBus?.publish({
+        type: EventTypes.DRAFT_NEXT_PICK,
+        payload: {
+          draftId,
+          currentPick: prevPick,
+          currentRound: prevRound,
+          currentRosterId: prevPickerRosterId,
+          pickDeadline,
+          status: 'in_progress',
+        },
       });
     }
 

@@ -9,7 +9,7 @@ import { RosterPlayersRepository } from '../rosters/rosters.repository';
 import { PlayerRepository } from '../players/players.repository';
 import { Player } from '../players/players.model';
 import { NotFoundException, ForbiddenException, ValidationException, ConflictException, ErrorCode } from '../../utils/exceptions';
-import { tryGetSocketService } from '../../socket';
+import { EventTypes, tryGetEventBus } from '../../shared/events';
 import { DraftEngineFactory, IDraftEngine } from '../../engines';
 import { finalizeDraftCompletion } from './draft-completion.utils';
 import { runInDraftTransaction } from '../../shared/locks';
@@ -222,7 +222,7 @@ export class DraftPickService {
       }
     );
 
-    // Emit socket events AFTER transaction commits
+    // Emit events AFTER transaction commits
     const enrichedPick = {
       ...pick,
       is_auto_pick: false,
@@ -231,24 +231,37 @@ export class DraftPickService {
       player_team: player?.team,
     };
 
-    const socket = tryGetSocketService();
-    socket?.emitDraftPick(draftId, enrichedPick);
+    const eventBus = tryGetEventBus();
+    eventBus?.publish({
+      type: EventTypes.DRAFT_PICK,
+      payload: { draftId, pick: enrichedPick },
+    });
 
     // Notify all users in draft that this player was removed from queues
-    socket?.emitQueueUpdated(draftId, { playerId, action: 'removed' });
+    eventBus?.publish({
+      type: EventTypes.DRAFT_QUEUE_UPDATED,
+      payload: { draftId, playerId, action: 'removed' },
+    });
 
     if (nextPickState.status !== 'completed') {
-      socket?.emitNextPick(draftId, {
-        currentPick: nextPickState.currentPick,
-        currentRound: nextPickState.currentRound,
-        currentRosterId: nextPickState.currentRosterId,
-        originalRosterId: nextPickState.originalRosterId,
-        isTraded: nextPickState.isTraded,
-        pickDeadline: nextPickState.pickDeadline,
+      eventBus?.publish({
+        type: EventTypes.DRAFT_NEXT_PICK,
+        payload: {
+          draftId,
+          currentPick: nextPickState.currentPick,
+          currentRound: nextPickState.currentRound,
+          currentRosterId: nextPickState.currentRosterId,
+          originalRosterId: nextPickState.originalRosterId,
+          isTraded: nextPickState.isTraded,
+          pickDeadline: nextPickState.pickDeadline,
+        },
       });
     } else {
       // Draft completed
-      socket?.emitDraftCompleted(draftId, draftToResponse(updatedDraft));
+      eventBus?.publish({
+        type: EventTypes.DRAFT_COMPLETED,
+        payload: { draftId, draft: draftToResponse(updatedDraft) },
+      });
     }
 
     return pick;
@@ -454,22 +467,32 @@ export class DraftPickService {
       }
     );
 
-    // Emit socket events AFTER transaction commits
-    const socket = tryGetSocketService();
-    socket?.emitDraftPick(draftId, response);
+    // Emit events AFTER transaction commits
+    const eventBus = tryGetEventBus();
+    eventBus?.publish({
+      type: EventTypes.DRAFT_PICK,
+      payload: { draftId, pick: response },
+    });
 
     if (nextPickState.status !== 'completed') {
-      socket?.emitNextPick(draftId, {
-        currentPick: nextPickState.currentPick,
-        currentRound: nextPickState.currentRound,
-        currentRosterId: nextPickState.currentRosterId,
-        originalRosterId: nextPickState.originalRosterId,
-        isTraded: nextPickState.isTraded,
-        pickDeadline: nextPickState.pickDeadline,
+      eventBus?.publish({
+        type: EventTypes.DRAFT_NEXT_PICK,
+        payload: {
+          draftId,
+          currentPick: nextPickState.currentPick,
+          currentRound: nextPickState.currentRound,
+          currentRosterId: nextPickState.currentRosterId,
+          originalRosterId: nextPickState.originalRosterId,
+          isTraded: nextPickState.isTraded,
+          pickDeadline: nextPickState.pickDeadline,
+        },
       });
     } else {
       // Draft completed
-      socket?.emitDraftCompleted(draftId, draftToResponse(updatedDraft));
+      eventBus?.publish({
+        type: EventTypes.DRAFT_COMPLETED,
+        payload: { draftId, draft: draftToResponse(updatedDraft) },
+      });
     }
 
     return response;

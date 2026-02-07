@@ -6,7 +6,7 @@ import {
   SystemMessageMetadata,
   messageToResponse,
 } from './chat.model';
-import { tryGetSocketService } from '../../socket';
+import { EventTypes, tryGetEventBus } from '../../shared/events';
 
 /**
  * Message templates for system messages
@@ -66,7 +66,7 @@ export class SystemMessageService {
       metadata
     );
 
-    // Broadcast via socket
+    // Broadcast via event bus
     this.broadcast(leagueId, chatMessage);
 
     return chatMessage;
@@ -94,7 +94,11 @@ export class SystemMessageService {
    * Broadcast an already-persisted message (call AFTER commit)
    */
   broadcast(leagueId: number, message: ChatMessageWithUser): void {
-    const socket = tryGetSocketService();
-    socket?.emitChatMessage(leagueId, messageToResponse(message));
+    const eventBus = tryGetEventBus();
+    eventBus?.publish({
+      type: EventTypes.CHAT_MESSAGE,
+      leagueId,
+      payload: messageToResponse(message),
+    });
   }
 }

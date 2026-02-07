@@ -25,6 +25,25 @@ class Container {
     return instance;
   }
 
+  /**
+   * Try to resolve a service, returning null if not registered.
+   * Useful for optional dependencies like event bus in test environments.
+   */
+  tryResolve<T>(key: string): T | null {
+    if (this.instances.has(key)) {
+      return this.instances.get(key) as T;
+    }
+
+    const factory = this.factories.get(key);
+    if (!factory) {
+      return null;
+    }
+
+    const instance = factory() as T;
+    this.instances.set(key, instance);
+    return instance;
+  }
+
   // For testing: clear all instances
   clearInstances(): void {
     this.instances.clear();

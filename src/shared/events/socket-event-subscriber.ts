@@ -64,6 +64,68 @@ export class SocketEventSubscriber implements DomainEventSubscriber {
       case EventTypes.AUCTION_LOT_STARTED:
         socketService.emitAuctionLotCreated(event.payload.draftId as number, event.payload);
         break;
+      case EventTypes.AUCTION_LOT_PASSED:
+        socketService.emitAuctionLotPassed(
+          event.payload.draftId as number,
+          event.payload as { lotId: number; playerId: number }
+        );
+        break;
+      case EventTypes.AUCTION_OUTBID:
+        if (event.userId) {
+          socketService.emitAuctionOutbid(event.userId, event.payload);
+        }
+        break;
+      case EventTypes.AUCTION_NOMINATOR_CHANGED:
+        socketService.emitAuctionNominatorChanged(
+          event.payload.draftId as number,
+          event.payload as { nominatorRosterId: number; nominationNumber: number; nominationDeadline: string }
+        );
+        break;
+      case EventTypes.AUCTION_ERROR:
+        if (event.userId) {
+          socketService.emitAuctionError(
+            event.userId,
+            event.payload as { action: string; message: string }
+          );
+        }
+        break;
+
+      // Derby events
+      case EventTypes.DERBY_STATE:
+        socketService.emitDerbyState(event.payload.draftId as number, event.payload);
+        break;
+      case EventTypes.DERBY_SLOT_PICKED:
+        socketService.emitDerbySlotPicked(event.payload.draftId as number, event.payload);
+        break;
+      case EventTypes.DERBY_TURN_CHANGED:
+        socketService.emitDerbyTurnChanged(event.payload.draftId as number, event.payload);
+        break;
+      case EventTypes.DERBY_PHASE_TRANSITION:
+        socketService.emitDerbyPhaseTransition(
+          event.payload.draftId as number,
+          event.payload as { phase: string }
+        );
+        break;
+
+      // Draft navigation events
+      case EventTypes.DRAFT_NEXT_PICK:
+        socketService.emitNextPick(event.payload.draftId as number, event.payload);
+        break;
+      case EventTypes.DRAFT_QUEUE_UPDATED:
+        socketService.emitQueueUpdated(
+          event.payload.draftId as number,
+          event.payload as { playerId: number; action: string }
+        );
+        break;
+      case EventTypes.DRAFT_AUTODRAFT_TOGGLED:
+        socketService.emitAutodraftToggled(
+          event.payload.draftId as number,
+          event.payload as { rosterId: number; enabled: boolean; forced: boolean }
+        );
+        break;
+      case EventTypes.DRAFT_SETTINGS_UPDATED:
+        socketService.emitDraftSettingsUpdated(event.payload.draftId as number, event.payload);
+        break;
 
       // Trade events
       case EventTypes.TRADE_PROPOSED:
@@ -91,6 +153,49 @@ export class SocketEventSubscriber implements DomainEventSubscriber {
           socketService.emitTradeVetoed(event.leagueId, event.payload);
         }
         break;
+      case EventTypes.TRADE_COUNTERED:
+        if (event.leagueId) {
+          socketService.emitTradeCountered(event.leagueId, event.payload);
+        }
+        break;
+      case EventTypes.TRADE_COMPLETED:
+        if (event.leagueId) {
+          socketService.emitTradeCompleted(event.leagueId, event.payload);
+        }
+        break;
+      case EventTypes.TRADE_EXPIRED:
+        if (event.leagueId) {
+          socketService.emitTradeExpired(event.leagueId, event.payload);
+        }
+        break;
+      case EventTypes.TRADE_INVALIDATED:
+        if (event.leagueId) {
+          socketService.emitTradeInvalidated(
+            event.leagueId,
+            event.payload as { tradeId: number; reason: string }
+          );
+        }
+        break;
+      case EventTypes.TRADE_VOTE_CAST:
+        if (event.leagueId) {
+          socketService.emitTradeVoteCast(event.leagueId, event.payload);
+        }
+        break;
+      case EventTypes.PICK_TRADED:
+        if (event.leagueId) {
+          socketService.emitPickTraded(
+            event.leagueId,
+            event.payload as {
+              pickAssetId: number;
+              season: number;
+              round: number;
+              previousOwnerRosterId: number;
+              newOwnerRosterId: number;
+              tradeId: number;
+            }
+          );
+        }
+        break;
 
       // Waiver events
       case EventTypes.WAIVER_CLAIMED:
@@ -104,6 +209,36 @@ export class SocketEventSubscriber implements DomainEventSubscriber {
             event.leagueId,
             event.payload as { processed: number; successful: number }
           );
+        }
+        break;
+      case EventTypes.WAIVER_CLAIM_SUCCESSFUL:
+        if (event.userId) {
+          socketService.emitWaiverClaimSuccessful(event.userId, event.payload);
+        }
+        break;
+      case EventTypes.WAIVER_CLAIM_FAILED:
+        if (event.userId) {
+          socketService.emitWaiverClaimFailed(event.userId, event.payload as { claimId: number; reason: string });
+        }
+        break;
+      case EventTypes.WAIVER_CLAIM_CANCELLED:
+        if (event.leagueId) {
+          socketService.emitWaiverClaimCancelled(event.leagueId, event.payload as { claimId: number; rosterId: number });
+        }
+        break;
+      case EventTypes.WAIVER_CLAIM_UPDATED:
+        if (event.leagueId) {
+          socketService.emitWaiverClaimUpdated(event.leagueId, event.payload);
+        }
+        break;
+      case EventTypes.WAIVER_PRIORITY_UPDATED:
+        if (event.leagueId) {
+          socketService.emitWaiverPriorityUpdated(event.leagueId, event.payload.priorities as unknown[]);
+        }
+        break;
+      case EventTypes.WAIVER_BUDGET_UPDATED:
+        if (event.leagueId) {
+          socketService.emitWaiverBudgetUpdated(event.leagueId, event.payload.budgets as unknown[]);
         }
         break;
 
@@ -140,6 +275,15 @@ export class SocketEventSubscriber implements DomainEventSubscriber {
           );
         }
         break;
+      case EventTypes.DM_READ:
+        if (event.userId) {
+          socketService.emitDmRead(
+            event.userId,
+            event.payload.conversationId as number,
+            event.payload.readByUserId as string
+          );
+        }
+        break;
 
       // Roster events
       case EventTypes.ROSTER_UPDATED:
@@ -163,6 +307,35 @@ export class SocketEventSubscriber implements DomainEventSubscriber {
             event.leagueId,
             event.payload as { rosterId: number; teamName: string }
           );
+        }
+        break;
+      case EventTypes.MEMBER_KICKED:
+        if (event.leagueId) {
+          socketService.emitMemberKicked(
+            event.leagueId,
+            event.payload as { rosterId: number; teamName: string }
+          );
+        }
+        break;
+
+      // Invitation events
+      case EventTypes.INVITATION_RECEIVED:
+        if (event.userId) {
+          socketService.emitToUser(
+            event.userId,
+            'invitation:received',
+            event.payload
+          );
+        }
+        break;
+      case EventTypes.INVITATION_DECLINED:
+        if (event.userId) {
+          socketService.emitToUser(event.userId, 'invitation:declined', event.payload);
+        }
+        break;
+      case EventTypes.INVITATION_CANCELLED:
+        if (event.userId) {
+          socketService.emitToUser(event.userId, 'invitation:cancelled', event.payload);
         }
         break;
 

@@ -2,7 +2,7 @@ import { ChatRepository } from './chat.repository';
 import { messageToResponse } from './chat.model';
 import { LeagueRepository } from '../leagues/leagues.repository';
 import { ForbiddenException, ValidationException } from '../../utils/exceptions';
-import { tryGetSocketService } from '../../socket';
+import { EventTypes, tryGetEventBus } from '../../shared/events';
 
 export class ChatService {
   constructor(
@@ -29,9 +29,13 @@ export class ChatService {
     const msg = await this.chatRepo.create(leagueId, userId, message.trim());
     const response = messageToResponse(msg);
 
-    // Emit socket event
-    const socket = tryGetSocketService();
-    socket?.emitChatMessage(leagueId, response);
+    // Emit event via domain event bus
+    const eventBus = tryGetEventBus();
+    eventBus?.publish({
+      type: EventTypes.CHAT_MESSAGE,
+      leagueId,
+      payload: response,
+    });
 
     return response;
   }

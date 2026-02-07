@@ -4,7 +4,8 @@ import { DraftRepository } from './drafts.repository';
 import { DraftPickAssetRepository } from './draft-pick-asset.repository';
 import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import { ForbiddenException, NotFoundException, ValidationException } from '../../utils/exceptions';
-import { tryGetSocketService } from '../../socket';
+import { EventTypes, tryGetEventBus } from '../../shared/events';
+import { runWithLock, LockDomain } from '../../shared/transaction-runner';
 
 /**
  * Cryptographically secure Fisher-Yates shuffle.
@@ -67,13 +68,8 @@ export class DraftOrderService {
 
     const targetCount = league.totalRosters;
 
-    // Clean up and recreate empty rosters in a transaction
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
-      // Advisory lock to prevent concurrent roster operations
-      await client.query('SELECT pg_advisory_xact_lock($1)', [leagueId]);
-
+    // Clean up and recreate empty rosters in a transaction with league lock
+    await runWithLock(this.db, LockDomain.LEAGUE, leagueId, async (client) => {
       // Delete all empty rosters first (cleans up any duplicates from previous bugs)
       await this.rosterRepo.deleteEmptyRosters(leagueId, client);
 
@@ -84,14 +80,7 @@ export class DraftOrderService {
       for (let i = userRosterCount + 1; i <= targetCount; i++) {
         await this.rosterRepo.createEmptyRoster(leagueId, i, client);
       }
-
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
 
     // Now get ALL rosters (including newly created empty ones)
     const allRosters = await this.rosterRepo.findByLeagueId(leagueId);
@@ -112,11 +101,15 @@ export class DraftOrderService {
     // Fetch the final draft order
     const finalOrder = await this.draftRepo.getDraftOrder(draftId);
 
-    // Emit socket event to notify all users viewing the draft room
-    const socket = tryGetSocketService();
-    socket?.emitDraftSettingsUpdated(draftId, {
-      order_confirmed: true,
-      draft_order: finalOrder,
+    // Emit event to notify all users viewing the draft room (AFTER transaction completes)
+    const eventBus = tryGetEventBus();
+    eventBus?.publish({
+      type: EventTypes.DRAFT_ORDER_UPDATED,
+      payload: {
+        draftId,
+        order_confirmed: true,
+        draft_order: finalOrder,
+      },
     });
 
     return finalOrder;
@@ -155,11 +148,15 @@ export class DraftOrderService {
     // Mark order as confirmed
     await this.draftRepo.setOrderConfirmed(draftId, true);
 
-    // Emit socket event to notify all users viewing the draft room
-    const socket = tryGetSocketService();
-    socket?.emitDraftSettingsUpdated(draftId, {
-      order_confirmed: true,
-      draft_order: draftOrder,
+    // Emit event to notify all users viewing the draft room
+    const eventBus = tryGetEventBus();
+    eventBus?.publish({
+      type: EventTypes.DRAFT_ORDER_UPDATED,
+      payload: {
+        draftId,
+        order_confirmed: true,
+        draft_order: draftOrder,
+      },
     });
 
     return draftOrder;
@@ -213,11 +210,15 @@ export class DraftOrderService {
     // Fetch the final draft order
     const finalOrder = await this.draftRepo.getDraftOrder(draftId);
 
-    // Emit socket event to notify all users viewing the draft room
-    const socket = tryGetSocketService();
-    socket?.emitDraftSettingsUpdated(draftId, {
-      order_confirmed: true,
-      draft_order: finalOrder,
+    // Emit event to notify all users viewing the draft room
+    const eventBus = tryGetEventBus();
+    eventBus?.publish({
+      type: EventTypes.DRAFT_ORDER_UPDATED,
+      payload: {
+        draftId,
+        order_confirmed: true,
+        draft_order: finalOrder,
+      },
     });
 
     return finalOrder;
@@ -232,13 +233,8 @@ export class DraftOrderService {
 
     const targetCount = league.totalRosters;
 
-    // Clean up and create empty rosters in a transaction
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
-      // Advisory lock to prevent concurrent roster operations
-      await client.query('SELECT pg_advisory_xact_lock($1)', [leagueId]);
-
+    // Clean up and create empty rosters in a transaction with league lock
+    await runWithLock(this.db, LockDomain.LEAGUE, leagueId, async (client) => {
       // Delete any existing empty rosters first
       await this.rosterRepo.deleteEmptyRosters(leagueId, client);
 
@@ -249,14 +245,7 @@ export class DraftOrderService {
       for (let i = userRosterCount + 1; i <= targetCount; i++) {
         await this.rosterRepo.createEmptyRoster(leagueId, i, client);
       }
-
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
 
     // Now get ALL rosters (including newly created empty ones)
     const allRosters = await this.rosterRepo.findByLeagueId(leagueId);

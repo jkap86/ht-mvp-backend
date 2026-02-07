@@ -6,7 +6,7 @@ import {
 } from '../waivers.repository';
 import { RosterPlayersRepository } from '../../rosters/rosters.repository';
 import { LeagueRepository, RosterRepository } from '../../leagues/leagues.repository';
-import { tryGetSocketService } from '../../../socket';
+import { EventTypes, tryGetEventBus } from '../../../shared/events';
 import {
   WaiverClaimWithDetails,
   SubmitClaimRequest,
@@ -126,7 +126,7 @@ export async function submitClaim(
     const claimWithDetails = await ctx.claimsRepo.findByIdWithDetails(claim.id);
     if (!claimWithDetails) throw new Error('Failed to get claim details');
 
-    // Emit socket event
+    // Emit event via domain event bus (AFTER transaction commit)
     emitClaimSubmitted(leagueId, claimWithDetails);
 
     return claimWithDetails;
@@ -139,6 +139,10 @@ export async function submitClaim(
 }
 
 function emitClaimSubmitted(leagueId: number, claim: WaiverClaimWithDetails): void {
-  const socket = tryGetSocketService();
-  socket?.emitWaiverClaimSubmitted(leagueId, waiverClaimToResponse(claim));
+  const eventBus = tryGetEventBus();
+  eventBus?.publish({
+    type: EventTypes.WAIVER_CLAIMED,
+    leagueId,
+    payload: waiverClaimToResponse(claim),
+  });
 }

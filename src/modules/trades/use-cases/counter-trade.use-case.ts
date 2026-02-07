@@ -1,12 +1,12 @@
 import { Pool } from 'pg';
-import { tryGetSocketService } from '../../../socket';
+import { EventTypes, tryGetEventBus } from '../../../shared/events';
 import { TradeWithDetails, CounterTradeRequest, tradeWithDetailsToResponse } from '../trades.model';
 import {
   NotFoundException,
   ForbiddenException,
   ValidationException,
 } from '../../../utils/exceptions';
-import { getLockId, LockDomain } from '../../../shared/locks';
+import { runWithLock, LockDomain } from '../../../shared/transaction-runner';
 import { proposeTrade, ProposeTradeContext } from './propose-trade.use-case';
 import { EventListenerService } from '../../chat/event-listener.service';
 import { logger } from '../../../config/logger.config';
@@ -39,55 +39,54 @@ export async function counterTrade(
   }
 
   // Use transaction to ensure atomicity - both status update and new trade succeed or fail together
-  const client = await ctx.db.connect();
-  let newTrade: TradeWithDetails;
+  const newTrade = await runWithLock(
+    ctx.db,
+    LockDomain.TRADE,
+    originalTrade.leagueId,
+    async (client) => {
+      // Re-verify status after acquiring lock (another transaction may have changed it)
+      const currentTrade = await ctx.tradesRepo.findById(tradeId, client);
+      if (!currentTrade || currentTrade.status !== 'pending') {
+        throw new ValidationException(
+          `Cannot counter trade with status: ${currentTrade?.status || 'unknown'}`
+        );
+      }
 
-  try {
-    await client.query('BEGIN');
-    await client.query('SELECT pg_advisory_xact_lock($1)', [
-      getLockId(LockDomain.TRADE, originalTrade.leagueId),
-    ]);
+      // Mark original as countered within the transaction (conditional)
+      const updated = await ctx.tradesRepo.updateStatus(tradeId, 'countered', client, 'pending');
+      if (!updated) {
+        throw new ValidationException('Trade status changed during processing');
+      }
 
-    // Re-verify status after acquiring lock (another transaction may have changed it)
-    const currentTrade = await ctx.tradesRepo.findById(tradeId, client);
-    if (!currentTrade || currentTrade.status !== 'pending') {
-      throw new ValidationException(
-        `Cannot counter trade with status: ${currentTrade?.status || 'unknown'}`
+      // Create new trade with swapped proposer/recipient (using same transaction)
+      return await proposeTrade(
+        ctx,
+        client,
+        originalTrade.leagueId,
+        userId,
+        {
+          recipientRosterId: originalTrade.proposerRosterId,
+          offeringPlayerIds: request.offeringPlayerIds,
+          requestingPlayerIds: request.requestingPlayerIds,
+          offeringPickAssetIds: request.offeringPickAssetIds,
+          requestingPickAssetIds: request.requestingPickAssetIds,
+          message: request.message,
+        },
+        false // Don't manage transaction - we're already in one
       );
     }
+  );
 
-    // Mark original as countered within the transaction (conditional)
-    const updated = await ctx.tradesRepo.updateStatus(tradeId, 'countered', client, 'pending');
-    if (!updated) {
-      throw new ValidationException('Trade status changed during processing');
-    }
-
-    // Create new trade with swapped proposer/recipient (using same transaction)
-    newTrade = await proposeTrade(
-      ctx,
-      client,
-      originalTrade.leagueId,
-      userId,
-      {
-        recipientRosterId: originalTrade.proposerRosterId,
-        offeringPlayerIds: request.offeringPlayerIds,
-        requestingPlayerIds: request.requestingPlayerIds,
-        offeringPickAssetIds: request.offeringPickAssetIds,
-        requestingPickAssetIds: request.requestingPickAssetIds,
-        message: request.message,
-      },
-      false // Don't manage transaction - we're already in one
-    );
-
-    await client.query('COMMIT');
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
-
-  emitTradeCounteredEvent(originalTrade.leagueId, tradeId, newTrade);
+  // Emit domain event AFTER commit
+  const eventBus = tryGetEventBus();
+  eventBus?.publish({
+    type: EventTypes.TRADE_COUNTERED,
+    leagueId: originalTrade.leagueId,
+    payload: {
+      originalTradeId: tradeId,
+      newTrade: tradeWithDetailsToResponse(newTrade),
+    },
+  });
 
   // Emit system message for the counter trade
   if (ctx.eventListenerService) {
@@ -102,16 +101,4 @@ export async function counterTrade(
   }
 
   return newTrade;
-}
-
-function emitTradeCounteredEvent(
-  leagueId: number,
-  originalTradeId: number,
-  newTrade: TradeWithDetails
-): void {
-  const socket = tryGetSocketService();
-  socket?.emitTradeCountered(leagueId, {
-    originalTradeId,
-    newTrade: tradeWithDetailsToResponse(newTrade),
-  });
 }

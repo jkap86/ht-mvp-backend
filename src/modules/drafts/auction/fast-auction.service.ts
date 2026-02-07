@@ -3,7 +3,7 @@ import { AuctionLotRepository } from './auction-lot.repository';
 import { DraftRepository } from '../drafts.repository';
 import { RosterRepository, LeagueRepository } from '../../leagues/leagues.repository';
 import { DraftOrderService } from '../draft-order.service';
-import { tryGetSocketService } from '../../../socket/socket.service';
+import { EventTypes, tryGetEventBus } from '../../../shared/events';
 import { PlayerRepository } from '../../players/players.repository';
 import {
   AuctionLot,
@@ -187,12 +187,16 @@ export class FastAuctionService {
       }
     );
 
-    // Post-commit: Emit socket event - convert to snake_case for frontend consistency
+    // Post-commit: Publish domain event for socket emission
     // Include serverTime for client clock synchronization
-    const socket = tryGetSocketService();
-    socket?.emitAuctionLotCreated(draftId, {
-      lot: auctionLotToResponse(lot),
-      serverTime: Date.now(),
+    const eventBus = tryGetEventBus();
+    eventBus?.publish({
+      type: EventTypes.AUCTION_LOT_STARTED,
+      payload: {
+        draftId,
+        lot: auctionLotToResponse(lot),
+        serverTime: Date.now(),
+      },
     });
 
     return {
@@ -323,18 +327,22 @@ export class FastAuctionService {
       }
     );
 
-    // Post-commit: Emit lot updated event - convert to snake_case for frontend consistency
+    // Post-commit: Publish domain event for socket emission
     // Include serverTime for client clock synchronization
-    const socket = tryGetSocketService();
-    socket?.emitAuctionLotUpdated(draftId, {
-      lot: auctionLotToResponse(finalLot),
-      serverTime: Date.now(),
+    const eventBus = tryGetEventBus();
+    eventBus?.publish({
+      type: EventTypes.AUCTION_BID,
+      payload: {
+        draftId,
+        lot: auctionLotToResponse(finalLot),
+        serverTime: Date.now(),
+      },
     });
 
     // Get proxy bid for response
     const proxyBidResult = await this.lotRepo.getProxyBid(lotId, roster.id);
 
-    // Handle outbid notifications with retry logic
+    // Handle outbid notifications via domain events
     const userOutbidNotifications: Array<{ userId: string; lotId: number; playerId: number }> = [];
     for (const notification of rawNotifications) {
       const outbidRoster = await this.rosterRepo.findById(notification.rosterId);
@@ -344,20 +352,16 @@ export class FastAuctionService {
           lotId: notification.lotId,
           playerId,
         });
-        try {
-          // Use snake_case to match slow auction payload format
-          socket?.emitAuctionOutbid(outbidRoster.userId, {
+        // Publish outbid notification via domain event bus
+        eventBus?.publish({
+          type: EventTypes.AUCTION_OUTBID,
+          userId: outbidRoster.userId,
+          payload: {
             lot_id: notification.lotId,
             player_id: playerId,
             new_bid: finalLot.currentBid,
-          });
-        } catch (socketError) {
-          logger.warn('Failed to emit outbid notification', {
-            userId: outbidRoster.userId,
-            lotId: notification.lotId,
-            error: socketError,
-          });
-        }
+          },
+        });
       }
     }
 
@@ -430,13 +434,17 @@ export class FastAuctionService {
       }
     );
 
-    // Post-commit: Emit nominator changed event with deadline
+    // Post-commit: Publish domain event for nominator change
     if (result) {
-      const socket = tryGetSocketService();
-      socket?.emitAuctionNominatorChanged(draftId, {
-        nominatorRosterId: result.nominatorRosterId,
-        nominationNumber: result.nominationNumber,
-        nominationDeadline: result.nominationDeadline.toISOString(),
+      const eventBus = tryGetEventBus();
+      eventBus?.publish({
+        type: EventTypes.AUCTION_NOMINATOR_CHANGED,
+        payload: {
+          draftId,
+          nominatorRosterId: result.nominatorRosterId,
+          nominationNumber: result.nominationNumber,
+          nominationDeadline: result.nominationDeadline.toISOString(),
+        },
       });
     }
   }
@@ -505,12 +513,16 @@ export class FastAuctionService {
       );
 
       if (result) {
-        // Post-commit: Emit socket event
-        const socket = tryGetSocketService();
-        socket?.emitAuctionNominatorChanged(draftId, {
-          nominatorRosterId: result.nextRosterId,
-          nominationNumber: result.nextPick,
-          nominationDeadline: result.nominationDeadline.toISOString(),
+        // Post-commit: Publish domain event for nominator change
+        const eventBus = tryGetEventBus();
+        eventBus?.publish({
+          type: EventTypes.AUCTION_NOMINATOR_CHANGED,
+          payload: {
+            draftId,
+            nominatorRosterId: result.nextRosterId,
+            nominationNumber: result.nextPick,
+            nominationDeadline: result.nominationDeadline.toISOString(),
+          },
         });
 
         logger.info('Force advanced nominator', {
@@ -607,7 +619,7 @@ export class FastAuctionService {
       return null;
     }
 
-    // Post-commit: Log and emit socket event
+    // Post-commit: Log and publish domain event
     logger.info('Auto-nominated player', {
       draftId,
       playerId: result.playerId,
@@ -615,11 +627,15 @@ export class FastAuctionService {
       nominatorRosterId: draft.currentRosterId,
     });
 
-    const socket = tryGetSocketService();
-    socket?.emitAuctionLotCreated(draftId, {
-      lot: auctionLotToResponse(result.lot),
-      serverTime: Date.now(),
-      isAutoNomination: true,
+    const eventBus = tryGetEventBus();
+    eventBus?.publish({
+      type: EventTypes.AUCTION_LOT_STARTED,
+      payload: {
+        draftId,
+        lot: auctionLotToResponse(result.lot),
+        serverTime: Date.now(),
+        isAutoNomination: true,
+      },
     });
 
     return {

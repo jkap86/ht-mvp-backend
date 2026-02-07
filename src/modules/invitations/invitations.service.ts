@@ -2,8 +2,7 @@ import { InvitationsRepository } from './invitations.repository';
 import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import { UserRepository } from '../auth/auth.repository';
 import { RosterService } from '../leagues/roster.service';
-import { tryGetSocketService } from '../../socket/socket.service';
-import { SOCKET_EVENTS } from '../../constants/socket-events';
+import { EventTypes, tryGetEventBus } from '../../shared/events';
 import {
   InvitationWithDetails,
   UserSearchResult,
@@ -92,13 +91,13 @@ export class InvitationsService {
       throw new Error('Failed to retrieve invitation details');
     }
 
-    // Emit socket event to invited user
-    const socketService = tryGetSocketService();
-    socketService?.emitToUser(
-      invitedUser.userId,
-      SOCKET_EVENTS.INVITATION.RECEIVED,
-      invitationWithDetailsToResponse(invitationWithDetails)
-    );
+    // Emit event to invited user
+    const eventBus = tryGetEventBus();
+    eventBus?.publish({
+      type: EventTypes.INVITATION_RECEIVED,
+      userId: invitedUser.userId,
+      payload: invitationWithDetailsToResponse(invitationWithDetails),
+    });
 
     return invitationWithDetails;
   }
@@ -189,11 +188,15 @@ export class InvitationsService {
     await this.invitationsRepo.updateStatus(invitationId, 'declined');
 
     // Notify the commissioner who sent the invite
-    const socketService = tryGetSocketService();
-    socketService?.emitToUser(invitation.invitedByUserId, SOCKET_EVENTS.INVITATION.DECLINED, {
-      invitationId,
-      leagueId: invitation.leagueId,
-      leagueName: invitation.leagueName,
+    const eventBus = tryGetEventBus();
+    eventBus?.publish({
+      type: EventTypes.INVITATION_DECLINED,
+      userId: invitation.invitedByUserId,
+      payload: {
+        invitationId,
+        leagueId: invitation.leagueId,
+        leagueName: invitation.leagueName,
+      },
     });
   }
 
@@ -222,10 +225,14 @@ export class InvitationsService {
     await this.invitationsRepo.delete(invitationId);
 
     // Notify the invited user
-    const socketService = tryGetSocketService();
-    socketService?.emitToUser(invitation.invitedUserId, SOCKET_EVENTS.INVITATION.CANCELLED, {
-      invitationId,
-      leagueId: invitation.leagueId,
+    const eventBus = tryGetEventBus();
+    eventBus?.publish({
+      type: EventTypes.INVITATION_CANCELLED,
+      userId: invitation.invitedUserId,
+      payload: {
+        invitationId,
+        leagueId: invitation.leagueId,
+      },
     });
   }
 

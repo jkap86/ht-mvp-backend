@@ -16,6 +16,7 @@ import {
   getDefensePointsAllowedScore,
 } from './scoring-calculator';
 import { logger } from '../../config/env.config';
+import { runInTransaction } from '../../shared/transaction-runner';
 
 export class ScoringService {
   private projectionsRepo?: PlayerProjectionsRepository;
@@ -145,22 +146,12 @@ export class ScoringService {
     );
 
     // Store points for each lineup (sequential within transaction)
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
-
+    await runInTransaction(this.db, async (client) => {
       for (let i = 0; i < lineups.length; i++) {
         const { total } = calculations[i];
         await this.lineupsRepo.updatePoints(lineups[i].rosterId, season, week, total, client);
       }
-
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   /**

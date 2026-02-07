@@ -4,7 +4,7 @@ import { UserRepository } from '../auth/auth.repository';
 import { RosterPlayersRepository } from '../rosters/rosters.repository';
 import { DuesRepository } from '../dues/dues.repository';
 import { EventListenerService } from '../chat/event-listener.service';
-import { tryGetSocketService } from '../../socket/socket.service';
+import { EventTypes, tryGetEventBus } from '../../shared/events';
 import {
   NotFoundException,
   ForbiddenException,
@@ -89,15 +89,19 @@ export class RosterService {
       }
     );
 
-    // Post-commit operations: socket events and chat messages
+    // Post-commit operations: domain events and chat messages
     const teamName = `Team ${roster.rosterId}`;
+    const eventBus = tryGetEventBus();
 
-    // Emit socket event for real-time UI update
-    const socketService = tryGetSocketService();
-    socketService?.emitMemberJoined(leagueId, {
-      rosterId: roster.rosterId,
-      teamName,
-      userId,
+    // Emit domain event for real-time UI update
+    eventBus?.publish({
+      type: EventTypes.MEMBER_JOINED,
+      leagueId,
+      payload: {
+        rosterId: roster.rosterId,
+        teamName,
+        userId,
+      },
     });
 
     // Send system message to league chat (fire-and-forget to not slow down join response)
@@ -114,37 +118,38 @@ export class RosterService {
     }
 
     // Emit draft order update for any not-started drafts so draft room shows updated team names
-    if (socketService) {
-      const draftsResult = await this.db.query(
-        `SELECT d.id, dord.draft_position, dord.roster_id,
-                COALESCE(r.settings->>'team_name', u.username, 'Team ' || r.roster_id) as username,
-                r.user_id
-         FROM drafts d
-         JOIN draft_order dord ON d.id = dord.draft_id
-         LEFT JOIN rosters r ON dord.roster_id = r.id
-         LEFT JOIN users u ON r.user_id = u.id
-         WHERE d.league_id = $1 AND d.status = 'not_started'
-         ORDER BY d.id, dord.draft_position`,
-        [leagueId]
-      );
+    const draftsResult = await this.db.query(
+      `SELECT d.id, dord.draft_position, dord.roster_id,
+              COALESCE(r.settings->>'team_name', u.username, 'Team ' || r.roster_id) as username,
+              r.user_id
+       FROM drafts d
+       JOIN draft_order dord ON d.id = dord.draft_id
+       LEFT JOIN rosters r ON dord.roster_id = r.id
+       LEFT JOIN users u ON r.user_id = u.id
+       WHERE d.league_id = $1 AND d.status = 'not_started'
+       ORDER BY d.id, dord.draft_position`,
+      [leagueId]
+    );
 
-      // Group by draft and emit settings update for each
-      const draftOrders = new Map<number, any[]>();
-      for (const row of draftsResult.rows) {
-        if (!draftOrders.has(row.id)) {
-          draftOrders.set(row.id, []);
-        }
-        draftOrders.get(row.id)!.push({
-          draftPosition: row.draft_position,
-          rosterId: row.roster_id,
-          username: row.username,
-          userId: row.user_id,
-        });
+    // Group by draft and emit settings update for each
+    const draftOrders = new Map<number, any[]>();
+    for (const row of draftsResult.rows) {
+      if (!draftOrders.has(row.id)) {
+        draftOrders.set(row.id, []);
       }
+      draftOrders.get(row.id)!.push({
+        draftPosition: row.draft_position,
+        rosterId: row.roster_id,
+        username: row.username,
+        userId: row.user_id,
+      });
+    }
 
-      for (const [draftId, draftOrder] of draftOrders) {
-        socketService.emitDraftSettingsUpdated(draftId, { draft_order: draftOrder });
-      }
+    for (const [draftId, draftOrder] of draftOrders) {
+      eventBus?.publish({
+        type: EventTypes.DRAFT_SETTINGS_UPDATED,
+        payload: { draftId, draft_order: draftOrder },
+      });
     }
 
     return {
@@ -277,13 +282,17 @@ export class RosterService {
     // Reinstate the member
     await this.rosterRepo.reinstateMember(targetRosterId);
 
-    // Emit socket event (reuse member joined event as the UI effect is similar)
-    const socketService = tryGetSocketService();
-    if (socketService && targetRoster.userId) {
-      socketService.emitMemberJoined(leagueId, {
-        rosterId: targetRosterId,
-        teamName,
-        userId: targetRoster.userId,
+    // Emit domain event (reuse member joined event as the UI effect is similar)
+    if (targetRoster.userId) {
+      const eventBus = tryGetEventBus();
+      eventBus?.publish({
+        type: EventTypes.MEMBER_JOINED,
+        leagueId,
+        payload: {
+          rosterId: targetRosterId,
+          teamName,
+          userId: targetRoster.userId,
+        },
       });
     }
 
@@ -340,12 +349,16 @@ async devBulkAddUsers(
           await this.rosterRepo.create(leagueId, user.userId, rosterId);
         }
 
-        // Emit socket event for real-time UI update
-        const socketService = tryGetSocketService();
-        socketService?.emitMemberJoined(leagueId, {
-          rosterId: rosterId,
-          teamName: username,
-          userId: user.userId,
+        // Emit domain event for real-time UI update
+        const eventBus = tryGetEventBus();
+        eventBus?.publish({
+          type: EventTypes.MEMBER_JOINED,
+          leagueId,
+          payload: {
+            rosterId: rosterId,
+            teamName: username,
+            userId: user.userId,
+          },
         });
 
         results.push({ username, success: true });
@@ -429,9 +442,13 @@ async devBulkAddUsers(
       await this.rosterRepo.delete(targetRosterId, client);
     });
 
-    // Post-commit: Emit socket event
-    const socketService = tryGetSocketService();
-    socketService?.emitMemberKicked(leagueId, { rosterId: targetRosterId, teamName });
+    // Post-commit: Emit domain event
+    const eventBus = tryGetEventBus();
+    eventBus?.publish({
+      type: EventTypes.MEMBER_KICKED,
+      leagueId,
+      payload: { rosterId: targetRosterId, teamName },
+    });
 
     // Send system message to league chat
     if (this.eventListenerService) {

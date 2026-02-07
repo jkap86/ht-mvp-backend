@@ -18,6 +18,7 @@ import {
   ConflictException,
 } from '../../utils/exceptions';
 import { logger } from '../../config/env.config';
+import { runInTransaction } from '../../shared/transaction-runner';
 
 export class PlayoffService {
   constructor(
@@ -75,10 +76,7 @@ export class PlayoffService {
       );
     }
 
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
-
+    const bracketId = await runInTransaction(this.db, async (client) => {
       // Calculate rounds and championship week
       const totalRounds = calculateTotalRounds(config.playoffTeams);
       const championshipWeek = config.startWeek + totalRounds - 1;
@@ -133,18 +131,13 @@ export class PlayoffService {
         );
       }
 
-      await client.query('COMMIT');
+      return bracket.id;
+    });
 
-      logger.info(`Generated ${config.playoffTeams}-team playoff bracket for league ${leagueId}`);
+    logger.info(`Generated ${config.playoffTeams}-team playoff bracket for league ${leagueId}`);
 
-      // Return full bracket view
-      return this.buildBracketView(bracket.id);
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    // Return full bracket view
+    return this.buildBracketView(bracketId);
   }
 
   /**
@@ -208,10 +201,7 @@ export class PlayoffService {
       throw new ValidationException('No finalized playoff matchups found for this week');
     }
 
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
-
+    await runInTransaction(this.db, async (client) => {
       // Determine current round from matchups
       const currentRound = matchups[0].playoff_round;
       const nextRound = currentRound + 1;
@@ -254,16 +244,9 @@ export class PlayoffService {
           await this.playoffRepo.updateStatus(bracket.id, 'active', client);
         }
       }
+    });
 
-      await client.query('COMMIT');
-
-      return this.buildBracketView(bracket.id);
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    return this.buildBracketView(bracket.id);
   }
 
   /**

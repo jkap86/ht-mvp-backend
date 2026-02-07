@@ -5,6 +5,7 @@ import { RosterPlayer, RosterPlayerWithDetails, RosterTransaction } from './rost
 import { WaiverWireRepository } from '../waivers/waivers.repository';
 import { parseWaiverSettings } from '../waivers/waivers.model';
 import { RosterMutationService } from './roster-mutation.service';
+import { runWithLock, LockDomain } from '../../shared/transaction-runner';
 import {
   NotFoundException,
   ForbiddenException,
@@ -99,13 +100,8 @@ export class RosterService {
     // Use the global id for all subsequent operations
     const globalRosterId = roster.id;
 
-    // Use transaction with advisory lock for atomic operation
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
-      // Advisory lock on league to prevent concurrent free agent claims
-      await client.query('SELECT pg_advisory_xact_lock($1)', [leagueId]);
-
+    // Use runWithLock with league lock to prevent concurrent free agent claims
+    return runWithLock(this.db, LockDomain.LEAGUE, leagueId, async (client) => {
       // Get league for transaction recording
       const league = await this.leagueRepo.findById(leagueId);
       if (!league) {
@@ -136,14 +132,8 @@ export class RosterService {
         client
       );
 
-      await client.query('COMMIT');
       return rosterPlayer;
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   /**
@@ -173,12 +163,8 @@ export class RosterService {
       throw new NotFoundException('League not found');
     }
 
-    // Use transaction with advisory lock to prevent race with waiver claims
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
-      await client.query('SELECT pg_advisory_xact_lock($1)', [leagueId]);
-
+    // Use runWithLock with league lock to prevent race with waiver claims
+    await runWithLock(this.db, LockDomain.LEAGUE, leagueId, async (client) => {
       // Use mutation service for validation and remove
       await this.rosterMutationService!.removePlayerFromRoster(
         { rosterId: globalRosterId, playerId },
@@ -199,14 +185,7 @@ export class RosterService {
 
       // Add to waiver wire if league has waivers enabled
       await this.addToWaiverWireIfEnabled(league, playerId, globalRosterId, client);
-
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   /**
@@ -232,13 +211,8 @@ export class RosterService {
     // Use the global id for all subsequent operations
     const globalRosterId = roster.id;
 
-    // Use transaction with advisory lock
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
-      // Advisory lock on league to prevent concurrent free agent claims
-      await client.query('SELECT pg_advisory_xact_lock($1)', [leagueId]);
-
+    // Use runWithLock with league lock to prevent concurrent free agent claims
+    return runWithLock(this.db, LockDomain.LEAGUE, leagueId, async (client) => {
       const league = await this.leagueRepo.findById(leagueId);
       if (!league) {
         throw new NotFoundException('League not found');
@@ -282,14 +256,8 @@ export class RosterService {
       // Add dropped player to waiver wire if league has waivers enabled
       await this.addToWaiverWireIfEnabled(league, dropPlayerId, globalRosterId, client);
 
-      await client.query('COMMIT');
       return rosterPlayer;
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   /**

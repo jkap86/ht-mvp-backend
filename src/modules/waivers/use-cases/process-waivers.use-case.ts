@@ -6,7 +6,8 @@ import {
 } from '../../rosters/rosters.repository';
 import { RosterMutationService } from '../../rosters/roster-mutation.service';
 import { TradesRepository } from '../../trades/trades.repository';
-import { tryGetSocketService } from '../../../socket';
+import { DomainEventBus, EventTypes, tryGetEventBus } from '../../../shared/events';
+import { container, KEYS } from '../../../container';
 import {
   WaiverClaim,
   WaiverType,
@@ -16,10 +17,9 @@ import {
   faabBudgetToResponse,
 } from '../waivers.model';
 import { NotFoundException } from '../../../utils/exceptions';
-import { getWaiverLockId } from '../../../utils/locks';
+import { runWithLock, LockDomain } from '../../../shared/transaction-runner';
 import { addToWaiverWire, WaiverInfoContext } from './waiver-info.use-case';
 import { EventListenerService } from '../../chat/event-listener.service';
-import { container, KEYS } from '../../../container';
 import { logger } from '../../../config/logger.config';
 
 export interface ProcessWaiversContext extends WaiverInfoContext {
@@ -49,133 +49,129 @@ export async function processLeagueClaims(
   const season = parseInt(league.season, 10);
   const maxRosterSize = league.settings?.roster_size || 15;
 
-  const client = await ctx.db.connect();
-  let processed = 0;
-  let successful = 0;
-
   // Collect events to emit AFTER commit to prevent UI desync on rollback
   const pendingEvents: Array<() => void | Promise<void>> = [];
 
-  try {
-    await client.query('BEGIN');
-    await client.query('SELECT pg_advisory_xact_lock($1)', [getWaiverLockId(leagueId)]);
+  const { processed, successful } = await runWithLock(
+    ctx.db,
+    LockDomain.WAIVER,
+    leagueId,
+    async (client) => {
+      let processedCount = 0;
+      let successfulCount = 0;
 
-    // Get all pending claims grouped by player
-    const pendingClaims = await ctx.claimsRepo.getPendingByLeague(leagueId, client);
+      // Get all pending claims grouped by player
+      const pendingClaims = await ctx.claimsRepo.getPendingByLeague(leagueId, client);
 
-    // Group claims by player
-    const claimsByPlayer = new Map<number, WaiverClaim[]>();
-    for (const claim of pendingClaims) {
-      const existing = claimsByPlayer.get(claim.playerId) || [];
-      existing.push(claim);
-      claimsByPlayer.set(claim.playerId, existing);
-    }
-
-    // Process each player's claims
-    for (const [playerId, claims] of claimsByPlayer) {
-      // Sort claims by priority/bid
-      const sortedClaims = sortClaimsByPriority(claims, settings.waiverType);
-
-      let winner: WaiverClaim | null = null;
-
-      // Find first eligible winner
-      for (const claim of sortedClaims) {
-        const canExecute = await canExecuteClaim(ctx, claim, settings.waiverType, season, maxRosterSize, client);
-        if (canExecute) {
-          winner = claim;
-          break;
-        }
+      // Group claims by player
+      const claimsByPlayer = new Map<number, WaiverClaim[]>();
+      for (const claim of pendingClaims) {
+        const existing = claimsByPlayer.get(claim.playerId) || [];
+        existing.push(claim);
+        claimsByPlayer.set(claim.playerId, existing);
       }
 
-      // Execute winner, fail others
-      for (const claim of sortedClaims) {
-        processed++;
+      // Process each player's claims
+      for (const [playerId, claims] of claimsByPlayer) {
+        // Sort claims by priority/bid
+        const sortedClaims = sortClaimsByPriority(claims, settings.waiverType);
 
-        if (winner && claim.id === winner.id) {
-          await executeClaim(ctx, claim, settings.waiverType, season, client);
-          await ctx.claimsRepo.updateStatus(claim.id, 'successful', undefined, client);
-          successful++;
+        let winner: WaiverClaim | null = null;
 
-          // Queue success emit for after commit
-          const claimCopy = { ...claim };
-          pendingEvents.push(() => emitClaimSuccessful(ctx, claimCopy));
-        } else {
-          const reason = winner ? 'Outbid by another team' : 'Could not process claim';
-          await ctx.claimsRepo.updateStatus(claim.id, 'failed', reason, client);
-
-          // Queue failure emit for after commit
-          const claimCopy = { ...claim };
-          pendingEvents.push(() => emitClaimFailed(ctx, claimCopy, reason));
-        }
-      }
-
-      // Remove player from waiver wire after being claimed
-      if (winner) {
-        await ctx.waiverWireRepo.removePlayer(leagueId, playerId, client);
-
-        // Invalidate pending trades involving the claimed player
-        if (ctx.tradesRepo) {
-          const invalidatedTrades = await invalidateTradesForPlayer(
-            ctx,
-            leagueId,
-            playerId,
-            client
-          );
-          // Queue trade invalidation emits for after commit
-          for (const trade of invalidatedTrades) {
-            pendingEvents.push(() => emitTradeInvalidated(trade.leagueId, trade.id));
+        // Find first eligible winner
+        for (const claim of sortedClaims) {
+          const canExecute = await canExecuteClaim(ctx, claim, settings.waiverType, season, maxRosterSize, client);
+          if (canExecute) {
+            winner = claim;
+            break;
           }
-          // Also invalidate trades involving the dropped player if any
-          if (winner.dropPlayerId) {
-            const droppedPlayerTrades = await invalidateTradesForPlayer(
+        }
+
+        // Execute winner, fail others
+        for (const claim of sortedClaims) {
+          processedCount++;
+
+          if (winner && claim.id === winner.id) {
+            await executeClaim(ctx, claim, settings.waiverType, season, client);
+            await ctx.claimsRepo.updateStatus(claim.id, 'successful', undefined, client);
+            successfulCount++;
+
+            // Queue success emit for after commit
+            const claimCopy = { ...claim };
+            pendingEvents.push(() => emitClaimSuccessful(ctx, claimCopy));
+          } else {
+            const reason = winner ? 'Outbid by another team' : 'Could not process claim';
+            await ctx.claimsRepo.updateStatus(claim.id, 'failed', reason, client);
+
+            // Queue failure emit for after commit
+            const claimCopy = { ...claim };
+            pendingEvents.push(() => emitClaimFailed(ctx, claimCopy, reason));
+          }
+        }
+
+        // Remove player from waiver wire after being claimed
+        if (winner) {
+          await ctx.waiverWireRepo.removePlayer(leagueId, playerId, client);
+
+          // Invalidate pending trades involving the claimed player
+          if (ctx.tradesRepo) {
+            const invalidatedTrades = await invalidateTradesForPlayer(
               ctx,
               leagueId,
-              winner.dropPlayerId,
+              playerId,
               client
             );
-            for (const trade of droppedPlayerTrades) {
+            // Queue trade invalidation emits for after commit
+            for (const trade of invalidatedTrades) {
               pendingEvents.push(() => emitTradeInvalidated(trade.leagueId, trade.id));
+            }
+            // Also invalidate trades involving the dropped player if any
+            if (winner.dropPlayerId) {
+              const droppedPlayerTrades = await invalidateTradesForPlayer(
+                ctx,
+                leagueId,
+                winner.dropPlayerId,
+                client
+              );
+              for (const trade of droppedPlayerTrades) {
+                pendingEvents.push(() => emitTradeInvalidated(trade.leagueId, trade.id));
+              }
             }
           }
         }
       }
+
+      return { processed: processedCount, successful: successfulCount };
     }
+  );
 
-    await client.query('COMMIT');
-
-    // Now emit all queued events AFTER successful commit
-    for (const emit of pendingEvents) {
-      await emit();
-    }
-
-    // Emit priorities updated if any successful claims in standard mode
-    if (successful > 0 && settings.waiverType === 'standard') {
-      emitPriorityUpdated(ctx, leagueId, season);
-    }
-
-    // Emit budgets updated if any successful claims in FAAB mode
-    if (successful > 0 && settings.waiverType === 'faab') {
-      emitBudgetUpdated(ctx, leagueId, season);
-    }
-
-    // Emit waiver processed system message if any claims were processed
-    if (processed > 0 && ctx.eventListenerService) {
-      ctx.eventListenerService
-        .handleWaiverProcessed(leagueId)
-        .catch((err) => logger.warn('Failed to emit system message', {
-          type: 'waiver_processed',
-          leagueId,
-          error: err.message
-        }));
-    }
-
-    return { processed, successful };
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
+  // Now emit all queued events AFTER successful commit
+  for (const emit of pendingEvents) {
+    await emit();
   }
+
+  // Emit priorities updated if any successful claims in standard mode
+  if (successful > 0 && settings.waiverType === 'standard') {
+    emitPriorityUpdated(ctx, leagueId, season);
+  }
+
+  // Emit budgets updated if any successful claims in FAAB mode
+  if (successful > 0 && settings.waiverType === 'faab') {
+    emitBudgetUpdated(ctx, leagueId, season);
+  }
+
+  // Emit waiver processed system message if any claims were processed
+  if (processed > 0 && ctx.eventListenerService) {
+    ctx.eventListenerService
+      .handleWaiverProcessed(leagueId)
+      .catch((err) => logger.warn('Failed to emit system message', {
+        type: 'waiver_processed',
+        leagueId,
+        error: err.message
+      }));
+  }
+
+  return { processed, successful };
 }
 
 /**
@@ -352,20 +348,32 @@ async function invalidateTradesForPlayer(
  * Emit trade invalidated event (called after commit)
  */
 function emitTradeInvalidated(leagueId: number, tradeId: number): void {
-  const socket = tryGetSocketService();
-  socket?.emitTradeInvalidated(leagueId, {
-    tradeId,
-    reason: 'A player involved in this trade is no longer available',
+  const eventBus = tryGetEventBus();
+  if (!eventBus) return;
+
+  eventBus.publish({
+    type: EventTypes.TRADE_INVALIDATED,
+    leagueId,
+    payload: {
+      tradeId,
+      reason: 'A player involved in this trade is no longer available',
+    },
   });
 }
 
 async function emitClaimSuccessful(ctx: ProcessWaiversContext, claim: WaiverClaim): Promise<void> {
+  const eventBus = tryGetEventBus();
+  if (!eventBus) return;
+
   const roster = await ctx.rosterRepo.findById(claim.rosterId);
   if (roster && roster.userId) {
-    const socket = tryGetSocketService();
     const claimWithDetails = await ctx.claimsRepo.findByIdWithDetails(claim.id);
     if (claimWithDetails) {
-      socket?.emitWaiverClaimSuccessful(roster.userId, waiverClaimToResponse(claimWithDetails));
+      eventBus.publish({
+        type: EventTypes.WAIVER_CLAIM_SUCCESSFUL,
+        userId: roster.userId,
+        payload: waiverClaimToResponse(claimWithDetails),
+      });
 
       // Emit system message to league chat
       if (ctx.eventListenerService) {
@@ -393,10 +401,16 @@ async function emitClaimFailed(
   claim: WaiverClaim,
   reason: string
 ): Promise<void> {
+  const eventBus = tryGetEventBus();
+  if (!eventBus) return;
+
   const roster = await ctx.rosterRepo.findById(claim.rosterId);
   if (roster && roster.userId) {
-    const socket = tryGetSocketService();
-    socket?.emitWaiverClaimFailed(roster.userId, { claimId: claim.id, reason });
+    eventBus.publish({
+      type: EventTypes.WAIVER_CLAIM_FAILED,
+      userId: roster.userId,
+      payload: { claimId: claim.id, reason },
+    });
   }
 }
 
@@ -405,9 +419,15 @@ async function emitPriorityUpdated(
   leagueId: number,
   season: number
 ): Promise<void> {
+  const eventBus = tryGetEventBus();
+  if (!eventBus) return;
+
   const priorities = await ctx.priorityRepo.getByLeague(leagueId, season);
-  const socket = tryGetSocketService();
-  socket?.emitWaiverPriorityUpdated(leagueId, priorities.map(waiverPriorityToResponse));
+  eventBus.publish({
+    type: EventTypes.WAIVER_PRIORITY_UPDATED,
+    leagueId,
+    payload: { priorities: priorities.map(waiverPriorityToResponse) },
+  });
 }
 
 async function emitBudgetUpdated(
@@ -415,7 +435,13 @@ async function emitBudgetUpdated(
   leagueId: number,
   season: number
 ): Promise<void> {
+  const eventBus = tryGetEventBus();
+  if (!eventBus) return;
+
   const budgets = await ctx.faabRepo.getByLeague(leagueId, season);
-  const socket = tryGetSocketService();
-  socket?.emitWaiverBudgetUpdated(leagueId, budgets.map(faabBudgetToResponse));
+  eventBus.publish({
+    type: EventTypes.WAIVER_BUDGET_UPDATED,
+    leagueId,
+    payload: { budgets: budgets.map(faabBudgetToResponse) },
+  });
 }

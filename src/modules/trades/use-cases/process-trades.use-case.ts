@@ -1,6 +1,6 @@
 import { TradesRepository, TradeVotesRepository } from '../trades.repository';
-import { tryGetSocketService } from '../../../socket';
-import { getLockId, LockDomain } from '../../../shared/locks';
+import { EventTypes, tryGetEventBus } from '../../../shared/events';
+import { runWithLock, LockDomain } from '../../../shared/transaction-runner';
 import { executeTrade, AcceptTradeContext, PickTradedEvent } from './accept-trade.use-case';
 import { EventListenerService } from '../../chat/event-listener.service';
 import { logger } from '../../../config/logger.config';
@@ -32,11 +32,15 @@ export async function invalidateTradesWithPlayer(
     }
 
     if (updated) {
-      emitTradeInvalidatedEvent(
-        trade.leagueId,
-        trade.id,
-        'A player involved in this trade is no longer available'
-      );
+      const eventBus = tryGetEventBus();
+      eventBus?.publish({
+        type: EventTypes.TRADE_INVALIDATED,
+        leagueId: trade.leagueId,
+        payload: {
+          tradeId: trade.id,
+          reason: 'A player involved in this trade is no longer available',
+        },
+      });
     }
   }
 }
@@ -62,11 +66,15 @@ export async function invalidateTradesWithPick(
     }
 
     if (updated) {
-      emitTradeInvalidatedEvent(
-        trade.leagueId,
-        trade.id,
-        'A draft pick involved in this trade is no longer available'
-      );
+      const eventBus = tryGetEventBus();
+      eventBus?.publish({
+        type: EventTypes.TRADE_INVALIDATED,
+        leagueId: trade.leagueId,
+        payload: {
+          tradeId: trade.id,
+          reason: 'A draft pick involved in this trade is no longer available',
+        },
+      });
     }
   }
 }
@@ -85,7 +93,12 @@ export async function processExpiredTrades(ctx: { tradesRepo: TradesRepository }
 
     if (updated) {
       expiredCount++;
-      emitTradeExpiredEvent(trade.leagueId, trade.id);
+      const eventBus = tryGetEventBus();
+      eventBus?.publish({
+        type: EventTypes.TRADE_EXPIRED,
+        leagueId: trade.leagueId,
+        payload: { tradeId: trade.id },
+      });
     }
     // If not updated, trade was already accepted/rejected/etc - skip silently
   }
@@ -109,52 +122,62 @@ export async function processReviewCompleteTrades(ctx: ProcessTradesContext): Pr
     }
     const vetoThreshold = league.settings?.trade_veto_count || DEFAULT_VETO_COUNT;
 
-    const client = await ctx.db.connect();
     // Collect events to emit AFTER commit
     let pendingEvent: 'vetoed' | 'completed' | null = null;
     let pickTradedEvents: PickTradedEvent[] = [];
 
     try {
-      await client.query('BEGIN');
-      await client.query('SELECT pg_advisory_xact_lock($1)', [getLockId(LockDomain.TRADE, trade.leagueId)]);
+      const result = await runWithLock(
+        ctx.db,
+        LockDomain.TRADE,
+        trade.leagueId,
+        async (client) => {
+          // Use conditional update to ensure trade is still in 'in_review' status
+          // This prevents processing a trade that was already completed or vetoed concurrently
+          if (voteCount.veto >= vetoThreshold) {
+            const updated = await ctx.tradesRepo.updateStatus(trade.id, 'vetoed', client, 'in_review');
+            if (!updated) {
+              // Trade status changed concurrently, skip
+              return { skipped: true };
+            }
+            return { skipped: false, event: 'vetoed' as const, pickEvents: [] };
+          } else {
+            // Check status before executing (trade might have been vetoed concurrently)
+            const lockedTrade = await ctx.tradesRepo.findById(trade.id, client);
+            if (!lockedTrade || lockedTrade.status !== 'in_review') {
+              return { skipped: true };
+            }
+            const pickEvents = await executeTrade(ctx, trade, client);
+            const updated = await ctx.tradesRepo.updateStatus(
+              trade.id,
+              'completed',
+              client,
+              'in_review'
+            );
+            if (!updated) {
+              // Trade status changed concurrently, skip
+              return { skipped: true };
+            }
+            return { skipped: false, event: 'completed' as const, pickEvents };
+          }
+        }
+      );
 
-      // Use conditional update to ensure trade is still in 'in_review' status
-      // This prevents processing a trade that was already completed or vetoed concurrently
-      if (voteCount.veto >= vetoThreshold) {
-        const updated = await ctx.tradesRepo.updateStatus(trade.id, 'vetoed', client, 'in_review');
-        if (!updated) {
-          // Trade status changed concurrently, skip
-          await client.query('ROLLBACK');
-          continue;
-        }
-        pendingEvent = 'vetoed';
-      } else {
-        // Check status before executing (trade might have been vetoed concurrently)
-        const lockedTrade = await ctx.tradesRepo.findById(trade.id);
-        if (!lockedTrade || lockedTrade.status !== 'in_review') {
-          await client.query('ROLLBACK');
-          continue;
-        }
-        pickTradedEvents = await executeTrade(ctx, trade, client);
-        const updated = await ctx.tradesRepo.updateStatus(
-          trade.id,
-          'completed',
-          client,
-          'in_review'
-        );
-        if (!updated) {
-          // Trade status changed concurrently, skip
-          await client.query('ROLLBACK');
-          continue;
-        }
-        pendingEvent = 'completed';
+      if (result.skipped) {
+        continue;
       }
 
-      await client.query('COMMIT');
+      pendingEvent = result.event ?? null;
+      pickTradedEvents = result.pickEvents ?? [];
 
-      // Emit events AFTER successful commit
+      // Emit domain events AFTER successful commit
+      const eventBus = tryGetEventBus();
       if (pendingEvent === 'vetoed') {
-        emitTradeVetoedEvent(trade.leagueId, trade.id);
+        eventBus?.publish({
+          type: EventTypes.TRADE_VETOED,
+          leagueId: trade.leagueId,
+          payload: { tradeId: trade.id },
+        });
         // Emit system message for veto
         if (ctx.eventListenerService) {
           ctx.eventListenerService
@@ -167,8 +190,25 @@ export async function processReviewCompleteTrades(ctx: ProcessTradesContext): Pr
             }));
         }
       } else if (pendingEvent === 'completed') {
-        emitTradeCompletedEvent(trade.leagueId, trade.id);
-        emitPickTradedEvents(pickTradedEvents);
+        eventBus?.publish({
+          type: EventTypes.TRADE_COMPLETED,
+          leagueId: trade.leagueId,
+          payload: { tradeId: trade.id },
+        });
+        for (const pickEvent of pickTradedEvents) {
+          eventBus?.publish({
+            type: EventTypes.PICK_TRADED,
+            leagueId: pickEvent.leagueId,
+            payload: {
+              pickAssetId: pickEvent.pickAssetId,
+              season: pickEvent.season,
+              round: pickEvent.round,
+              previousOwnerRosterId: pickEvent.previousOwnerRosterId,
+              newOwnerRosterId: pickEvent.newOwnerRosterId,
+              tradeId: pickEvent.tradeId,
+            },
+          });
+        }
         // Emit system message for completion
         if (ctx.eventListenerService) {
           ctx.eventListenerService
@@ -184,50 +224,9 @@ export async function processReviewCompleteTrades(ctx: ProcessTradesContext): Pr
 
       processed++;
     } catch (error) {
-      await client.query('ROLLBACK');
       logger.error('Failed to process trade', { tradeId: trade.id, error: String(error) });
-    } finally {
-      client.release();
     }
   }
 
   return processed;
-}
-
-function emitTradeInvalidatedEvent(leagueId: number, tradeId: number, reason: string): void {
-  const socket = tryGetSocketService();
-  socket?.emitTradeInvalidated(leagueId, {
-    tradeId,
-    reason,
-  });
-}
-
-function emitTradeExpiredEvent(leagueId: number, tradeId: number): void {
-  const socket = tryGetSocketService();
-  socket?.emitTradeExpired(leagueId, { tradeId });
-}
-
-function emitTradeVetoedEvent(leagueId: number, tradeId: number): void {
-  const socket = tryGetSocketService();
-  socket?.emitTradeVetoed(leagueId, { tradeId });
-}
-
-function emitTradeCompletedEvent(leagueId: number, tradeId: number): void {
-  const socket = tryGetSocketService();
-  socket?.emitTradeCompleted(leagueId, { tradeId });
-}
-
-function emitPickTradedEvents(events: PickTradedEvent[]): void {
-  if (events.length === 0) return;
-  const socket = tryGetSocketService();
-  for (const event of events) {
-    socket?.emitPickTraded(event.leagueId, {
-      pickAssetId: event.pickAssetId,
-      season: event.season,
-      round: event.round,
-      previousOwnerRosterId: event.previousOwnerRosterId,
-      newOwnerRosterId: event.newOwnerRosterId,
-      tradeId: event.tradeId,
-    });
-  }
 }

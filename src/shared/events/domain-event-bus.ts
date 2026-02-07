@@ -185,11 +185,28 @@ export const EventTypes = {
   DRAFT_COMPLETED: 'draft:completed',
   DRAFT_PAUSED: 'draft:paused',
   DRAFT_RESUMED: 'draft:resumed',
+  DRAFT_CREATED: 'draft:created',
+  DRAFT_SETTINGS_UPDATED: 'draft:settings_updated',
+  DRAFT_ORDER_UPDATED: 'draft:order_updated',
+  DRAFT_NEXT_PICK: 'draft:next_pick',
+  DRAFT_PICK_UNDONE: 'draft:pick_undone',
+  DRAFT_AUTODRAFT_TOGGLED: 'draft:autodraft_toggled',
+  DRAFT_QUEUE_UPDATED: 'draft:queue_updated',
 
   // Auction events
   AUCTION_BID: 'auction:bid',
   AUCTION_LOT_SOLD: 'auction:lot_sold',
   AUCTION_LOT_STARTED: 'auction:lot_started',
+  AUCTION_LOT_PASSED: 'auction:lot_passed',
+  AUCTION_OUTBID: 'auction:outbid',
+  AUCTION_NOMINATOR_CHANGED: 'auction:nominator_changed',
+  AUCTION_ERROR: 'auction:error',
+
+  // Derby events
+  DERBY_STATE: 'derby:state',
+  DERBY_SLOT_PICKED: 'derby:slot_picked',
+  DERBY_TURN_CHANGED: 'derby:turn_changed',
+  DERBY_PHASE_TRANSITION: 'derby:phase_transition',
 
   // Trade events
   TRADE_PROPOSED: 'trade:proposed',
@@ -197,10 +214,22 @@ export const EventTypes = {
   TRADE_REJECTED: 'trade:rejected',
   TRADE_CANCELLED: 'trade:cancelled',
   TRADE_VETOED: 'trade:vetoed',
+  TRADE_COUNTERED: 'trade:countered',
+  TRADE_COMPLETED: 'trade:completed',
+  TRADE_EXPIRED: 'trade:expired',
+  TRADE_INVALIDATED: 'trade:invalidated',
+  TRADE_VOTE_CAST: 'trade:vote_cast',
+  PICK_TRADED: 'trade:pick_traded',
 
   // Waiver events
   WAIVER_CLAIMED: 'waiver:claimed',
   WAIVER_PROCESSED: 'waiver:processed',
+  WAIVER_CLAIM_SUCCESSFUL: 'waiver:claim_successful',
+  WAIVER_CLAIM_FAILED: 'waiver:claim_failed',
+  WAIVER_CLAIM_CANCELLED: 'waiver:claim_cancelled',
+  WAIVER_CLAIM_UPDATED: 'waiver:claim_updated',
+  WAIVER_PRIORITY_UPDATED: 'waiver:priority_updated',
+  WAIVER_BUDGET_UPDATED: 'waiver:budget_updated',
 
   // Scoring events
   SCORES_UPDATED: 'scores:updated',
@@ -209,6 +238,7 @@ export const EventTypes = {
   // Chat events
   CHAT_MESSAGE: 'chat:message',
   DM_MESSAGE: 'dm:message',
+  DM_READ: 'dm:read',
 
   // Roster events
   ROSTER_UPDATED: 'roster:updated',
@@ -219,6 +249,12 @@ export const EventTypes = {
   LEAGUE_UPDATED: 'league:updated',
   MEMBER_JOINED: 'league:member_joined',
   MEMBER_LEFT: 'league:member_left',
+  MEMBER_KICKED: 'league:member_kicked',
+
+  // Invitation events
+  INVITATION_RECEIVED: 'invitation:received',
+  INVITATION_DECLINED: 'invitation:declined',
+  INVITATION_CANCELLED: 'invitation:cancelled',
 } as const;
 
 export type EventType = (typeof EventTypes)[keyof typeof EventTypes];

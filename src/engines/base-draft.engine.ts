@@ -11,7 +11,7 @@ import { DraftPickAsset } from '../modules/drafts/draft-pick-asset.model';
 import { PlayerRepository } from '../modules/players/players.repository';
 import { RosterPlayersRepository } from '../modules/rosters/rosters.repository';
 import { LeagueRepository, RosterRepository } from '../modules/leagues/leagues.repository';
-import { tryGetSocketService } from '../socket';
+import { DomainEventBus, EventTypes } from '../shared/events';
 import { logger } from '../config/env.config';
 import { finalizeDraftCompletion } from '../modules/drafts/draft-completion.utils';
 import { container, KEYS } from '../container';
@@ -256,16 +256,26 @@ export abstract class BaseDraftEngine implements IDraftEngine {
 
           await client.query('COMMIT');
 
-          // Emit next pick or completion event (after commit)
-          const socket = tryGetSocketService();
-          if (socket) {
-            if (nextPickInfo) {
-              socket.emitNextPick(draftId, nextPickInfo);
-            } else {
-              const completedDraft = await this.draftRepo.findById(draftId);
-              if (completedDraft) {
-                socket.emitDraftCompleted(draftId, draftToResponse(completedDraft));
-              }
+          // Publish domain events (after commit)
+          const eventBus = container.resolve<DomainEventBus>(KEYS.DOMAIN_EVENT_BUS);
+          if (nextPickInfo) {
+            eventBus.publish({
+              type: EventTypes.DRAFT_NEXT_PICK,
+              payload: {
+                draftId,
+                ...nextPickInfo,
+              },
+            });
+          } else {
+            const completedDraft = await this.draftRepo.findById(draftId);
+            if (completedDraft) {
+              eventBus.publish({
+                type: EventTypes.DRAFT_COMPLETED,
+                payload: {
+                  draftId,
+                  ...draftToResponse(completedDraft),
+                },
+              });
             }
           }
 
@@ -519,24 +529,40 @@ export abstract class BaseDraftEngine implements IDraftEngine {
       is_pick_asset: true,
     };
 
-    // Emit socket events AFTER transaction commits
-    const socket = tryGetSocketService();
-    socket?.emitDraftPick(draft.id, response);
+    // Publish domain events AFTER transaction commits
+    const eventBus = container.resolve<DomainEventBus>(KEYS.DOMAIN_EVENT_BUS);
+    eventBus.publish({
+      type: EventTypes.DRAFT_PICK,
+      payload: {
+        draftId: draft.id,
+        ...response,
+      },
+    });
 
     if (nextPickState.status !== 'completed') {
-      socket?.emitNextPick(draft.id, {
-        currentPick: nextPickState.currentPick,
-        currentRound: nextPickState.currentRound,
-        currentRosterId: nextPickState.currentRosterId,
-        originalRosterId: nextPickState.originalRosterId,
-        isTraded: nextPickState.isTraded,
-        pickDeadline: nextPickState.pickDeadline,
+      eventBus.publish({
+        type: EventTypes.DRAFT_NEXT_PICK,
+        payload: {
+          draftId: draft.id,
+          currentPick: nextPickState.currentPick,
+          currentRound: nextPickState.currentRound,
+          currentRosterId: nextPickState.currentRosterId,
+          originalRosterId: nextPickState.originalRosterId,
+          isTraded: nextPickState.isTraded,
+          pickDeadline: nextPickState.pickDeadline,
+        },
       });
     } else {
       // Draft completed
       const completedDraft = await this.draftRepo.findById(draft.id);
       if (completedDraft) {
-        socket?.emitDraftCompleted(draft.id, draftToResponse(completedDraft));
+        eventBus.publish({
+          type: EventTypes.DRAFT_COMPLETED,
+          payload: {
+            draftId: draft.id,
+            ...draftToResponse(completedDraft),
+          },
+        });
       }
     }
 
@@ -559,12 +585,16 @@ export abstract class BaseDraftEngine implements IDraftEngine {
       // Force-enable autodraft since they timed out
       await this.draftRepo.setAutodraftEnabled(draft.id, draft.currentRosterId!, true);
 
-      // Emit socket event to notify the user (and others) that autodraft was force-enabled
-      const socket = tryGetSocketService();
-      socket?.emitAutodraftToggled(draft.id, {
-        rosterId: draft.currentRosterId!,
-        enabled: true,
-        forced: true,
+      // Publish domain event to notify the user (and others) that autodraft was force-enabled
+      const eventBus = container.resolve<DomainEventBus>(KEYS.DOMAIN_EVENT_BUS);
+      eventBus.publish({
+        type: EventTypes.DRAFT_AUTODRAFT_TOGGLED,
+        payload: {
+          draftId: draft.id,
+          rosterId: draft.currentRosterId!,
+          enabled: true,
+          forced: true,
+        },
       });
 
       logger.info(
@@ -788,7 +818,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
   }
 
   /**
-   * Emit socket events for pick
+   * Publish domain events for pick
    */
   protected async emitPickEvents(
     draft: Draft,
@@ -796,10 +826,9 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     playerId: number,
     nextPickInfo: NextPickDetails | null
   ): Promise<void> {
-    const socket = tryGetSocketService();
-    if (!socket) return;
+    const eventBus = container.resolve<DomainEventBus>(KEYS.DOMAIN_EVENT_BUS);
 
-    // Enrich pick with player info for socket
+    // Enrich pick with player info for event
     const player = await this.playerRepo.findById(playerId);
     const enrichedPick = {
       ...pick,
@@ -809,21 +838,40 @@ export abstract class BaseDraftEngine implements IDraftEngine {
       player_team: player?.team,
     };
 
-    socket.emitDraftPick(draft.id, enrichedPick);
+    eventBus.publish({
+      type: EventTypes.DRAFT_PICK,
+      payload: enrichedPick,
+    });
 
-    // Emit queue update event for all users in draft
-    socket.emitQueueUpdated(draft.id, {
-      playerId,
-      action: 'removed',
+    // Publish queue update event for all users in draft
+    eventBus.publish({
+      type: EventTypes.DRAFT_QUEUE_UPDATED,
+      payload: {
+        draftId: draft.id,
+        playerId,
+        action: 'removed',
+      },
     });
 
     if (nextPickInfo) {
-      socket.emitNextPick(draft.id, nextPickInfo);
+      eventBus.publish({
+        type: EventTypes.DRAFT_NEXT_PICK,
+        payload: {
+          draftId: draft.id,
+          ...nextPickInfo,
+        },
+      });
     } else {
       // Draft completed
       const completedDraft = await this.draftRepo.findById(draft.id);
       if (completedDraft) {
-        socket.emitDraftCompleted(draft.id, draftToResponse(completedDraft));
+        eventBus.publish({
+          type: EventTypes.DRAFT_COMPLETED,
+          payload: {
+            draftId: draft.id,
+            ...draftToResponse(completedDraft),
+          },
+        });
       }
     }
   }

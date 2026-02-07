@@ -8,7 +8,7 @@
 import { randomBytes } from 'crypto';
 import type { Pool, PoolClient } from 'pg';
 import { runInDraftTransaction } from '../../../shared/locks';
-import { tryGetSocketService } from '../../../socket';
+import { EventTypes, tryGetEventBus } from '../../../shared/events';
 import { ForbiddenException, NotFoundException, ValidationException } from '../../../utils/exceptions';
 import { logger } from '../../../config/logger.config';
 import type { Draft } from '../drafts.model';
@@ -123,10 +123,16 @@ export class DerbyService {
       await this.derbyRepo.initializeDerbyState(client, draftId, derbyState);
     });
 
-    // Emit socket events AFTER commit
-    const socket = tryGetSocketService();
+    // Publish domain events AFTER commit
+    const eventBus = tryGetEventBus();
     const response = this.buildStateResponse(derbyState!, draft!, settings!, teamCount!);
-    socket?.emitDerbyState(draftId, response);
+    eventBus?.publish({
+      type: EventTypes.DERBY_STATE,
+      payload: {
+        draftId,
+        ...response,
+      },
+    });
 
     logger.info(`Derby started for draft ${draftId} with ${teamCount!} teams`);
 
@@ -225,24 +231,37 @@ export class DerbyService {
       }
     });
 
-    // Emit socket events AFTER commit
-    const socket = tryGetSocketService();
+    // Publish domain events AFTER commit
+    const eventBus = tryGetEventBus();
     if (emitData) {
-      socket?.emitDerbySlotPicked(draftId, emitData);
+      eventBus?.publish({
+        type: EventTypes.DERBY_SLOT_PICKED,
+        payload: Object.assign({ draftId }, emitData),
+      });
     }
 
     if (transitionedToLive) {
-      socket?.emitDerbyPhaseTransition(draftId, { phase: 'LIVE' });
+      eventBus?.publish({
+        type: EventTypes.DERBY_PHASE_TRANSITION,
+        payload: {
+          draftId,
+          phase: 'LIVE',
+        },
+      });
       // Also emit draft state update for clients to reload
       const updatedDraft = await this.draftRepo.findById(draftId);
       if (updatedDraft) {
-        socket?.emitDraftSettingsUpdated(draftId, {
-          phase: 'LIVE',
-          status: updatedDraft.status,
-          current_pick: updatedDraft.currentPick,
-          current_round: updatedDraft.currentRound,
-          current_roster_id: updatedDraft.currentRosterId,
-          pick_deadline: updatedDraft.pickDeadline,
+        eventBus?.publish({
+          type: EventTypes.DRAFT_SETTINGS_UPDATED,
+          payload: {
+            draftId,
+            phase: 'LIVE',
+            status: updatedDraft.status,
+            current_pick: updatedDraft.currentPick,
+            current_round: updatedDraft.currentRound,
+            current_roster_id: updatedDraft.currentRosterId,
+            pick_deadline: updatedDraft.pickDeadline,
+          },
         });
       }
     }
@@ -345,18 +364,30 @@ export class DerbyService {
       }
     });
 
-    // Emit socket events AFTER commit
-    const socket = tryGetSocketService();
+    // Publish domain events AFTER commit
+    const eventBus = tryGetEventBus();
     if (emitData) {
       if ('slotNumber' in emitData) {
-        socket?.emitDerbySlotPicked(draftId, emitData);
+        eventBus?.publish({
+          type: EventTypes.DERBY_SLOT_PICKED,
+          payload: Object.assign({ draftId }, emitData),
+        });
       } else {
-        socket?.emitDerbyTurnChanged(draftId, emitData);
+        eventBus?.publish({
+          type: EventTypes.DERBY_TURN_CHANGED,
+          payload: Object.assign({ draftId }, emitData),
+        });
       }
     }
 
     if (transitionedToLive) {
-      socket?.emitDerbyPhaseTransition(draftId, { phase: 'LIVE' });
+      eventBus?.publish({
+        type: EventTypes.DERBY_PHASE_TRANSITION,
+        payload: {
+          draftId,
+          phase: 'LIVE',
+        },
+      });
     }
 
     logger.info(`Derby timeout processed for draft ${draftId}, roster ${timedOutRosterId!}`);

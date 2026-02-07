@@ -3,7 +3,7 @@ import { TradesRepository, TradeItemsRepository } from '../trades.repository';
 import { RosterPlayersRepository } from '../../rosters/rosters.repository';
 import { LeagueRepository, RosterRepository } from '../../leagues/leagues.repository';
 import { DraftPickAssetRepository } from '../../drafts/draft-pick-asset.repository';
-import { tryGetSocketService } from '../../../socket';
+import { EventTypes, tryGetEventBus } from '../../../shared/events';
 import {
   TradeWithDetails,
   ProposeTradeRequest,
@@ -16,7 +16,8 @@ import {
   ValidationException,
   ConflictException,
 } from '../../../utils/exceptions';
-import { getTradeLockId } from '../../../utils/locks';
+import { getLockId, LockDomain } from '../../../shared/locks';
+import { batchValidateRosterPlayers } from '../../../shared/batch-queries';
 import { League } from '../../leagues/leagues.model';
 import { Roster } from '../../leagues/leagues.model';
 import {
@@ -91,7 +92,7 @@ export async function proposeTrade(
 
   if (manageTransaction) {
     await client.query('BEGIN');
-    await client.query('SELECT pg_advisory_xact_lock($1)', [getTradeLockId(leagueId)]);
+    await client.query('SELECT pg_advisory_xact_lock($1)', [getLockId(LockDomain.TRADE, leagueId)]);
   }
 
   try {
@@ -194,9 +195,14 @@ export async function proposeTrade(
     const tradeWithDetails = await ctx.tradesRepo.findByIdWithDetails(trade.id, proposerRoster.id);
     if (!tradeWithDetails) throw new Error('Failed to create trade');
 
-    // Emit socket event (only for standalone trades, counter emits its own event)
+    // Emit domain event (only for standalone trades, counter emits its own event)
     if (manageTransaction) {
-      emitTradeProposed(leagueId, tradeWithDetails);
+      const eventBus = tryGetEventBus();
+      eventBus?.publish({
+        type: EventTypes.TRADE_PROPOSED,
+        leagueId,
+        payload: tradeWithDetailsToResponse(tradeWithDetails),
+      });
 
       // Emit system message to league chat
       if (ctx.eventListenerService) {
@@ -227,17 +233,16 @@ async function validateOfferingPlayers(
   playerIds: number[],
   leagueId: number
 ): Promise<void> {
-  for (const playerId of playerIds) {
-    const playerRoster = await ctx.rosterPlayersRepo.findByRosterAndPlayer(
-      proposerRoster.id,
-      playerId,
-      client
-    );
-    if (!playerRoster) {
-      throw new ValidationException(`You do not own player ${playerId}`);
-    }
+  if (playerIds.length === 0) return;
 
-    // Check player not in another pending trade
+  // Batch validate all players belong to proposer
+  const validation = await batchValidateRosterPlayers(client, proposerRoster.id, playerIds);
+  if (validation.missing.length > 0) {
+    throw new ValidationException(`You do not own player ${validation.missing[0]}`);
+  }
+
+  // Check players not in another pending trade (still need individual checks for pending trades)
+  for (const playerId of playerIds) {
     const pendingTrades = await ctx.tradesRepo.findPendingByPlayer(leagueId, playerId);
     if (pendingTrades.length > 0) {
       throw new ConflictException(`Player ${playerId} is already in a pending trade`);
@@ -252,17 +257,16 @@ async function validateRequestingPlayers(
   playerIds: number[],
   leagueId: number
 ): Promise<void> {
-  for (const playerId of playerIds) {
-    const playerRoster = await ctx.rosterPlayersRepo.findByRosterAndPlayer(
-      recipientRosterId,
-      playerId,
-      client
-    );
-    if (!playerRoster) {
-      throw new ValidationException(`Recipient does not own player ${playerId}`);
-    }
+  if (playerIds.length === 0) return;
 
-    // Check player not in another pending trade
+  // Batch validate all players belong to recipient
+  const validation = await batchValidateRosterPlayers(client, recipientRosterId, playerIds);
+  if (validation.missing.length > 0) {
+    throw new ValidationException(`Recipient does not own player ${validation.missing[0]}`);
+  }
+
+  // Check players not in another pending trade (still need individual checks for pending trades)
+  for (const playerId of playerIds) {
     const pendingTrades = await ctx.tradesRepo.findPendingByPlayer(leagueId, playerId);
     if (pendingTrades.length > 0) {
       throw new ConflictException(`Player ${playerId} is already in a pending trade`);
@@ -361,9 +365,4 @@ async function buildPlayerTradeItems(
   }
 
   return items;
-}
-
-function emitTradeProposed(leagueId: number, trade: TradeWithDetails): void {
-  const socket = tryGetSocketService();
-  socket?.emitTradeProposed(leagueId, tradeWithDetailsToResponse(trade));
 }

@@ -2,7 +2,7 @@ import { ActionHandler, ActionContext } from './index';
 import { SlowAuctionService } from '../auction/slow-auction.service';
 import { FastAuctionService } from '../auction/fast-auction.service';
 import { RosterRepository } from '../../leagues/leagues.repository';
-import { tryGetSocketService } from '../../../socket';
+import { EventTypes, tryGetEventBus } from '../../../shared/events';
 import { ForbiddenException, ValidationException, AppException } from '../../../utils/exceptions';
 import { auctionLotToResponse } from '../auction/auction.models';
 
@@ -55,12 +55,16 @@ export class AuctionActionHandler implements ActionHandler {
           throw new ValidationException(`AuctionActionHandler: Unknown action ${action}`);
       }
     } catch (error) {
-      // Emit error to user via socket for real-time feedback
+      // Publish error event for real-time feedback
       if (error instanceof AppException) {
-        const socket = tryGetSocketService();
-        socket?.emitAuctionError(ctx.userId, {
-          action,
-          message: error.message,
+        const eventBus = tryGetEventBus();
+        eventBus?.publish({
+          type: EventTypes.AUCTION_ERROR,
+          userId: ctx.userId,
+          payload: {
+            action,
+            message: error.message,
+          },
         });
       }
       throw error; // Re-throw for HTTP response
@@ -70,10 +74,15 @@ export class AuctionActionHandler implements ActionHandler {
   private async handleNominate(draftId: number, rosterId: number, playerId: number): Promise<any> {
     const result = await this.slowAuctionService.nominate(draftId, rosterId, playerId);
 
-    // Emit socket event - wrap in { lot } for consistency with fast auction
-    // Convert to snake_case for frontend consistency
-    const socket = tryGetSocketService();
-    socket?.emitAuctionLotCreated(draftId, { lot: auctionLotToResponse(result.lot) });
+    // Publish domain event for socket emission
+    const eventBus = tryGetEventBus();
+    eventBus?.publish({
+      type: EventTypes.AUCTION_LOT_STARTED,
+      payload: {
+        draftId,
+        lot: auctionLotToResponse(result.lot),
+      },
+    });
 
     return {
       ok: true,
@@ -103,19 +112,28 @@ export class AuctionActionHandler implements ActionHandler {
   ): Promise<any> {
     const result = await this.slowAuctionService.setMaxBid(draftId, lotId, rosterId, maxBid);
 
-    // Emit socket events - wrap in { lot } for consistency with fast auction
-    // Convert to snake_case for frontend consistency
-    const socket = tryGetSocketService();
-    socket?.emitAuctionLotUpdated(draftId, { lot: auctionLotToResponse(result.lot) });
+    // Publish domain event for lot update
+    const eventBus = tryGetEventBus();
+    eventBus?.publish({
+      type: EventTypes.AUCTION_BID,
+      payload: {
+        draftId,
+        lot: auctionLotToResponse(result.lot),
+      },
+    });
 
-    // Notify outbid users with frontend-expected payload format
+    // Notify outbid users via domain events
     for (const notif of result.outbidNotifications) {
       const outbidRoster = await this.rosterRepo.findById(notif.rosterId);
       if (outbidRoster?.userId) {
-        socket?.emitAuctionOutbid(outbidRoster.userId, {
-          lot_id: notif.lotId,
-          player_id: result.lot.playerId,
-          new_bid: notif.newLeadingBid,
+        eventBus?.publish({
+          type: EventTypes.AUCTION_OUTBID,
+          userId: outbidRoster.userId,
+          payload: {
+            lot_id: notif.lotId,
+            player_id: result.lot.playerId,
+            new_bid: notif.newLeadingBid,
+          },
         });
       }
     }

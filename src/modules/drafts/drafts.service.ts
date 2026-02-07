@@ -6,7 +6,7 @@ import { DraftOrderService } from './draft-order.service';
 import { DraftPickService } from './draft-pick.service';
 import { DraftStateService } from './draft-state.service';
 import { DraftPickAssetRepository } from './draft-pick-asset.repository';
-import { tryGetSocketService } from '../../socket/socket.service';
+import { EventTypes, tryGetEventBus } from '../../shared/events';
 import { logger } from '../../config/env.config';
 
 export class DraftService {
@@ -242,9 +242,13 @@ export class DraftService {
 
     const response = draftToResponse(draft);
 
-    // Emit socket event for real-time updates
-    const socketService = tryGetSocketService();
-    socketService?.emitDraftCreated(leagueId, response);
+    // Emit event for real-time updates
+    const eventBus = tryGetEventBus();
+    eventBus?.publish({
+      type: EventTypes.DRAFT_CREATED,
+      leagueId,
+      payload: { leagueId, draft: response },
+    });
 
     return response;
   }
@@ -437,12 +441,16 @@ export class DraftService {
     // Update autodraft setting
     await this.draftRepo.setAutodraftEnabled(draftId, roster.id, enabled);
 
-    // Emit socket event
-    const socketService = tryGetSocketService();
-    socketService?.emitAutodraftToggled(draftId, {
-      rosterId: roster.id,
-      enabled,
-      forced: false,
+    // Emit event
+    const eventBus = tryGetEventBus();
+    eventBus?.publish({
+      type: EventTypes.DRAFT_AUTODRAFT_TOGGLED,
+      payload: {
+        draftId,
+        rosterId: roster.id,
+        enabled,
+        forced: false,
+      },
     });
 
     logger.info(`User ${userId} toggled autodraft to ${enabled} for draft ${draftId}`);
@@ -677,9 +685,12 @@ export class DraftService {
 
     const response = draftToResponse(updatedDraft);
 
-    // 9. Emit socket event for real-time updates
-    const socketService = tryGetSocketService();
-    socketService?.emitDraftSettingsUpdated(draftId, response);
+    // 9. Emit event for real-time updates
+    const eventBus = tryGetEventBus();
+    eventBus?.publish({
+      type: EventTypes.DRAFT_SETTINGS_UPDATED,
+      payload: { draftId, draft: response },
+    });
 
     logger.info(`Commissioner ${userId} updated settings for draft ${draftId}`);
 

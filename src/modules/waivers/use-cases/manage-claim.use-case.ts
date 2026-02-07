@@ -1,7 +1,7 @@
 import { FaabBudgetRepository, WaiverClaimsRepository } from '../waivers.repository';
 import { RosterPlayersRepository } from '../../rosters/rosters.repository';
 import { LeagueRepository, RosterRepository } from '../../leagues/leagues.repository';
-import { tryGetSocketService } from '../../../socket';
+import { EventTypes, tryGetEventBus } from '../../../shared/events';
 import {
   WaiverClaimWithDetails,
   UpdateClaimRequest,
@@ -63,7 +63,7 @@ export async function cancelClaim(
 
   await ctx.claimsRepo.updateStatus(claimId, 'cancelled');
 
-  // Emit socket event
+  // Emit event via domain event bus
   emitClaimCancelled(claim.leagueId, claimId, claim.rosterId);
 }
 
@@ -132,18 +132,26 @@ export async function updateClaim(
   const claimWithDetails = await ctx.claimsRepo.findByIdWithDetails(claimId);
   if (!claimWithDetails) throw new Error('Failed to get claim details');
 
-  // Emit socket event
+  // Emit event via domain event bus
   emitClaimUpdated(claim.leagueId, claimWithDetails);
 
   return claimWithDetails;
 }
 
 function emitClaimCancelled(leagueId: number, claimId: number, rosterId: number): void {
-  const socket = tryGetSocketService();
-  socket?.emitWaiverClaimCancelled(leagueId, { claimId, rosterId });
+  const eventBus = tryGetEventBus();
+  eventBus?.publish({
+    type: EventTypes.WAIVER_CLAIM_CANCELLED,
+    leagueId,
+    payload: { claimId, rosterId },
+  });
 }
 
 function emitClaimUpdated(leagueId: number, claim: WaiverClaimWithDetails): void {
-  const socket = tryGetSocketService();
-  socket?.emitWaiverClaimUpdated(leagueId, waiverClaimToResponse(claim));
+  const eventBus = tryGetEventBus();
+  eventBus?.publish({
+    type: EventTypes.WAIVER_CLAIM_UPDATED,
+    leagueId,
+    payload: waiverClaimToResponse(claim),
+  });
 }

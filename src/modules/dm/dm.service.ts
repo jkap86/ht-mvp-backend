@@ -6,7 +6,7 @@ import {
 } from './dm.model';
 import { UserRepository } from '../auth/auth.repository';
 import { ForbiddenException, ValidationException, NotFoundException } from '../../utils/exceptions';
-import { tryGetSocketService } from '../../socket';
+import { EventTypes, tryGetEventBus } from '../../shared/events';
 import { logger } from '../../config/logger.config';
 
 export class DmService {
@@ -108,16 +108,16 @@ export class DmService {
     if (conversation) {
       const otherUserId = this.dmRepo.getOtherUserId(conversation, userId);
 
-      // Emit socket event to the other user
-      const socket = tryGetSocketService();
-      if (socket) {
-        socket.emitDmMessage(otherUserId, conversationId, response);
-      } else {
-        logger.warn('Socket unavailable - DM notification not sent', {
+      // Emit event via domain event bus to the other user
+      const eventBus = tryGetEventBus();
+      eventBus?.publish({
+        type: EventTypes.DM_MESSAGE,
+        userId: otherUserId,
+        payload: {
           conversationId,
-          recipientUserId: otherUserId,
-        });
-      }
+          message: response,
+        },
+      });
     }
 
     return response;
@@ -139,15 +139,15 @@ export class DmService {
     const conversation = await this.dmRepo.findById(conversationId);
     if (conversation) {
       const otherUserId = this.dmRepo.getOtherUserId(conversation, userId);
-      const socket = tryGetSocketService();
-      if (socket) {
-        socket.emitDmRead(otherUserId, conversationId, userId);
-      } else {
-        logger.warn('Socket unavailable - read receipt not sent', {
+      const eventBus = tryGetEventBus();
+      eventBus?.publish({
+        type: EventTypes.DM_READ,
+        userId: otherUserId,
+        payload: {
           conversationId,
           readByUserId: userId,
-        });
-      }
+        },
+      });
     }
   }
 
