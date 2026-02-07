@@ -120,4 +120,8 @@ export const KEYS = {
 
   // Bestball
   BESTBALL_SERVICE: 'bestballService',
+
+  // Infrastructure
+  LEADER_LOCK: 'leaderLock',
+  DOMAIN_EVENT_BUS: 'domainEventBus',
 };

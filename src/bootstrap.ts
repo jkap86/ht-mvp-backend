@@ -81,6 +81,10 @@ import { DraftEngineFactory } from './engines';
 // Helpers
 import { LockHelper } from './shared/locks';
 
+// Infrastructure
+import { LeaderLock } from './shared/leader-lock';
+import { DomainEventBus, SocketEventSubscriber } from './shared/events';
+
 function bootstrap(): void {
   // Database
   container.register(KEYS.POOL, () => pool);
@@ -576,6 +580,17 @@ function bootstrap(): void {
 
   // Helpers
   container.register(KEYS.LOCK_HELPER, () => new LockHelper());
+
+  // Infrastructure - Leader Lock for job coordination
+  container.register(KEYS.LEADER_LOCK, () => new LeaderLock(container.resolve(KEYS.POOL)));
+
+  // Infrastructure - Domain Event Bus for decoupled socket emissions
+  container.register(KEYS.DOMAIN_EVENT_BUS, () => {
+    const eventBus = new DomainEventBus();
+    // Register the socket subscriber to handle domain events
+    eventBus.subscribe(new SocketEventSubscriber());
+    return eventBus;
+  });
 
   // Bestball service
   container.register(

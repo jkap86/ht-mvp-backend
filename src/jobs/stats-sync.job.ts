@@ -5,6 +5,7 @@ import { MatchupsRepository } from '../modules/matchups/matchups.repository';
 import { LineupService } from '../modules/lineups/lineups.service';
 import { LeagueRepository } from '../modules/leagues/leagues.repository';
 import { BestballService } from '../modules/bestball/bestball.service';
+import { LeaderLock } from '../shared/leader-lock';
 import { tryGetSocketService } from '../socket/socket.service';
 import { logger } from '../config/env.config';
 import { isInGameWindow, getOptimalSyncInterval, SYNC_INTERVALS } from '../utils/game-window';
@@ -167,7 +168,7 @@ async function calculateLiveScoringTotals(
 
 /**
  * Run the weekly stats sync from Sleeper API
- * Protected against concurrent runs
+ * Protected against concurrent runs and uses leader lock for multi-instance safety
  */
 export async function runStatsSync(): Promise<void> {
   if (isRunning) {
@@ -175,6 +176,21 @@ export async function runStatsSync(): Promise<void> {
     return;
   }
 
+  // Use leader lock to ensure only one instance runs the job
+  const leaderLock = container.resolve<LeaderLock>(KEYS.LEADER_LOCK);
+  const result = await leaderLock.runAsLeader(async () => {
+    return executeStatsSync();
+  });
+
+  if (result === null) {
+    logger.debug('Not leader, skipping stats sync');
+  }
+}
+
+/**
+ * Execute the actual stats sync logic (called by leader instance only)
+ */
+async function executeStatsSync(): Promise<void> {
   isRunning = true;
   try {
     const inGameWindow = isInGameWindow();
