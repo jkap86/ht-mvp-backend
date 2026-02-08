@@ -1,7 +1,7 @@
 import { Pool } from 'pg';
 import { PlayoffRepository } from './playoff.repository';
 import { MatchupsRepository } from '../matchups/matchups.repository';
-import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
+import { LeagueRepository } from '../leagues/leagues.repository';
 import {
   PlayoffBracketView,
   PlayoffMatchup,
@@ -25,8 +25,7 @@ export class PlayoffService {
     private readonly db: Pool,
     private readonly playoffRepo: PlayoffRepository,
     private readonly matchupsRepo: MatchupsRepository,
-    private readonly leagueRepo: LeagueRepository,
-    private readonly rosterRepo: RosterRepository
+    private readonly leagueRepo: LeagueRepository
   ) {}
 
   /**
@@ -59,12 +58,37 @@ export class PlayoffService {
     }
 
     const season = parseInt(league.season, 10);
+    const currentWeek = league.currentWeek || 1;
+    const totalRounds = calculateTotalRounds(config.playoffTeams);
+    const lastPlayoffWeek = config.startWeek + totalRounds - 1;
+
+    // Validate startWeek is not in the past
+    if (config.startWeek < currentWeek) {
+      throw new ValidationException(
+        `Playoff start week (${config.startWeek}) cannot be before current week (${currentWeek})`
+      );
+    }
 
     // Check for existing bracket - block all regeneration
     const existingBracket = await this.playoffRepo.findByLeagueSeason(leagueId, season);
     if (existingBracket) {
       throw new ConflictException(
-        'Playoff bracket already exists for this season. Use the regenerate endpoint to recreate.'
+        'Playoff bracket already exists for this league and season.'
+      );
+    }
+
+    // Check for existing regular season matchups in playoff week range
+    const conflictingMatchups = await this.matchupsRepo.findMatchupsInWeekRange(
+      leagueId,
+      season,
+      config.startWeek,
+      lastPlayoffWeek,
+      false // is_playoff = false (regular season matchups)
+    );
+    if (conflictingMatchups.length > 0) {
+      throw new ConflictException(
+        `Regular season matchups exist in weeks ${config.startWeek}-${lastPlayoffWeek}. ` +
+        `Cannot overlap playoffs with regular season.`
       );
     }
 
@@ -209,12 +233,32 @@ export class PlayoffService {
 
       // Check if this is the championship
       if (currentRound === bracket.totalRounds) {
-        // Find championship winner
-        const championship = matchups[0];
-        const winnerId =
-          championship.roster1_points > championship.roster2_points
+        // Find championship matchup explicitly by round and bracket position
+        const championship = matchups.find(
+          (m) => m.playoff_round === bracket.totalRounds && m.bracket_position === 1
+        );
+        if (!championship) {
+          throw new ValidationException('Championship matchup not found');
+        }
+
+        // Determine winner with tie-breaker: higher seed (lower number) wins ties
+        let winnerId: number;
+        const p1 = championship.roster1_points === null || championship.roster1_points === undefined
+          ? 0
+          : parseFloat(championship.roster1_points);
+        const p2 = championship.roster2_points === null || championship.roster2_points === undefined
+          ? 0
+          : parseFloat(championship.roster2_points);
+        if (p1 > p2) {
+          winnerId = championship.roster1_id;
+        } else if (p2 > p1) {
+          winnerId = championship.roster2_id;
+        } else {
+          // Tie: higher seed (lower number) wins
+          winnerId = championship.playoff_seed1 < championship.playoff_seed2
             ? championship.roster1_id
             : championship.roster2_id;
+        }
 
         await this.playoffRepo.setChampion(bracket.id, winnerId, client);
         logger.info(`League ${leagueId} championship won by roster ${winnerId}`);
@@ -267,8 +311,24 @@ export class PlayoffService {
     const winners: Array<{ rosterId: number; seed: number; bracketPosition: number }> = [];
 
     for (const matchup of previousMatchups) {
-      const winnerId =
-        matchup.roster1_points > matchup.roster2_points ? matchup.roster1_id : matchup.roster2_id;
+      // Determine winner with tie-breaker: higher seed (lower number) wins ties
+      let winnerId: number;
+      const p1 = matchup.roster1_points === null || matchup.roster1_points === undefined
+        ? 0
+        : parseFloat(matchup.roster1_points);
+      const p2 = matchup.roster2_points === null || matchup.roster2_points === undefined
+        ? 0
+        : parseFloat(matchup.roster2_points);
+      if (p1 > p2) {
+        winnerId = matchup.roster1_id;
+      } else if (p2 > p1) {
+        winnerId = matchup.roster2_id;
+      } else {
+        // Tie: higher seed (lower number) wins
+        winnerId = matchup.playoff_seed1 < matchup.playoff_seed2
+          ? matchup.roster1_id
+          : matchup.roster2_id;
+      }
       const winnerSeed =
         winnerId === matchup.roster1_id ? matchup.playoff_seed1 : matchup.playoff_seed2;
 
@@ -380,7 +440,9 @@ export class PlayoffService {
             rosterId: m.roster1_id,
             seed: seed1.seed,
             teamName: m.roster1_team_name || seed1.teamName || `Team ${seed1.seed}`,
-            points: m.roster1_points ? parseFloat(m.roster1_points) : null,
+            points: m.roster1_points === null || m.roster1_points === undefined
+              ? null
+              : parseFloat(m.roster1_points),
             record: seed1.regularSeasonRecord,
           }
         : null;
@@ -390,14 +452,26 @@ export class PlayoffService {
             rosterId: m.roster2_id,
             seed: seed2.seed,
             teamName: m.roster2_team_name || seed2.teamName || `Team ${seed2.seed}`,
-            points: m.roster2_points ? parseFloat(m.roster2_points) : null,
+            points: m.roster2_points === null || m.roster2_points === undefined
+              ? null
+              : parseFloat(m.roster2_points),
             record: seed2.regularSeasonRecord,
           }
         : null;
 
       let winner: PlayoffTeamInfo | null = null;
       if (m.is_final && team1 && team2) {
-        winner = m.roster1_points > m.roster2_points ? team1 : team2;
+        // Determine winner with tie-breaker: higher seed (lower number) wins ties
+        const p1 = team1.points ?? 0;
+        const p2 = team2.points ?? 0;
+        if (p1 > p2) {
+          winner = team1;
+        } else if (p2 > p1) {
+          winner = team2;
+        } else {
+          // Tie: higher seed (lower number) wins
+          winner = team1.seed < team2.seed ? team1 : team2;
+        }
       }
 
       const playoffMatchup: PlayoffMatchup = {

@@ -463,4 +463,25 @@ export class MatchupsRepository {
 
     return result.rows[0].has_finalized;
   }
+
+  /**
+   * Find matchups in a week range.
+   * Used to check for conflicts when generating playoff brackets.
+   */
+  async findMatchupsInWeekRange(
+    leagueId: number,
+    season: number,
+    startWeek: number,
+    endWeek: number,
+    isPlayoff: boolean
+  ): Promise<Matchup[]> {
+    const result = await this.db.query(
+      `SELECT * FROM matchups
+       WHERE league_id = $1 AND season = $2
+       AND week >= $3 AND week <= $4
+       AND is_playoff = $5`,
+      [leagueId, season, startWeek, endWeek, isPlayoff]
+    );
+    return result.rows.map(matchupFromDatabase);
+  }
 }

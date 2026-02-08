@@ -71,7 +71,9 @@ export function playoffSeedFromDatabase(row: any): PlayoffSeed {
     rosterId: row.roster_id,
     seed: row.seed,
     regularSeasonRecord: row.regular_season_record || '',
-    pointsFor: row.points_for ? parseFloat(row.points_for) : 0,
+    pointsFor: row.points_for === null || row.points_for === undefined
+      ? 0
+      : parseFloat(row.points_for),
     hasBye: row.has_bye,
     createdAt: row.created_at,
     teamName: row.team_name,

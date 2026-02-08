@@ -24,8 +24,12 @@ export function matchupFromDatabase(row: any): Matchup {
     week: row.week,
     roster1Id: row.roster1_id,
     roster2Id: row.roster2_id,
-    roster1Points: row.roster1_points ? parseFloat(row.roster1_points) : null,
-    roster2Points: row.roster2_points ? parseFloat(row.roster2_points) : null,
+    roster1Points: row.roster1_points === null || row.roster1_points === undefined
+      ? null
+      : parseFloat(row.roster1_points),
+    roster2Points: row.roster2_points === null || row.roster2_points === undefined
+      ? null
+      : parseFloat(row.roster2_points),
     isPlayoff: row.is_playoff,
     isFinal: row.is_final,
     createdAt: row.created_at,

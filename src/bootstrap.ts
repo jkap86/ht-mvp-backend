@@ -510,6 +510,7 @@ function bootstrap(): void {
         container.resolve(KEYS.ROSTER_PLAYERS_REPO),
         container.resolve(KEYS.ROSTER_TRANSACTIONS_REPO),
         container.resolve(KEYS.LEAGUE_REPO),
+        container.resolve(KEYS.PLAYER_REPO),
         container.resolve(KEYS.EVENT_LISTENER_SERVICE),
         container.resolve(KEYS.ROSTER_MUTATION_SERVICE)
       )
@@ -543,8 +544,7 @@ function bootstrap(): void {
         container.resolve(KEYS.POOL),
         container.resolve(KEYS.PLAYOFF_REPO),
         container.resolve(KEYS.MATCHUPS_REPO),
-        container.resolve(KEYS.LEAGUE_REPO),
-        container.resolve(KEYS.ROSTER_REPO)
+        container.resolve(KEYS.LEAGUE_REPO)
       )
   );
 
