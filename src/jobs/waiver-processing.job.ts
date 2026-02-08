@@ -3,14 +3,15 @@ import { container, KEYS } from '../container';
 import { WaiversService } from '../modules/waivers/waivers.service';
 import { parseWaiverSettings } from '../modules/waivers/waivers.model';
 import { tryGetEventBus, EventTypes } from '../shared/events';
+import { getLockId, LockDomain } from '../shared/locks';
 import { logger } from '../config/logger.config';
 
 let intervalId: NodeJS.Timeout | null = null;
 
 // Run every minute to check if any leagues need waiver processing
 const CHECK_INTERVAL_MS = 60000; // 1 minute
-// Advisory lock IDs: 900001 = trades, 900002 = waivers (must be distinct)
-const WAIVER_PROCESSING_LOCK_ID = 900002;
+// Job lock ID in unified namespace (LockDomain.JOB = 900_000_000+)
+const WAIVER_PROCESSING_LOCK_ID = getLockId(LockDomain.JOB, 2);
 
 /**
  * Check if the current time matches the waiver processing time for the given settings

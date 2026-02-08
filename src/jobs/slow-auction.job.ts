@@ -4,13 +4,15 @@ import { SlowAuctionService } from '../modules/drafts/auction/slow-auction.servi
 import { FastAuctionService } from '../modules/drafts/auction/fast-auction.service';
 import { AuctionLotRepository } from '../modules/drafts/auction/auction-lot.repository';
 import { tryGetEventBus, EventTypes } from '../shared/events';
+import { getLockId, LockDomain } from '../shared/locks';
 import { logger } from '../config/logger.config';
 
 let intervalId: NodeJS.Timeout | null = null;
 
 const SETTLEMENT_INTERVAL_MS = 5000; // 5 seconds for faster settlement
-const SLOW_AUCTION_LOCK_ID = 999999004;
-const NOMINATION_TIMEOUT_LOCK_ID = 999999005;
+// Job lock IDs in unified namespace (LockDomain.JOB = 900_000_000+)
+const SLOW_AUCTION_LOCK_ID = getLockId(LockDomain.JOB, 7);
+const NOMINATION_TIMEOUT_LOCK_ID = getLockId(LockDomain.JOB, 8);
 
 async function processExpiredLots(): Promise<void> {
   const pool = container.resolve<Pool>(KEYS.POOL);

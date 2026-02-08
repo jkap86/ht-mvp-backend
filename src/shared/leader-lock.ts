@@ -1,11 +1,12 @@
 import { Pool } from 'pg';
 import { logger } from '../config/env.config';
+import { getLockId, LockDomain } from './locks';
 
 /**
  * Global advisory lock ID for job leader election.
- * Uses a distinct offset from domain locks (100M-900M) to avoid conflicts.
+ * Uses the unified JOB domain namespace (900_000_000+) with a high ID to avoid conflicts.
  */
-const LEADER_LOCK_ID = 999999;
+const LEADER_LOCK_ID = getLockId(LockDomain.JOB, 999);
 
 /**
  * LeaderLock provides distributed leader election using Postgres advisory locks.
