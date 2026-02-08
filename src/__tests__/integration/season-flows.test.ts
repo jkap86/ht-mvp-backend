@@ -111,8 +111,7 @@ describe('Season Sanity Integration Tests', () => {
       'redraft', // mode
       {}, // leagueSettings
       1, // currentWeek
-      'regular_season', // seasonStatus
-      'ABC123' // inviteCode
+      'regular_season' // seasonStatus
     );
 
     const mockRosters: Roster[] = [
@@ -687,8 +686,7 @@ describe('Season Sanity Integration Tests', () => {
       'redraft', // mode
       {}, // leagueSettings
       5, // currentWeek
-      'regular_season', // seasonStatus
-      'XYZ789' // inviteCode
+      'regular_season' // seasonStatus
     );
 
     const mockRoster: Roster = {
@@ -1003,8 +1001,7 @@ describe('Season Sanity Integration Tests', () => {
       'redraft', // mode
       {}, // leagueSettings
       8, // currentWeek
-      'regular_season', // seasonStatus
-      'TRADE99' // inviteCode
+      'regular_season' // seasonStatus
     );
 
     // Team A (rosterId: 1) has players 1001, 1002

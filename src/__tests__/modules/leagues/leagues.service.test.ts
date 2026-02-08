@@ -26,7 +26,6 @@ const mockLeague = new League(
   {}, // leagueSettings
   1, // currentWeek
   'pre_season', // seasonStatus
-  undefined, // inviteCode (deprecated)
   false // isPublic
 );
 
@@ -46,7 +45,6 @@ const mockPublicLeague = new League(
   {}, // leagueSettings
   1, // currentWeek
   'pre_season', // seasonStatus
-  undefined, // inviteCode (deprecated)
   true // isPublic
 );
 
@@ -219,7 +217,6 @@ describe('LeagueService', () => {
         {},
         1,
         'pre_season',
-        undefined, // inviteCode (deprecated)
         false
       );
       mockLeagueRepo.findByIdWithUserRoster.mockResolvedValue(leagueWithoutMembership);
@@ -434,7 +431,6 @@ describe('LeagueService', () => {
         { rosterType: 'lineup' },
         1,
         'pre_season',
-        undefined,
         false
       );
 
@@ -468,7 +464,6 @@ describe('LeagueService', () => {
         { rosterType: 'lineup' },
         5,
         'regular_season',
-        undefined,
         false
       );
 
@@ -505,7 +500,6 @@ describe('LeagueService', () => {
         { rosterType: 'bestball' },
         5,
         'regular_season',
-        undefined,
         false
       );
 

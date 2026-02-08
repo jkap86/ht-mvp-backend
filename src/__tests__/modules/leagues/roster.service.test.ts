@@ -34,7 +34,6 @@ const createMockLeague = (overrides: Partial<League> = {}): League =>
     overrides.leagueSettings ?? {},
     overrides.currentWeek ?? 1,
     overrides.seasonStatus ?? 'pre_season',
-    overrides.inviteCode ?? 'ABC12345',
     overrides.isPublic ?? false
   );
 
