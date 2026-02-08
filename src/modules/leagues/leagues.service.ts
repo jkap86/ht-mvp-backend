@@ -124,6 +124,18 @@ export class LeagueService {
       }
     }
 
+    // Validate rosterType lock after season starts
+    if (updates.leagueSettings?.rosterType !== undefined) {
+      const currentRosterType = currentLeague.leagueSettings?.rosterType;
+      if (updates.leagueSettings.rosterType !== currentRosterType) {
+        if (currentLeague.seasonStatus !== 'pre_season') {
+          throw new ValidationException(
+            'Roster type (bestball/lineup) cannot be changed after the season starts'
+          );
+        }
+      }
+    }
+
     // Validate league median toggle lock - cannot change after first week is finalized
     if (updates.leagueSettings?.useLeagueMedian !== undefined) {
       const currentUseMedian = currentLeague.leagueSettings?.useLeagueMedian ?? false;

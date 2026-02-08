@@ -105,7 +105,9 @@ export class LeagueRepository {
     }
 
     if (updates.scoringSettings) {
-      setClauses.push(`scoring_settings = $${paramIndex++}`);
+      setClauses.push(
+        `scoring_settings = COALESCE(scoring_settings, '{}'::jsonb) || $${paramIndex++}::jsonb`
+      );
       values.push(JSON.stringify(updates.scoringSettings));
     }
 

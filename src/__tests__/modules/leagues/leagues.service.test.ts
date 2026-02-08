@@ -415,4 +415,128 @@ describe('LeagueService', () => {
       );
     });
   });
+
+  describe('updateLeague rosterType lock', () => {
+    it('should allow rosterType change in pre_season', async () => {
+      const preSeasonLeague = new League(
+        1,
+        'Test League',
+        'pre_draft',
+        {},
+        {},
+        '2024',
+        10,
+        new Date(),
+        new Date(),
+        1,
+        1,
+        'redraft',
+        { rosterType: 'lineup' },
+        1,
+        'pre_season',
+        undefined,
+        false
+      );
+
+      mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockLeagueRepo.findById.mockResolvedValue(preSeasonLeague);
+      mockLeagueRepo.update.mockResolvedValue(preSeasonLeague);
+
+      await leagueService.updateLeague(1, 'user-123', {
+        leagueSettings: { rosterType: 'bestball' },
+      });
+
+      expect(mockLeagueRepo.update).toHaveBeenCalledWith(1, {
+        leagueSettings: { rosterType: 'bestball' },
+      });
+    });
+
+    it('should reject rosterType change after season starts', async () => {
+      const regularSeasonLeague = new League(
+        1,
+        'Test League',
+        'in_progress',
+        {},
+        {},
+        '2024',
+        10,
+        new Date(),
+        new Date(),
+        1,
+        1,
+        'redraft',
+        { rosterType: 'lineup' },
+        5,
+        'regular_season',
+        undefined,
+        false
+      );
+
+      mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockLeagueRepo.findById.mockResolvedValue(regularSeasonLeague);
+
+      await expect(
+        leagueService.updateLeague(1, 'user-123', {
+          leagueSettings: { rosterType: 'bestball' },
+        })
+      ).rejects.toThrow(ValidationException);
+
+      await expect(
+        leagueService.updateLeague(1, 'user-123', {
+          leagueSettings: { rosterType: 'bestball' },
+        })
+      ).rejects.toThrow('cannot be changed after the season starts');
+    });
+
+    it('should allow same rosterType value even after season starts', async () => {
+      const regularSeasonLeague = new League(
+        1,
+        'Test League',
+        'in_progress',
+        {},
+        {},
+        '2024',
+        10,
+        new Date(),
+        new Date(),
+        1,
+        1,
+        'redraft',
+        { rosterType: 'bestball' },
+        5,
+        'regular_season',
+        undefined,
+        false
+      );
+
+      mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockLeagueRepo.findById.mockResolvedValue(regularSeasonLeague);
+      mockLeagueRepo.update.mockResolvedValue(regularSeasonLeague);
+
+      // Setting same value should be allowed
+      await leagueService.updateLeague(1, 'user-123', {
+        leagueSettings: { rosterType: 'bestball' },
+      });
+
+      expect(mockLeagueRepo.update).toHaveBeenCalled();
+    });
+  });
+
+  describe('createLeague season validation', () => {
+    it('should throw ValidationException for missing season', async () => {
+      await expect(
+        leagueService.createLeague(
+          { name: 'Test', season: '', totalRosters: 10 },
+          'user-123'
+        )
+      ).rejects.toThrow(ValidationException);
+
+      await expect(
+        leagueService.createLeague(
+          { name: 'Test', season: '', totalRosters: 10 },
+          'user-123'
+        )
+      ).rejects.toThrow('Valid season year');
+    });
+  });
 });
