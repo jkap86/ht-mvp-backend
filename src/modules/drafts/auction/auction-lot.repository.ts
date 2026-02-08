@@ -48,6 +48,28 @@ export class AuctionLotRepository {
   }
 
   /**
+   * Check if a draft has any active lot (fast path for nomination validation)
+   */
+  async hasActiveLot(draftId: number): Promise<boolean> {
+    const result = await this.db.query(
+      "SELECT EXISTS(SELECT 1 FROM auction_lots WHERE draft_id = $1 AND status = 'active') as has_active",
+      [draftId]
+    );
+    return result.rows[0].has_active;
+  }
+
+  /**
+   * Check if a draft has any active lot using transaction client
+   */
+  async hasActiveLotWithClient(client: PoolClient, draftId: number): Promise<boolean> {
+    const result = await client.query(
+      "SELECT EXISTS(SELECT 1 FROM auction_lots WHERE draft_id = $1 AND status = 'active') as has_active",
+      [draftId]
+    );
+    return result.rows[0].has_active;
+  }
+
+  /**
    * Find all active lots for a draft
    */
   async findActiveLotsByDraft(draftId: number): Promise<AuctionLot[]> {

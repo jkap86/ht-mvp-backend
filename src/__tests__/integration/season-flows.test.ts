@@ -12,6 +12,7 @@ import {
   RosterTransactionsRepository,
 } from '../../modules/rosters/rosters.repository';
 import { RosterMutationService } from '../../modules/rosters/roster-mutation.service';
+import { PlayerRepository } from '../../modules/players/players.repository';
 import {
   WaiverPriorityRepository,
   FaabBudgetRepository,
@@ -1144,6 +1145,12 @@ describe('Season Sanity Integration Tests', () => {
         bulkAddPlayers: jest.fn(),
       } as unknown as jest.Mocked<RosterMutationService>;
 
+      const mockPlayerRepo = {
+        findById: jest.fn(),
+        findByIds: jest.fn(),
+        findByIdsWithDetails: jest.fn(),
+      } as unknown as jest.Mocked<PlayerRepository>;
+
       tradesService = new TradesService(
         mockPool,
         mockTradesRepo,
@@ -1153,6 +1160,7 @@ describe('Season Sanity Integration Tests', () => {
         mockRosterPlayersRepo,
         mockTransactionsRepo,
         mockLeagueRepo,
+        mockPlayerRepo,
         undefined, // eventListenerService
         mockRosterMutationService
       );

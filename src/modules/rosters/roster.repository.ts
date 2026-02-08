@@ -100,6 +100,16 @@ export class RosterRepository {
   }
 
   /**
+   * Find multiple rosters by IDs in a single query.
+   * Batch lookup to avoid N+1 queries.
+   */
+  async findByIds(ids: number[]): Promise<Roster[]> {
+    if (ids.length === 0) return [];
+    const result = await this.db.query('SELECT * FROM rosters WHERE id = ANY($1)', [ids]);
+    return RosterMapper.fromRows(result.rows);
+  }
+
+  /**
    * Find roster by league ID and per-league roster_id (not global id)
    */
   async findByLeagueAndRosterId(leagueId: number, rosterId: number): Promise<Roster | null> {

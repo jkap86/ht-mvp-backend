@@ -11,6 +11,7 @@ import {
 } from '../../../modules/rosters/rosters.repository';
 import { RosterMutationService } from '../../../modules/rosters/roster-mutation.service';
 import { LeagueRepository, RosterRepository } from '../../../modules/leagues/leagues.repository';
+import { PlayerRepository } from '../../../modules/players/players.repository';
 import {
   Trade,
   TradeItem,
@@ -223,6 +224,13 @@ const createMockRosterMutationService = (): jest.Mocked<RosterMutationService> =
     bulkAddPlayers: jest.fn(),
   }) as unknown as jest.Mocked<RosterMutationService>;
 
+const createMockPlayerRepo = (): jest.Mocked<PlayerRepository> =>
+  ({
+    findById: jest.fn(),
+    findByIds: jest.fn(),
+    findByIdsWithDetails: jest.fn(),
+  }) as unknown as jest.Mocked<PlayerRepository>;
+
 describe('TradesService', () => {
   let tradesService: TradesService;
   let mockPool: jest.Mocked<Pool>;
@@ -234,6 +242,7 @@ describe('TradesService', () => {
   let mockRosterPlayersRepo: jest.Mocked<RosterPlayersRepository>;
   let mockTransactionsRepo: jest.Mocked<RosterTransactionsRepository>;
   let mockLeagueRepo: jest.Mocked<LeagueRepository>;
+  let mockPlayerRepo: jest.Mocked<PlayerRepository>;
   let mockRosterMutationService: jest.Mocked<RosterMutationService>;
 
   beforeEach(() => {
@@ -246,6 +255,7 @@ describe('TradesService', () => {
     mockRosterPlayersRepo = createMockRosterPlayersRepo();
     mockTransactionsRepo = createMockTransactionsRepo();
     mockLeagueRepo = createMockLeagueRepo();
+    mockPlayerRepo = createMockPlayerRepo();
     mockRosterMutationService = createMockRosterMutationService();
 
     tradesService = new TradesService(
@@ -257,6 +267,7 @@ describe('TradesService', () => {
       mockRosterPlayersRepo,
       mockTransactionsRepo,
       mockLeagueRepo,
+      mockPlayerRepo,
       undefined, // eventListenerService
       mockRosterMutationService
     );

@@ -3,6 +3,7 @@ import { TradesRepository, TradeItemsRepository } from '../trades.repository';
 import { RosterPlayersRepository } from '../../rosters/rosters.repository';
 import { LeagueRepository, RosterRepository } from '../../leagues/leagues.repository';
 import { DraftPickAssetRepository } from '../../drafts/draft-pick-asset.repository';
+import { PlayerRepository } from '../../players/players.repository';
 import { EventTypes, tryGetEventBus } from '../../../shared/events';
 import {
   TradeWithDetails,
@@ -36,6 +37,7 @@ export interface ProposeTradeContext {
   rosterRepo: RosterRepository;
   rosterPlayersRepo: RosterPlayersRepository;
   leagueRepo: LeagueRepository;
+  playerRepo: PlayerRepository;
   pickAssetRepo?: DraftPickAssetRepository;
   eventListenerService?: EventListenerService;
 }
@@ -255,6 +257,7 @@ async function proposeTradeCore(
 
   // Create trade items for players
   const playerItems = await buildPlayerTradeItems(
+    ctx.playerRepo,
     client,
     proposerRoster.id,
     recipientRoster.id,
@@ -363,6 +366,7 @@ async function validateRosterSizes(
 }
 
 async function buildPlayerTradeItems(
+  playerRepo: PlayerRepository,
   client: PoolClient,
   proposerRosterId: number,
   recipientRosterId: number,
@@ -387,41 +391,43 @@ async function buildPlayerTradeItems(
     playerTeam?: string;
   }> = [];
 
+  // Batch lookup all player details in a single query
+  const allPlayerIds = [...offeringPlayerIds, ...requestingPlayerIds];
+  if (allPlayerIds.length === 0) {
+    return items;
+  }
+
+  const playerMap = await playerRepo.findByIdsWithDetails(allPlayerIds, client);
+
   // Players from proposer to recipient
   for (const playerId of offeringPlayerIds) {
-    const playerInfo = await client.query(
-      'SELECT full_name, position, team FROM players WHERE id = $1',
-      [playerId]
-    );
-    if (playerInfo.rows.length === 0) {
+    const playerInfo = playerMap.get(playerId);
+    if (!playerInfo) {
       throw new ValidationException(`Player ${playerId} not found in database`);
     }
     items.push({
       playerId,
       fromRosterId: proposerRosterId,
       toRosterId: recipientRosterId,
-      playerName: playerInfo.rows[0].full_name,
-      playerPosition: playerInfo.rows[0].position,
-      playerTeam: playerInfo.rows[0].team,
+      playerName: playerInfo.fullName,
+      playerPosition: playerInfo.position ?? undefined,
+      playerTeam: playerInfo.team ?? undefined,
     });
   }
 
   // Players from recipient to proposer
   for (const playerId of requestingPlayerIds) {
-    const playerInfo = await client.query(
-      'SELECT full_name, position, team FROM players WHERE id = $1',
-      [playerId]
-    );
-    if (playerInfo.rows.length === 0) {
+    const playerInfo = playerMap.get(playerId);
+    if (!playerInfo) {
       throw new ValidationException(`Player ${playerId} not found in database`);
     }
     items.push({
       playerId,
       fromRosterId: recipientRosterId,
       toRosterId: proposerRosterId,
-      playerName: playerInfo.rows[0].full_name,
-      playerPosition: playerInfo.rows[0].position,
-      playerTeam: playerInfo.rows[0].team,
+      playerName: playerInfo.fullName,
+      playerPosition: playerInfo.position ?? undefined,
+      playerTeam: playerInfo.team ?? undefined,
     });
   }
 

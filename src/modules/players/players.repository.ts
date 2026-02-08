@@ -34,6 +34,32 @@ export class PlayerRepository {
     return result.rows.map(playerFromDatabase);
   }
 
+  /**
+   * Find multiple players by IDs with details needed for trade items.
+   * Returns a map of player ID to player details for efficient lookup.
+   * Uses batch query to avoid N+1 problem.
+   */
+  async findByIdsWithDetails(
+    ids: number[],
+    client?: PoolClient
+  ): Promise<Map<number, { fullName: string; position: string | null; team: string | null }>> {
+    if (ids.length === 0) return new Map();
+    const db = client || this.db;
+    const result = await db.query(
+      'SELECT id, full_name, position, team FROM players WHERE id = ANY($1)',
+      [ids]
+    );
+    const map = new Map<number, { fullName: string; position: string | null; team: string | null }>();
+    for (const row of result.rows) {
+      map.set(row.id, {
+        fullName: row.full_name,
+        position: row.position,
+        team: row.team,
+      });
+    }
+    return map;
+  }
+
   async findBySleeperId(sleeperId: string): Promise<Player | null> {
     const result = await this.db.query('SELECT * FROM players WHERE sleeper_id = $1', [sleeperId]);
     return result.rows.length > 0 ? playerFromDatabase(result.rows[0]) : null;

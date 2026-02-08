@@ -130,11 +130,8 @@ export class FastAuctionService {
       draftId,
       async (client) => {
         // Check no active lot exists (inside lock)
-        const activeLotResult = await client.query(
-          "SELECT id FROM auction_lots WHERE draft_id = $1 AND status = 'active' LIMIT 1",
-          [draftId]
-        );
-        if (activeLotResult.rows.length > 0) {
+        const hasActive = await this.lotRepo.hasActiveLotWithClient(client, draftId);
+        if (hasActive) {
           throw new ValidationException('There is already an active lot - wait for it to complete');
         }
 
@@ -350,25 +347,32 @@ export class FastAuctionService {
     const proxyBidResult = await this.lotRepo.getProxyBid(lotId, roster.id);
 
     // Handle outbid notifications via domain events
+    // Batch lookup rosters to avoid N+1 queries
     const userOutbidNotifications: Array<{ userId: string; lotId: number; playerId: number }> = [];
-    for (const notification of rawNotifications) {
-      const outbidRoster = await this.rosterRepo.findById(notification.rosterId);
-      if (outbidRoster && outbidRoster.userId) {
-        userOutbidNotifications.push({
-          userId: outbidRoster.userId,
-          lotId: notification.lotId,
-          playerId,
-        });
-        // Publish outbid notification via domain event bus
-        eventBus?.publish({
-          type: EventTypes.AUCTION_OUTBID,
-          userId: outbidRoster.userId,
-          payload: {
-            lot_id: notification.lotId,
-            player_id: playerId,
-            new_bid: finalLot.currentBid,
-          },
-        });
+    if (rawNotifications.length > 0) {
+      const rosterIds = rawNotifications.map((n) => n.rosterId);
+      const rosters = await this.rosterRepo.findByIds(rosterIds);
+      const rosterMap = new Map(rosters.map((r) => [r.id, r]));
+
+      for (const notification of rawNotifications) {
+        const outbidRoster = rosterMap.get(notification.rosterId);
+        if (outbidRoster && outbidRoster.userId) {
+          userOutbidNotifications.push({
+            userId: outbidRoster.userId,
+            lotId: notification.lotId,
+            playerId,
+          });
+          // Publish outbid notification via domain event bus
+          eventBus?.publish({
+            type: EventTypes.AUCTION_OUTBID,
+            userId: outbidRoster.userId,
+            payload: {
+              lot_id: notification.lotId,
+              player_id: playerId,
+              new_bid: finalLot.currentBid,
+            },
+          });
+        }
       }
     }
 
@@ -572,11 +576,8 @@ export class FastAuctionService {
       draftId,
       async (client) => {
         // Re-check for active lot under lock (prevents race with user nomination)
-        const activeLotResult = await client.query(
-          "SELECT id FROM auction_lots WHERE draft_id = $1 AND status = 'active' LIMIT 1",
-          [draftId]
-        );
-        if (activeLotResult.rows.length > 0) {
+        const hasActive = await this.lotRepo.hasActiveLotWithClient(client, draftId);
+        if (hasActive) {
           return null; // Already has an active lot, nothing to do
         }
 
