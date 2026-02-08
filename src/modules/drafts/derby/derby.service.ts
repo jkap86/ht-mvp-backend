@@ -276,7 +276,7 @@ export class DerbyService {
   async processTimeout(draftId: number): Promise<void> {
     let emitData: DerbyTurnChangedEvent | DerbySlotPickedEvent | null = null;
     let transitionedToLive = false;
-    let timedOutRosterId: number;
+    let timedOutRosterId: number | null = null;
 
     await runInDraftTransaction(this.pool, draftId, async (client) => {
       // Load draft and validate still in derby
@@ -390,7 +390,9 @@ export class DerbyService {
       });
     }
 
-    logger.info(`Derby timeout processed for draft ${draftId}, roster ${timedOutRosterId!}`);
+    if (timedOutRosterId !== null) {
+      logger.info(`Derby timeout processed for draft ${draftId}, roster ${timedOutRosterId}`);
+    }
   }
 
   /**

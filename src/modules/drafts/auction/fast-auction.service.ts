@@ -52,6 +52,10 @@ export interface FastAuctionState {
 }
 
 export class FastAuctionService {
+  // Throttle map for outbid notifications: key = `${userId}:${lotId}`, value = lastSentTimestamp
+  private outbidThrottle = new Map<string, number>();
+  private static readonly OUTBID_THROTTLE_MS = 3000; // 3 seconds
+
   constructor(
     private readonly lotRepo: AuctionLotRepository,
     private readonly draftRepo: DraftRepository,
@@ -418,16 +422,25 @@ export class FastAuctionService {
             lotId: notification.lotId,
             playerId,
           });
-          // Publish outbid notification via domain event bus
-          eventBus?.publish({
-            type: EventTypes.AUCTION_OUTBID,
-            userId: outbidRoster.userId,
-            payload: {
-              lot_id: notification.lotId,
-              player_id: playerId,
-              new_bid: finalLot.currentBid,
-            },
-          });
+
+          // Throttle outbid notifications to prevent spam during rapid bid wars
+          const throttleKey = `${outbidRoster.userId}:${notification.lotId}`;
+          const lastSent = this.outbidThrottle.get(throttleKey) || 0;
+          const now = Date.now();
+
+          if (now - lastSent >= FastAuctionService.OUTBID_THROTTLE_MS) {
+            this.outbidThrottle.set(throttleKey, now);
+            // Publish outbid notification via domain event bus
+            eventBus?.publish({
+              type: EventTypes.AUCTION_OUTBID,
+              userId: outbidRoster.userId,
+              payload: {
+                lot_id: notification.lotId,
+                player_id: playerId,
+                new_bid: finalLot.currentBid,
+              },
+            });
+          }
         }
       }
     }
