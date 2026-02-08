@@ -1,4 +1,4 @@
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import { AuctionLotRepository } from './auction-lot.repository';
 import { DraftRepository } from '../drafts.repository';
 import { RosterRepository, LeagueRepository } from '../../leagues/leagues.repository';
@@ -73,6 +73,39 @@ export class FastAuctionService {
       minBid: draft.settings?.minBid ?? 1,
       minIncrement: draft.settings?.minIncrement ?? 1,
     };
+  }
+
+  /**
+   * Set nominator as the opening bidder at startingBid (fast auction only).
+   * Called after lot creation to make nomination count as the opening bid.
+   */
+  private async setNominatorAsOpeningBidder(
+    client: PoolClient,
+    lot: AuctionLot,
+    nominatorRosterId: number,
+    startingBid: number
+  ): Promise<void> {
+    // Update lot to set nominator as leader
+    await client.query(
+      `UPDATE auction_lots
+       SET current_bidder_roster_id = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2`,
+      [nominatorRosterId, lot.id]
+    );
+
+    // Insert proxy bid at starting bid
+    await client.query(
+      `INSERT INTO auction_proxy_bids (lot_id, roster_id, max_bid)
+       VALUES ($1, $2, $3)`,
+      [lot.id, nominatorRosterId, startingBid]
+    );
+
+    // Record opening bid in history
+    await client.query(
+      `INSERT INTO auction_bid_history (lot_id, roster_id, bid_amount, is_proxy)
+       VALUES ($1, $2, $3, $4)`,
+      [lot.id, nominatorRosterId, startingBid, false]
+    );
   }
 
   /**
@@ -174,6 +207,19 @@ export class FastAuctionService {
           throw new ValidationException('Your roster is full');
         }
 
+        // Budget validation: ensure nominator can afford startingBid
+        // (In fast auction, nominator becomes leader at startingBid)
+        const totalBudget = league.leagueSettings?.auctionBudget ?? 200;
+        const remainingSlots = rosterSlots - budgetInfo.wonCount - 1; // -1 for this nomination
+        const requiredReserve = Math.max(0, remainingSlots) * settings.minBid;
+        const maxAffordable = totalBudget - budgetInfo.spent - requiredReserve - budgetInfo.leadingCommitment;
+
+        if (settings.minBid > maxAffordable) {
+          throw new ValidationException(
+            `Cannot nominate: insufficient budget. Maximum affordable bid is $${maxAffordable}`
+          );
+        }
+
         // Calculate bid deadline for fast auction
         const bidDeadline = new Date(Date.now() + settings.nominationSeconds * 1000);
 
@@ -186,6 +232,10 @@ export class FastAuctionService {
           bidDeadline,
           settings.minBid
         );
+
+        // Fast auction: Nominator becomes the leader at startingBid
+        await this.setNominatorAsOpeningBidder(client, lot, roster.id, settings.minBid);
+        lot.currentBidderRosterId = roster.id;
 
         return { lot, playerName: player.fullName };
       }
@@ -596,6 +646,29 @@ export class FastAuctionService {
           return { noPlayers: true } as const;
         }
 
+        // Validate budget for auto-nomination
+        const budgetInfo = await this.lotRepo.getRosterBudgetDataWithClient(client, draftId, draft.currentRosterId!);
+        const league = await this.leagueRepo.findById(draft.leagueId, client);
+        if (!league) {
+          throw new NotFoundException('League not found');
+        }
+
+        const totalBudget = league.leagueSettings?.auctionBudget ?? 200;
+        const rosterSlots = league.leagueSettings?.rosterSlots ?? 15;
+        const remainingSlots = rosterSlots - budgetInfo.wonCount - 1;
+        const requiredReserve = Math.max(0, remainingSlots) * settings.minBid;
+        const maxAffordable = totalBudget - budgetInfo.spent - requiredReserve - budgetInfo.leadingCommitment;
+
+        if (settings.minBid > maxAffordable) {
+          logger.warn('Auto-nomination skipped: nominator cannot afford starting bid', {
+            draftId,
+            nominatorRosterId: draft.currentRosterId,
+            maxAffordable,
+            minBid: settings.minBid,
+          });
+          return { noPlayers: true } as const; // Triggers advanceNominator()
+        }
+
         // Calculate bid deadline
         const bidDeadline = new Date(Date.now() + settings.nominationSeconds * 1000);
 
@@ -608,6 +681,10 @@ export class FastAuctionService {
           bidDeadline,
           settings.minBid
         );
+
+        // Fast auction: Nominator becomes the leader at startingBid
+        await this.setNominatorAsOpeningBidder(client, lot, draft.currentRosterId!, settings.minBid);
+        lot.currentBidderRosterId = draft.currentRosterId!;
 
         return { lot, playerName: randomPlayer.fullName, playerId: randomPlayer.id };
       }
