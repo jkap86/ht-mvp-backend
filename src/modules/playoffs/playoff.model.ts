@@ -81,6 +81,8 @@ export function playoffBracketToResponse(bracket: PlayoffBracket) {
   };
 }
 
+export type SeedBracketType = 'WINNERS' | 'CONSOLATION';
+
 export interface PlayoffSeed {
   id: number;
   bracketId: number;
@@ -89,6 +91,7 @@ export interface PlayoffSeed {
   regularSeasonRecord: string;
   pointsFor: number;
   hasBye: boolean;
+  bracketType: SeedBracketType;
   createdAt: Date;
   // Extended fields from joins
   teamName?: string;
@@ -106,6 +109,7 @@ export function playoffSeedFromDatabase(row: any): PlayoffSeed {
       ? 0
       : parseFloat(row.points_for),
     hasBye: row.has_bye,
+    bracketType: (row.bracket_type as SeedBracketType) || 'WINNERS',
     createdAt: row.created_at,
     teamName: row.team_name,
     userId: row.user_id,
@@ -121,6 +125,7 @@ export function playoffSeedToResponse(seed: PlayoffSeed) {
     regular_season_record: seed.regularSeasonRecord,
     points_for: seed.pointsFor,
     has_bye: seed.hasBye,
+    bracket_type: seed.bracketType,
     team_name: seed.teamName,
     user_id: seed.userId,
   };

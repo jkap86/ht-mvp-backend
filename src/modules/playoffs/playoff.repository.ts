@@ -7,6 +7,7 @@ import {
   PlayoffStatus,
   BracketType,
   ConsolationType,
+  SeedBracketType,
 } from './playoff.model';
 
 export class PlayoffRepository {
@@ -73,7 +74,7 @@ export class PlayoffRepository {
   }
 
   /**
-   * Set champion roster ID
+   * Set champion roster ID (does NOT set status to completed - use finalizeBracketIfComplete)
    */
   async setChampion(
     bracketId: number,
@@ -83,10 +84,58 @@ export class PlayoffRepository {
     const db = client || this.db;
     await db.query(
       `UPDATE playoff_brackets
-       SET champion_roster_id = $1, status = 'completed', updated_at = CURRENT_TIMESTAMP
+       SET champion_roster_id = $1, updated_at = CURRENT_TIMESTAMP
        WHERE id = $2`,
       [championRosterId, bracketId]
     );
+  }
+
+  /**
+   * Check if all required winners are set and mark bracket as completed if so.
+   * Returns true if bracket was marked completed.
+   */
+  async finalizeBracketIfComplete(
+    bracketId: number,
+    client?: PoolClient
+  ): Promise<boolean> {
+    const db = client || this.db;
+
+    // Get current bracket state
+    const result = await db.query(
+      `SELECT champion_roster_id, enable_third_place, third_place_roster_id,
+              consolation_type, consolation_winner_roster_id, status
+       FROM playoff_brackets WHERE id = $1`,
+      [bracketId]
+    );
+
+    if (result.rows.length === 0) return false;
+
+    const bracket = result.rows[0];
+
+    // Already completed
+    if (bracket.status === 'completed') return true;
+
+    // Check if all required winners are set
+    const hasChampion = bracket.champion_roster_id !== null;
+    const needsThirdPlace = bracket.enable_third_place === true;
+    const hasThirdPlace = bracket.third_place_roster_id !== null;
+    const needsConsolation = bracket.consolation_type === 'CONSOLATION';
+    const hasConsolation = bracket.consolation_winner_roster_id !== null;
+
+    // All required winners must be present
+    const isComplete = hasChampion
+      && (!needsThirdPlace || hasThirdPlace)
+      && (!needsConsolation || hasConsolation);
+
+    if (isComplete) {
+      await db.query(
+        `UPDATE playoff_brackets SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+        [bracketId]
+      );
+      return true;
+    }
+
+    return false;
   }
 
   /**
@@ -109,6 +158,7 @@ export class PlayoffRepository {
       regularSeasonRecord: string;
       pointsFor: number;
       hasBye: boolean;
+      bracketType?: SeedBracketType;
     }>,
     client?: PoolClient
   ): Promise<PlayoffSeed[]> {
@@ -116,12 +166,13 @@ export class PlayoffRepository {
     const createdSeeds: PlayoffSeed[] = [];
 
     for (const seed of seeds) {
+      const bracketType = seed.bracketType || 'WINNERS';
       const result = await db.query(
         `INSERT INTO playoff_seeds
-         (bracket_id, roster_id, seed, regular_season_record, points_for, has_bye)
-         VALUES ($1, $2, $3, $4, $5, $6)
+         (bracket_id, roster_id, seed, regular_season_record, points_for, has_bye, bracket_type)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING *`,
-        [bracketId, seed.rosterId, seed.seed, seed.regularSeasonRecord, seed.pointsFor, seed.hasBye]
+        [bracketId, seed.rosterId, seed.seed, seed.regularSeasonRecord, seed.pointsFor, seed.hasBye, bracketType]
       );
       createdSeeds.push(playoffSeedFromDatabase(result.rows[0]));
     }
@@ -130,16 +181,31 @@ export class PlayoffRepository {
   }
 
   /**
-   * Get seeds for a bracket with team info
+   * Get seeds for a bracket with team info (defaults to WINNERS for backwards compatibility)
    */
   async getSeeds(bracketId: number): Promise<PlayoffSeed[]> {
     const result = await this.db.query(
       `SELECT ps.*, r.settings->>'team_name' as team_name, r.user_id
        FROM playoff_seeds ps
        JOIN rosters r ON ps.roster_id = r.id
-       WHERE ps.bracket_id = $1
+       WHERE ps.bracket_id = $1 AND ps.bracket_type = 'WINNERS'
        ORDER BY ps.seed`,
       [bracketId]
+    );
+    return result.rows.map(playoffSeedFromDatabase);
+  }
+
+  /**
+   * Get seeds by bracket type
+   */
+  async getSeedsByType(bracketId: number, bracketType: SeedBracketType): Promise<PlayoffSeed[]> {
+    const result = await this.db.query(
+      `SELECT ps.*, r.settings->>'team_name' as team_name, r.user_id
+       FROM playoff_seeds ps
+       JOIN rosters r ON ps.roster_id = r.id
+       WHERE ps.bracket_id = $1 AND ps.bracket_type = $2
+       ORDER BY ps.seed`,
+      [bracketId, bracketType]
     );
     return result.rows.map(playoffSeedFromDatabase);
   }

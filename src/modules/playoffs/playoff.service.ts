@@ -210,7 +210,8 @@ export class PlayoffService {
           config.startWeek,
           consolationTeams,
           standings,
-          config.playoffTeams
+          config.playoffTeams,
+          bracket.id
         );
       }
 
@@ -276,8 +277,15 @@ export class PlayoffService {
       throw new NotFoundException('No playoff bracket found');
     }
 
+    // Only block if truly completed (all enabled winners set)
+    // Allow continued processing if champion is set but other winners are pending
     if (bracket.status === 'completed') {
-      throw new ValidationException('Playoffs are already completed');
+      // Double-check: are all required winners actually set?
+      const isActuallyComplete = this.isBracketFullyComplete(bracket);
+      if (isActuallyComplete) {
+        throw new ValidationException('Playoffs are already completed');
+      }
+      // Otherwise allow processing for remaining games (3rd place, consolation)
     }
 
     // Get finalized matchups for this week by bracket type
@@ -319,6 +327,8 @@ export class PlayoffService {
         if (thirdPlaceMatchup) {
           const thirdPlaceWinnerId = this.determineWinner(thirdPlaceMatchup, true);
           await this.playoffRepo.setThirdPlaceWinner(bracket.id, thirdPlaceWinnerId, client);
+          // Check if all winners are set and finalize if complete
+          await this.playoffRepo.finalizeBracketIfComplete(bracket.id, client);
           logger.info(`League ${leagueId} 3rd place won by roster ${thirdPlaceWinnerId}`);
         } else {
           logger.warn(`3rd place matchup not found for league ${leagueId} (expected round=${bracket.totalRounds}, position=2)`);
@@ -368,6 +378,8 @@ export class PlayoffService {
 
       const winnerId = this.determineWinner(championship, true);
       await this.playoffRepo.setChampion(bracket.id, winnerId, client);
+      // Check if all winners are set and finalize if complete
+      await this.playoffRepo.finalizeBracketIfComplete(bracket.id, client);
       this.emitChampionCrowned(leagueId, bracket.id, winnerId);
       logger.info(`League ${leagueId} championship won by roster ${winnerId}`);
       return;
@@ -474,6 +486,8 @@ export class PlayoffService {
       if (consolationFinal) {
         const winnerId = this.determineWinner(consolationFinal, true);
         await this.playoffRepo.setConsolationWinner(bracket.id, winnerId, client);
+        // Check if all winners are set and finalize if complete
+        await this.playoffRepo.finalizeBracketIfComplete(bracket.id, client);
         logger.info(`League ${leagueId} consolation won by roster ${winnerId}`);
       } else {
         logger.warn(`Consolation final not found for league ${leagueId} (expected round=${consolationTotalRounds}, position=1)`);
@@ -524,9 +538,62 @@ export class PlayoffService {
       : bracket.playoffTeams;
 
     if (teamCount === 6 && nextRound === 2) {
-      // For consolation, we need to handle byes differently - get from standings
-      // For now, use standard bracket advancement
-      // TODO: Implement 6-team consolation bye handling if needed
+      // 6-team consolation: seeds 1-2 have byes, enter in round 2
+      // Get persisted consolation seeds
+      const consolationSeeds = await this.playoffRepo.getSeedsByType(bracket.id, 'CONSOLATION');
+      const byeTeams = consolationSeeds.filter((s) => s.hasBye);
+
+      // Sort winners by bracket position
+      winners.sort((a, b) => a.bracketPosition - b.bracketPosition);
+
+      // Round 1 has: position 1 = 3v6, position 2 = 4v5
+      // Round 2 needs:
+      //   Semifinal 1: #1 seed vs winner of 4v5 (position 2)
+      //   Semifinal 2: #2 seed vs winner of 3v6 (position 1)
+      const winner4v5 = winners.find((w) => w.bracketPosition === 2);
+      const winner3v6 = winners.find((w) => w.bracketPosition === 1);
+
+      if (byeTeams.length >= 2 && winner4v5 && winner3v6) {
+        const seed1 = byeTeams.find((s) => s.seed === 1);
+        const seed2 = byeTeams.find((s) => s.seed === 2);
+
+        if (seed1 && seed2) {
+          // Semifinal 1: #1 vs winner of 4v5 (bracket position 1)
+          await this.playoffRepo.createPlayoffMatchup(
+            leagueId,
+            season,
+            nextWeek,
+            seed1.rosterId,
+            winner4v5.rosterId,
+            nextRound,
+            1,
+            winner4v5.seed,
+            1, // bracket position
+            bracketType,
+            client
+          );
+
+          // Semifinal 2: #2 vs winner of 3v6 (bracket position 2)
+          await this.playoffRepo.createPlayoffMatchup(
+            leagueId,
+            season,
+            nextWeek,
+            seed2.rosterId,
+            winner3v6.rosterId,
+            nextRound,
+            2,
+            winner3v6.seed,
+            2, // bracket position
+            bracketType,
+            client
+          );
+
+          logger.info(`Created 6-team ${bracketType} round 2 with bye teams for league ${leagueId}`);
+          return;
+        }
+      }
+      // Fall through to standard advancement if bye handling fails
+      logger.warn(`6-team ${bracketType} bye handling failed, falling back to standard advancement`);
     }
 
     // Standard bracket advancement
@@ -552,6 +619,21 @@ export class PlayoffService {
         );
       }
     }
+  }
+
+  /**
+   * Check if a bracket has all required winners set (fully complete)
+   */
+  private isBracketFullyComplete(bracket: PlayoffBracket): boolean {
+    const hasChampion = bracket.championRosterId !== null;
+    const needsThirdPlace = bracket.enableThirdPlace === true;
+    const hasThirdPlace = bracket.thirdPlaceRosterId !== null;
+    const needsConsolation = bracket.consolationType === 'CONSOLATION';
+    const hasConsolation = bracket.consolationWinnerRosterId !== null;
+
+    return hasChampion
+      && (!needsThirdPlace || hasThirdPlace)
+      && (!needsConsolation || hasConsolation);
   }
 
   /**
@@ -754,14 +836,25 @@ export class PlayoffService {
 
     // Build consolation bracket
     let consolation: { seeds: ConsolationSeed[]; rounds: PlayoffRound[] } | null = null;
-    if (consolationMatchupsRaw.length > 0 && bracket.consolationType === 'CONSOLATION') {
+    if (bracket.consolationType === 'CONSOLATION') {
       const consolationTotalRounds = calculateTotalRounds(bracket.consolationTeams!);
       const consolationRounds = this.buildConsolationRounds(
         consolationMatchupsRaw, bracket, consolationTotalRounds
       );
-      // Consolation seeds are derived from standings position, not playoff seeds
-      // For now, we extract from the matchups themselves
-      const consolationSeeds = this.extractConsolationSeeds(consolationMatchupsRaw);
+      // Get persisted consolation seeds (preferred) or extract from matchups (fallback)
+      const persistedConsolationSeeds = await this.playoffRepo.getSeedsByType(bracket.id, 'CONSOLATION');
+      let consolationSeeds: ConsolationSeed[];
+      if (persistedConsolationSeeds.length > 0) {
+        consolationSeeds = persistedConsolationSeeds.map((s) => ({
+          rosterId: s.rosterId,
+          standingsPosition: s.seed,
+          teamName: s.teamName || `Team ${s.seed}`,
+          record: s.regularSeasonRecord,
+        }));
+      } else {
+        // Fallback for legacy brackets without persisted consolation seeds
+        consolationSeeds = this.extractConsolationSeeds(consolationMatchupsRaw);
+      }
       consolation = { seeds: consolationSeeds, rounds: consolationRounds };
     }
 
@@ -1002,7 +1095,7 @@ export class PlayoffService {
   }
 
   /**
-   * Generate consolation bracket matchups
+   * Generate consolation bracket matchups and persist consolation seeds
    */
   private async generateConsolationBracket(
     client: PoolClient,
@@ -1011,10 +1104,26 @@ export class PlayoffService {
     startWeek: number,
     consolationTeams: number,
     standings: any[],
-    playoffTeams: number
+    playoffTeams: number,
+    bracketId: number
   ): Promise<void> {
     // Get non-playoff teams (those who didn't make playoffs)
     const nonPlayoffStandings = standings.slice(playoffTeams, playoffTeams + consolationTeams);
+
+    // Determine which seeds get byes in 6-team format
+    const byeSeeds = consolationTeams === 6 ? [1, 2] : [];
+
+    // Persist consolation seeds for later use (especially for 6-team byes)
+    const consolationSeedData = nonPlayoffStandings.map((standing, index) => ({
+      rosterId: standing.rosterId,
+      seed: index + 1,
+      regularSeasonRecord: `${standing.wins}-${standing.losses}${standing.ties > 0 ? `-${standing.ties}` : ''}`,
+      pointsFor: standing.pointsFor,
+      hasBye: byeSeeds.includes(index + 1),
+      bracketType: 'CONSOLATION' as const,
+    }));
+
+    await this.playoffRepo.createSeeds(bracketId, consolationSeedData, client);
 
     // Generate bracket config
     const bracketConfig = generateConsolationBracketConfig(consolationTeams, startWeek);
