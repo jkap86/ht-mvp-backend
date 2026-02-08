@@ -1,5 +1,5 @@
 import { PoolClient } from 'pg';
-import { WaiverClaimsRepository } from '../waivers.repository';
+import { WaiverClaimsRepository, WaiverClaimWithCurrentPriority } from '../waivers.repository';
 import {
   RosterPlayersRepository,
   RosterTransactionsRepository,
@@ -33,6 +33,7 @@ export interface ProcessWaiversContext extends WaiverInfoContext {
 
 /**
  * Process waiver claims for a specific league
+ * Now properly scoped to current season/week and uses live priority for winner selection
  */
 export async function processLeagueClaims(
   ctx: ProcessWaiversContext,
@@ -47,6 +48,14 @@ export async function processLeagueClaims(
   }
 
   const season = parseInt(league.season, 10);
+  const currentWeek = league.settings?.current_week ?? league.currentWeek ?? null;
+
+  // Skip processing if no current week set (pre-season)
+  if (currentWeek === null) {
+    logger.debug(`League ${leagueId} has no current week, skipping waiver processing`);
+    return { processed: 0, successful: 0 };
+  }
+
   const maxRosterSize = league.settings?.roster_size || 15;
 
   // Collect events to emit AFTER commit to prevent UI desync on rollback
@@ -60,11 +69,31 @@ export async function processLeagueClaims(
       let processedCount = 0;
       let successfulCount = 0;
 
-      // Get all pending claims grouped by player
-      const pendingClaims = await ctx.claimsRepo.getPendingByLeague(leagueId, client);
+      // Get all pending claims with CURRENT priority (not snapshot) for current season/week
+      const pendingClaims = await ctx.claimsRepo.getPendingByLeagueWithCurrentPriority(
+        leagueId,
+        season,
+        currentWeek,
+        client
+      );
+
+      if (pendingClaims.length === 0) {
+        return { processed: 0, successful: 0 };
+      }
+
+      // Build in-memory priority map for tracking rotations within this run
+      // This ensures priority changes from earlier claims affect later claims
+      const priorityByRoster = new Map<number, number>();
+      let maxPriority = 0;
+      for (const claim of pendingClaims) {
+        if (claim.currentPriority !== null && !priorityByRoster.has(claim.rosterId)) {
+          priorityByRoster.set(claim.rosterId, claim.currentPriority);
+          maxPriority = Math.max(maxPriority, claim.currentPriority);
+        }
+      }
 
       // Group claims by player
-      const claimsByPlayer = new Map<number, WaiverClaim[]>();
+      const claimsByPlayer = new Map<number, WaiverClaimWithCurrentPriority[]>();
       for (const claim of pendingClaims) {
         const existing = claimsByPlayer.get(claim.playerId) || [];
         existing.push(claim);
@@ -73,10 +102,10 @@ export async function processLeagueClaims(
 
       // Process each player's claims
       for (const [playerId, claims] of claimsByPlayer) {
-        // Sort claims by priority/bid
-        const sortedClaims = sortClaimsByPriority(claims, settings.waiverType);
+        // Sort claims using in-memory priority (reflects rotations from earlier wins)
+        const sortedClaims = sortClaimsByCurrentPriority(claims, settings.waiverType, priorityByRoster);
 
-        let winner: WaiverClaim | null = null;
+        let winner: WaiverClaimWithCurrentPriority | null = null;
 
         // Find first eligible winner
         for (const claim of sortedClaims) {
@@ -95,6 +124,22 @@ export async function processLeagueClaims(
             await executeClaim(ctx, claim, settings.waiverType, season, client);
             await ctx.claimsRepo.updateStatus(claim.id, 'successful', undefined, client);
             successfulCount++;
+
+            // Update in-memory priority map for standard waivers
+            // Winner moves to last place, everyone who was behind them shifts up
+            if (settings.waiverType === 'standard') {
+              const winnerOldPriority = priorityByRoster.get(winner.rosterId);
+              if (winnerOldPriority !== undefined) {
+                // Shift everyone who was behind the winner up by 1
+                for (const [rosterId, priority] of priorityByRoster) {
+                  if (priority > winnerOldPriority) {
+                    priorityByRoster.set(rosterId, priority - 1);
+                  }
+                }
+                // Winner goes to max priority (last place)
+                priorityByRoster.set(winner.rosterId, maxPriority);
+              }
+            }
 
             // Queue success emit for after commit
             const claimCopy = { ...claim };
@@ -175,22 +220,28 @@ export async function processLeagueClaims(
 }
 
 /**
- * Sort claims by priority (standard) or bid amount (FAAB)
+ * Sort claims by current priority (from in-memory map that tracks rotations)
+ * For FAAB: highest bid wins, priority is tiebreaker
+ * For Standard: lowest priority number wins
  */
-function sortClaimsByPriority(claims: WaiverClaim[], waiverType: WaiverType): WaiverClaim[] {
+function sortClaimsByCurrentPriority(
+  claims: WaiverClaimWithCurrentPriority[],
+  waiverType: WaiverType,
+  priorityByRoster: Map<number, number>
+): WaiverClaimWithCurrentPriority[] {
   return [...claims].sort((a, b) => {
+    // Get current priority from in-memory map (reflects rotations within this run)
+    const aPriority = priorityByRoster.get(a.rosterId) ?? a.currentPriority ?? a.priorityAtClaim ?? Infinity;
+    const bPriority = priorityByRoster.get(b.rosterId) ?? b.currentPriority ?? b.priorityAtClaim ?? Infinity;
+
     if (waiverType === 'faab') {
       // Higher bid wins
       if (a.bidAmount !== b.bidAmount) return b.bidAmount - a.bidAmount;
       // Tiebreaker: priority (lower wins)
-      if (a.priorityAtClaim !== null && b.priorityAtClaim !== null) {
-        if (a.priorityAtClaim !== b.priorityAtClaim) return a.priorityAtClaim - b.priorityAtClaim;
-      }
+      if (aPriority !== bPriority) return aPriority - bPriority;
     } else {
       // Standard: lower priority number wins
-      if (a.priorityAtClaim !== null && b.priorityAtClaim !== null) {
-        if (a.priorityAtClaim !== b.priorityAtClaim) return a.priorityAtClaim - b.priorityAtClaim;
-      }
+      if (aPriority !== bPriority) return aPriority - bPriority;
     }
     // Final tiebreaker: earlier claim wins
     return a.createdAt.getTime() - b.createdAt.getTime();

@@ -111,4 +111,32 @@ export class WaiverPriorityRepository {
       [leagueId, season, claimerRosterId]
     );
   }
+
+  /**
+   * Ensure a roster has a priority row (for late-joining rosters)
+   * Assigns last place priority. Idempotent - safe to call multiple times.
+   */
+  async ensureRosterPriority(
+    leagueId: number,
+    rosterId: number,
+    season: number,
+    client?: PoolClient
+  ): Promise<void> {
+    const conn = client || this.db;
+
+    // Get max priority for league/season, defaulting to 0 if none exist
+    const maxResult = await conn.query(
+      'SELECT COALESCE(MAX(priority), 0) as max_priority FROM waiver_priority WHERE league_id = $1 AND season = $2',
+      [leagueId, season]
+    );
+    const maxPriority = parseInt(maxResult.rows[0].max_priority, 10);
+
+    // Insert with ON CONFLICT DO NOTHING for idempotency
+    await conn.query(
+      `INSERT INTO waiver_priority (league_id, roster_id, season, priority)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (league_id, season, roster_id) DO NOTHING`,
+      [leagueId, rosterId, season, maxPriority + 1]
+    );
+  }
 }

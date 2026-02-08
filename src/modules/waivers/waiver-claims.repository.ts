@@ -7,6 +7,13 @@ import {
 } from './waivers.model';
 
 /**
+ * Extended claim type with current priority (from waiver_priority table)
+ */
+export interface WaiverClaimWithCurrentPriority extends WaiverClaim {
+  currentPriority: number | null;
+}
+
+/**
  * Repository for waiver claims
  */
 export class WaiverClaimsRepository {
@@ -121,16 +128,48 @@ export class WaiverClaimsRepository {
 
   /**
    * Get all pending claims for a league (for processing)
+   * Now requires season and week to prevent processing stale claims
    */
-  async getPendingByLeague(leagueId: number, client?: PoolClient): Promise<WaiverClaim[]> {
+  async getPendingByLeague(
+    leagueId: number,
+    season: number,
+    week: number,
+    client?: PoolClient
+  ): Promise<WaiverClaim[]> {
     const conn = client || this.db;
     const result = await conn.query(
       `SELECT * FROM waiver_claims
-       WHERE league_id = $1 AND status = 'pending'
+       WHERE league_id = $1 AND status = 'pending' AND season = $2 AND week = $3
        ORDER BY player_id, bid_amount DESC, priority_at_claim ASC, created_at ASC`,
-      [leagueId]
+      [leagueId, season, week]
     );
     return result.rows.map(waiverClaimFromDatabase);
+  }
+
+  /**
+   * Get all pending claims for a league with current priority from waiver_priority table
+   * This is used for processing to ensure we use current priority, not snapshot
+   */
+  async getPendingByLeagueWithCurrentPriority(
+    leagueId: number,
+    season: number,
+    week: number,
+    client?: PoolClient
+  ): Promise<WaiverClaimWithCurrentPriority[]> {
+    const conn = client || this.db;
+    const result = await conn.query(
+      `SELECT wc.*, wp.priority as current_priority
+       FROM waiver_claims wc
+       LEFT JOIN waiver_priority wp ON wp.roster_id = wc.roster_id
+         AND wp.league_id = wc.league_id AND wp.season = $2
+       WHERE wc.league_id = $1 AND wc.status = 'pending' AND wc.season = $2 AND wc.week = $3
+       ORDER BY wc.player_id, wc.bid_amount DESC, wp.priority ASC NULLS LAST, wc.created_at ASC`,
+      [leagueId, season, week]
+    );
+    return result.rows.map((row) => ({
+      ...waiverClaimFromDatabase(row),
+      currentPriority: row.current_priority !== null ? parseInt(row.current_priority, 10) : null,
+    }));
   }
 
   /**

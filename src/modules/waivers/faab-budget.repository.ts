@@ -98,4 +98,26 @@ export class FaabBudgetRepository {
 
     return faabBudgetFromDatabase(result.rows[0]);
   }
+
+  /**
+   * Ensure a roster has a FAAB budget row (for late-joining rosters)
+   * Idempotent - safe to call multiple times.
+   */
+  async ensureRosterBudget(
+    leagueId: number,
+    rosterId: number,
+    season: number,
+    initialBudget: number,
+    client?: PoolClient
+  ): Promise<void> {
+    const conn = client || this.db;
+
+    // Insert with ON CONFLICT DO NOTHING for idempotency
+    await conn.query(
+      `INSERT INTO faab_budgets (league_id, roster_id, season, initial_budget, remaining_budget)
+       VALUES ($1, $2, $3, $4, $4)
+       ON CONFLICT (league_id, season, roster_id) DO NOTHING`,
+      [leagueId, rosterId, season, initialBudget]
+    );
+  }
 }

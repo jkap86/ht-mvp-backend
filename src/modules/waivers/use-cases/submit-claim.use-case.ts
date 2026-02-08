@@ -79,9 +79,14 @@ export async function submitClaim(
       // Validate FAAB bid if applicable
       const bidAmount = request.bidAmount || 0;
       if (settings.waiverType === 'faab') {
-        const budget = await ctx.faabRepo.getByRoster(roster.id, season, client);
+        let budget = await ctx.faabRepo.getByRoster(roster.id, season, client);
         if (!budget) {
-          throw new ValidationException('FAAB budget not initialized');
+          // Safety net for late-joining rosters: initialize with league's default budget
+          await ctx.faabRepo.ensureRosterBudget(leagueId, roster.id, season, settings.faabBudget, client);
+          budget = await ctx.faabRepo.getByRoster(roster.id, season, client);
+          if (!budget) {
+            throw new ValidationException('Failed to initialize FAAB budget');
+          }
         }
         if (bidAmount > budget.remainingBudget) {
           throw new ValidationException(`Bid exceeds available budget ($${budget.remainingBudget})`);
@@ -105,7 +110,12 @@ export async function submitClaim(
 
       // Get priority snapshot for ALL claim types (used as tiebreaker in FAAB mode)
       let priorityAtClaim: number | null = null;
-      const priority = await ctx.priorityRepo.getByRoster(roster.id, season, client);
+      let priority = await ctx.priorityRepo.getByRoster(roster.id, season, client);
+      if (!priority) {
+        // Safety net for late-joining rosters: initialize with last place priority
+        await ctx.priorityRepo.ensureRosterPriority(leagueId, roster.id, season, client);
+        priority = await ctx.priorityRepo.getByRoster(roster.id, season, client);
+      }
       priorityAtClaim = priority?.priority ?? null;
 
       // Create the claim

@@ -1,8 +1,10 @@
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import { LeagueRepository, RosterRepository } from './leagues.repository';
 import { UserRepository } from '../auth/auth.repository';
 import { RosterPlayersRepository } from '../rosters/rosters.repository';
 import { DuesRepository } from '../dues/dues.repository';
+import { WaiverPriorityRepository, FaabBudgetRepository } from '../waivers/waivers.repository';
+import { parseWaiverSettings } from '../waivers/waivers.model';
 import { EventListenerService } from '../chat/event-listener.service';
 import { EventTypes, tryGetEventBus } from '../../shared/events';
 import {
@@ -22,7 +24,9 @@ export class RosterService {
     private readonly userRepo?: UserRepository,
     private readonly rosterPlayersRepo?: RosterPlayersRepository,
     private readonly eventListenerService?: EventListenerService,
-    private readonly duesRepo?: DuesRepository
+    private readonly duesRepo?: DuesRepository,
+    private readonly waiverPriorityRepo?: WaiverPriorityRepository,
+    private readonly faabBudgetRepo?: FaabBudgetRepository
   ) {}
 
   /**
@@ -84,6 +88,9 @@ export class RosterService {
             roster = await this.rosterRepo.create(leagueId, userId, nextRosterId, client);
           }
         }
+
+        // Initialize waiver rows for late-joining roster
+        await this.ensureWaiverRowsForRoster(league, roster.id, client);
 
         return { roster, joinedAsBench };
       }
@@ -456,5 +463,38 @@ async devBulkAddUsers(
     }
 
     return { message: `${teamName} has been removed from the league`, teamName };
+  }
+
+  /**
+   * Ensure waiver rows (priority + FAAB budget) exist for a roster.
+   * Called when a roster joins a league to handle late-joiner initialization.
+   */
+  private async ensureWaiverRowsForRoster(
+    league: { id: number; settings: any; season: string },
+    rosterId: number,
+    client: PoolClient
+  ): Promise<void> {
+    const waiverSettings = parseWaiverSettings(league.settings);
+    if (waiverSettings.waiverType === 'none') {
+      return;
+    }
+
+    const season = parseInt(league.season, 10);
+
+    // Ensure priority row exists (assigns last place)
+    if (this.waiverPriorityRepo) {
+      await this.waiverPriorityRepo.ensureRosterPriority(league.id, rosterId, season, client);
+    }
+
+    // Ensure FAAB budget exists if FAAB mode
+    if (waiverSettings.waiverType === 'faab' && this.faabBudgetRepo) {
+      await this.faabBudgetRepo.ensureRosterBudget(
+        league.id,
+        rosterId,
+        season,
+        waiverSettings.faabBudget,
+        client
+      );
+    }
   }
 }
