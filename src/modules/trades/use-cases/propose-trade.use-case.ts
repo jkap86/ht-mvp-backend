@@ -28,6 +28,8 @@ import {
 } from './validate-pick-trade.use-case';
 import { EventListenerService } from '../../chat/event-listener.service';
 import { logger } from '../../../config/logger.config';
+import { getEffectiveLeagueChatMode } from '../trade-notification.utils';
+import { LeagueChatMode } from '../trades.model';
 
 const DEFAULT_TRADE_EXPIRY_HOURS = 48;
 
@@ -245,6 +247,17 @@ async function proposeTradeCore(
   const expiryHours = league.settings?.trade_expiry_hours || DEFAULT_TRADE_EXPIRY_HOURS;
   const expiresAt = new Date(Date.now() + expiryHours * 60 * 60 * 1000);
 
+  // Compute effective league chat mode (clamp to commissioner settings)
+  const commMax = (league.leagueSettings?.tradeProposalLeagueChatMax as LeagueChatMode) || 'details';
+  const commDefault = (league.leagueSettings?.tradeProposalLeagueChatDefault as LeagueChatMode) || 'summary';
+  const effectiveLeagueChatMode = getEffectiveLeagueChatMode(
+    request.leagueChatMode,
+    request.notifyLeagueChat,
+    commMax,
+    commDefault
+  );
+  const effectiveNotifyLeagueChat = effectiveLeagueChatMode !== 'none';
+
   const trade = await ctx.tradesRepo.create(
     leagueId,
     proposerRoster.id,
@@ -255,9 +268,9 @@ async function proposeTradeCore(
     request.message,
     undefined,
     client,
-    request.notifyLeagueChat,
+    effectiveNotifyLeagueChat,
     request.notifyDm,
-    request.leagueChatMode
+    effectiveLeagueChatMode
   );
 
   // Create trade items for players

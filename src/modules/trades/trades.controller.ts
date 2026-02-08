@@ -75,6 +75,7 @@ export class TradesController {
         message,
         notify_league_chat,
         notify_dm,
+        league_chat_mode,
       } = req.body;
 
       if (!recipient_roster_id) {
@@ -104,6 +105,7 @@ export class TradesController {
         message,
         notifyLeagueChat: notify_league_chat,
         notifyDm: notify_dm,
+        leagueChatMode: league_chat_mode,
       });
 
       res.status(201).json(tradeWithDetailsToResponse(trade));
@@ -191,6 +193,9 @@ export class TradesController {
         offering_pick_asset_ids,
         requesting_pick_asset_ids,
         message,
+        notify_league_chat,
+        notify_dm,
+        league_chat_mode,
       } = req.body;
 
       if (!Array.isArray(offering_player_ids) || !Array.isArray(requesting_player_ids)) {
@@ -213,6 +218,8 @@ export class TradesController {
         offeringPickAssetIds: offering_pick_asset_ids,
         requestingPickAssetIds: requesting_pick_asset_ids,
         message,
+        notifyDm: notify_dm,
+        leagueChatMode: league_chat_mode,
       });
 
       res.status(201).json(tradeWithDetailsToResponse(trade));
