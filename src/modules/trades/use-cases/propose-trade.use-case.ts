@@ -108,10 +108,14 @@ export async function proposeTradeStandalone(
     payload: tradeWithDetailsToResponse(tradeWithDetails),
   });
 
-  // Emit system message to league chat
+  // Emit system message to league chat and DM
   if (ctx.eventListenerService) {
     ctx.eventListenerService
-      .handleTradeProposed(leagueId, tradeWithDetails.id, tradeWithDetails.notifyLeagueChat)
+      .handleTradeProposed(leagueId, tradeWithDetails.id, {
+        notifyLeagueChat: tradeWithDetails.notifyLeagueChat,
+        leagueChatMode: tradeWithDetails.leagueChatMode,
+        notifyDm: tradeWithDetails.notifyDm,
+      })
       .catch((err) => logger.warn('Failed to emit system message', {
         type: 'trade_proposed',
         leagueId,
@@ -252,7 +256,8 @@ async function proposeTradeCore(
     undefined,
     client,
     request.notifyLeagueChat,
-    request.notifyDm
+    request.notifyDm,
+    request.leagueChatMode
   );
 
   // Create trade items for players

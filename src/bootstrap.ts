@@ -164,6 +164,12 @@ function bootstrap(): void {
     () => new SystemMessageService(container.resolve(KEYS.CHAT_REPO))
   );
 
+  // DM service (needed by EVENT_LISTENER_SERVICE for trade DMs)
+  container.register(
+    KEYS.DM_SERVICE,
+    () => new DmService(container.resolve(KEYS.DM_REPO), container.resolve(KEYS.USER_REPO))
+  );
+
   container.register(
     KEYS.EVENT_LISTENER_SERVICE,
     () =>
@@ -171,7 +177,8 @@ function bootstrap(): void {
         container.resolve(KEYS.SYSTEM_MESSAGE_SERVICE),
         container.resolve(KEYS.TRADES_REPO),
         container.resolve(KEYS.ROSTER_REPO),
-        container.resolve(KEYS.LEAGUE_REPO)
+        container.resolve(KEYS.LEAGUE_REPO),
+        container.resolve(KEYS.DM_SERVICE)
       )
   );
 
@@ -355,11 +362,6 @@ function bootstrap(): void {
   container.register(
     KEYS.CHAT_SERVICE,
     () => new ChatService(container.resolve(KEYS.CHAT_REPO), container.resolve(KEYS.LEAGUE_REPO))
-  );
-
-  container.register(
-    KEYS.DM_SERVICE,
-    () => new DmService(container.resolve(KEYS.DM_REPO), container.resolve(KEYS.USER_REPO))
   );
 
   container.register(

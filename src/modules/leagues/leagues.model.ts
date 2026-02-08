@@ -12,6 +12,9 @@ export interface LeagueSettings {
   rosterSlots?: number;
   rosterType?: 'lineup' | 'bestball';
   useLeagueMedian?: boolean; // When enabled, teams also play against the weekly median score
+  // Trade notification settings (commissioner caps)
+  tradeProposalLeagueChatMax?: 'none' | 'summary' | 'details';
+  tradeProposalLeagueChatDefault?: 'none' | 'summary' | 'details';
 }
 
 export class League {

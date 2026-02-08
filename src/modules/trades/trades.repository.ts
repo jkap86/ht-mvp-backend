@@ -8,6 +8,7 @@ import {
   TradeVoteWithUser,
   TradeStatus,
   TradeItemType,
+  LeagueChatMode,
   tradeFromDatabase,
   tradeItemFromDatabase,
   tradeVoteFromDatabase,
@@ -30,15 +31,16 @@ export class TradesRepository {
     parentTradeId?: number,
     client?: PoolClient,
     notifyLeagueChat?: boolean,
-    notifyDm?: boolean
+    notifyDm?: boolean,
+    leagueChatMode?: LeagueChatMode
   ): Promise<Trade> {
     const conn = client || this.db;
     const result = await conn.query(
       `INSERT INTO trades (
         league_id, proposer_roster_id, recipient_roster_id,
         expires_at, season, week, message, parent_trade_id,
-        notify_league_chat, notify_dm
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        notify_league_chat, notify_dm, league_chat_mode
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       RETURNING *`,
       [
         leagueId,
@@ -51,6 +53,7 @@ export class TradesRepository {
         parentTradeId || null,
         notifyLeagueChat ?? true,
         notifyDm ?? true,
+        leagueChatMode ?? 'summary',
       ]
     );
     return tradeFromDatabase(result.rows[0]);

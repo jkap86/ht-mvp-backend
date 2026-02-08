@@ -56,7 +56,12 @@ export class SystemMessageService {
       throw new Error(`Unknown message type: ${messageType}`);
     }
 
-    const message = templateFn(metadata);
+    let message = templateFn(metadata);
+
+    // Append details if present (for trade_proposed/trade_countered with 'details' mode)
+    if (metadata.details) {
+      message = `${message}\n\n${metadata.details}`;
+    }
 
     // Persist to database
     const chatMessage = await this.chatRepo.createSystemMessage(
@@ -86,7 +91,13 @@ export class SystemMessageService {
     if (!templateFn) {
       throw new Error(`Unknown message type: ${messageType}`);
     }
-    const message = templateFn(metadata);
+    let message = templateFn(metadata);
+
+    // Append details if present
+    if (metadata.details) {
+      message = `${message}\n\n${metadata.details}`;
+    }
+
     return this.chatRepo.createSystemMessage(leagueId, messageType, message, metadata, client);
   }
 

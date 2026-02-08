@@ -15,6 +15,8 @@ export type TradeStatus =
   | 'expired'
   | 'vetoed';
 
+export type LeagueChatMode = 'none' | 'summary' | 'details';
+
 export interface Trade {
   id: number;
   leagueId: number;
@@ -33,6 +35,7 @@ export interface Trade {
   completedAt: Date | null;
   notifyLeagueChat: boolean;
   notifyDm: boolean;
+  leagueChatMode: LeagueChatMode;
 }
 
 export interface TradeItem {
@@ -102,6 +105,7 @@ export interface ProposeTradeRequest {
   message?: string;
   notifyLeagueChat?: boolean;
   notifyDm?: boolean;
+  leagueChatMode?: LeagueChatMode;
 }
 
 export interface CounterTradeRequest {
@@ -110,6 +114,8 @@ export interface CounterTradeRequest {
   offeringPickAssetIds?: number[];
   requestingPickAssetIds?: number[];
   message?: string;
+  notifyDm?: boolean;
+  leagueChatMode?: LeagueChatMode;
 }
 
 /**
@@ -134,6 +140,7 @@ export function tradeFromDatabase(row: any): Trade {
     completedAt: row.completed_at,
     notifyLeagueChat: row.notify_league_chat ?? true,
     notifyDm: row.notify_dm ?? true,
+    leagueChatMode: row.league_chat_mode ?? 'summary',
   };
 }
 
@@ -159,6 +166,7 @@ export function tradeToResponse(trade: Trade): Record<string, any> {
     completed_at: trade.completedAt,
     notify_league_chat: trade.notifyLeagueChat,
     notify_dm: trade.notifyDm,
+    league_chat_mode: trade.leagueChatMode,
   };
 }
 

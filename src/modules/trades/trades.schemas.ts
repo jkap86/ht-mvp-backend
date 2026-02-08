@@ -4,6 +4,9 @@ import { z } from 'zod';
  * Zod schemas for trade endpoint validation
  */
 
+/** League chat notification mode: none, summary, or details */
+const leagueChatModeEnum = z.enum(['none', 'summary', 'details']);
+
 /** Schema for proposing a new trade */
 export const proposeTradeSchema = z
   .object({
@@ -26,6 +29,7 @@ export const proposeTradeSchema = z
     message: z.string().max(500, 'Message cannot exceed 500 characters').optional(),
     notify_league_chat: z.boolean().default(true),
     notify_dm: z.boolean().default(true),
+    league_chat_mode: leagueChatModeEnum.optional(),
   })
   .refine(
     (data) => data.requesting_player_ids.length > 0 || data.requesting_pick_asset_ids.length > 0,
@@ -48,6 +52,8 @@ export const counterTradeSchema = z
       .array(z.number().int().positive('Each requesting pick asset ID must be a positive integer'))
       .default([]),
     message: z.string().max(500, 'Message cannot exceed 500 characters').optional(),
+    notify_dm: z.boolean().default(true),
+    league_chat_mode: leagueChatModeEnum.optional(),
   })
   .refine(
     (data) => data.requesting_player_ids.length > 0 || data.requesting_pick_asset_ids.length > 0,

@@ -44,6 +44,9 @@ export interface SystemMessageMetadata {
 
   // Generic
   eventType?: string;
+
+  // Trade details for 'details' mode (formatted trade breakdown)
+  details?: string;
 }
 
 export interface ChatMessage {

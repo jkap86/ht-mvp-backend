@@ -71,6 +71,8 @@ export async function counterTrade(
           offeringPickAssetIds: request.offeringPickAssetIds,
           requestingPickAssetIds: request.requestingPickAssetIds,
           message: request.message,
+          notifyDm: request.notifyDm,
+          leagueChatMode: request.leagueChatMode,
         },
         false // Don't manage transaction - we're already in one
       );
@@ -91,7 +93,11 @@ export async function counterTrade(
   // Emit system message for the counter trade
   if (ctx.eventListenerService) {
     ctx.eventListenerService
-      .handleTradeCountered(originalTrade.leagueId, newTrade.id, newTrade.notifyLeagueChat)
+      .handleTradeCountered(originalTrade.leagueId, newTrade.id, {
+        notifyLeagueChat: newTrade.notifyLeagueChat,
+        leagueChatMode: newTrade.leagueChatMode,
+        notifyDm: newTrade.notifyDm,
+      })
       .catch((err) => logger.warn('Failed to emit system message', {
         type: 'trade_countered',
         leagueId: originalTrade.leagueId,

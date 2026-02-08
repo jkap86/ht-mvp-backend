@@ -72,6 +72,7 @@ const mockTrade: Trade = {
   completedAt: null,
   notifyLeagueChat: true,
   notifyDm: true,
+  leagueChatMode: 'summary',
 };
 
 const mockTradeItem: TradeItem = {
