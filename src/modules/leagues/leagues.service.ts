@@ -290,21 +290,6 @@ export class LeagueService {
     await this.leagueRepo.delete(leagueId);
   }
 
-  async joinLeagueByInviteCode(inviteCode: string, userId: string): Promise<any> {
-    // Find league by invite code
-    const league = await this.leagueRepo.findByInviteCode(inviteCode);
-    if (!league) {
-      throw new NotFoundException('Invalid invite code');
-    }
-
-    // Join the league
-    await this.rosterService.joinLeague(league.id, userId);
-
-    // Return the league with user's roster info
-    const updatedLeague = await this.leagueRepo.findByIdWithUserRoster(league.id, userId);
-    return updatedLeague!.toResponse();
-  }
-
   async discoverPublicLeagues(userId: string, limit?: number, offset?: number): Promise<any[]> {
     return this.leagueRepo.findPublicLeagues(userId, limit, offset);
   }
@@ -318,7 +303,7 @@ export class LeagueService {
 
     // Check if the league is public
     if (!league.isPublic) {
-      throw new ForbiddenException('This league is private. Use an invite code to join.');
+      throw new ForbiddenException('This league is private. You need an invitation to join.');
     }
 
     // Join the league

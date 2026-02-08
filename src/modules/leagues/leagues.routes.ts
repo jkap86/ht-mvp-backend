@@ -85,9 +85,6 @@ router.get('/my-leagues', apiReadLimiter, leagueController.getMyLeagues);
 // GET /api/leagues/discover - Discover public leagues
 router.get('/discover', apiReadLimiter, leagueController.discoverLeagues);
 
-// POST /api/leagues/join/:inviteCode - Join league by invite code
-router.post('/join/:inviteCode', leagueController.joinLeagueByInviteCode);
-
 // GET /api/leagues/:id
 router.get('/:id', apiReadLimiter, leagueController.getLeague);
 

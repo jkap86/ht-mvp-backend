@@ -26,7 +26,7 @@ const mockLeague = new League(
   {}, // leagueSettings
   1, // currentWeek
   'pre_season', // seasonStatus
-  'ABC12345', // inviteCode
+  undefined, // inviteCode (deprecated)
   false // isPublic
 );
 
@@ -46,7 +46,7 @@ const mockPublicLeague = new League(
   {}, // leagueSettings
   1, // currentWeek
   'pre_season', // seasonStatus
-  'XYZ98765', // inviteCode
+  undefined, // inviteCode (deprecated)
   true // isPublic
 );
 
@@ -71,7 +71,6 @@ const createMockLeagueRepo = (): jest.Mocked<LeagueRepository> =>
     findById: jest.fn(),
     findByUserId: jest.fn(),
     findByIdWithUserRoster: jest.fn(),
-    findByInviteCode: jest.fn(),
     isUserMember: jest.fn(),
     isCommissioner: jest.fn(),
     create: jest.fn(),
@@ -220,7 +219,7 @@ describe('LeagueService', () => {
         {},
         1,
         'pre_season',
-        'ABC12345',
+        undefined, // inviteCode (deprecated)
         false
       );
       mockLeagueRepo.findByIdWithUserRoster.mockResolvedValue(leagueWithoutMembership);

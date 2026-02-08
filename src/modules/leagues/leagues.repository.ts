@@ -30,18 +30,6 @@ export class LeagueRepository {
     return League.fromDatabase(result.rows[0]);
   }
 
-  async findByInviteCode(inviteCode: string): Promise<League | null> {
-    const result = await this.db.query('SELECT * FROM leagues WHERE invite_code = $1', [
-      inviteCode.toUpperCase(),
-    ]);
-
-    if (result.rows.length === 0) {
-      return null;
-    }
-
-    return League.fromDatabase(result.rows[0]);
-  }
-
   async findByIdWithUserRoster(id: number, userId: string): Promise<League | null> {
     const result = await this.db.query(
       `SELECT l.*,

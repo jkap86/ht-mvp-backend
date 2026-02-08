@@ -77,7 +77,6 @@ export class League {
       league_settings: this.leagueSettings,
       current_week: this.currentWeek,
       season_status: this.seasonStatus,
-      invite_code: this.inviteCode,
       is_public: this.isPublic,
       can_change_mode: options?.canChangeMode ?? true,
     };
