@@ -48,5 +48,25 @@ export const updateLeagueSchema = z.object({
   total_rosters: z.number().min(2).max(20).optional(),
 });
 
+// Delete league schema - requires typed confirmation
+export const deleteLeagueSchema = z.object({
+  confirmationName: z.string().min(1, 'Confirmation name is required'),
+});
+
+// Season status enum
+export const seasonStatusEnum = z.enum(['pre_season', 'regular_season', 'playoffs', 'offseason']);
+
+// Season controls schema - for manual season status/week updates
+export const seasonControlsSchema = z
+  .object({
+    seasonStatus: seasonStatusEnum.optional(),
+    currentWeek: z.number().int().min(1).max(18).optional(),
+  })
+  .refine((data) => data.seasonStatus !== undefined || data.currentWeek !== undefined, {
+    message: 'At least one of seasonStatus or currentWeek must be provided',
+  });
+
 export type CreateLeagueInput = z.infer<typeof createLeagueSchema>;
 export type UpdateLeagueInput = z.infer<typeof updateLeagueSchema>;
+export type DeleteLeagueInput = z.infer<typeof deleteLeagueSchema>;
+export type SeasonControlsInput = z.infer<typeof seasonControlsSchema>;

@@ -292,14 +292,40 @@ export class LeagueService {
     }
   }
 
-  async deleteLeague(leagueId: number, userId: string): Promise<void> {
+  async deleteLeague(leagueId: number, userId: string, confirmationName: string): Promise<void> {
     // Check if user is commissioner
     const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
     if (!isCommissioner) {
       throw new ForbiddenException('Only the commissioner can delete the league');
     }
 
+    // Get league to validate confirmation name
+    const league = await this.leagueRepo.findById(leagueId);
+    if (!league) {
+      throw new NotFoundException('League not found');
+    }
+
+    // Validate confirmation name matches
+    if (!confirmationName || confirmationName.trim().toLowerCase() !== league.name.trim().toLowerCase()) {
+      throw new ValidationException('League name confirmation does not match');
+    }
+
     await this.leagueRepo.delete(leagueId);
+  }
+
+  async updateSeasonControls(
+    leagueId: number,
+    userId: string,
+    input: { seasonStatus?: string; currentWeek?: number }
+  ): Promise<any> {
+    // Check if user is commissioner
+    const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
+    if (!isCommissioner) {
+      throw new ForbiddenException('Only the commissioner can update season controls');
+    }
+
+    const league = await this.leagueRepo.updateSeasonControls(leagueId, input);
+    return league.toResponse();
   }
 
   async discoverPublicLeagues(userId: string, limit?: number, offset?: number): Promise<any[]> {

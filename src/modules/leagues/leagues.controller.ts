@@ -5,6 +5,7 @@ import { RosterService } from './roster.service';
 import { DashboardService } from './dashboard.service';
 import { ValidationException } from '../../utils/exceptions';
 import { requireUserId, requireLeagueId } from '../../utils/controller-helpers';
+import { deleteLeagueSchema, seasonControlsSchema } from './leagues.schemas';
 
 export class LeagueController {
   constructor(
@@ -136,9 +137,23 @@ export class LeagueController {
     try {
       const userId = requireUserId(req);
       const leagueId = requireLeagueId(req);
+      const { confirmationName } = deleteLeagueSchema.parse(req.body);
 
-      await this.leagueService.deleteLeague(leagueId, userId);
+      await this.leagueService.deleteLeague(leagueId, userId, confirmationName);
       res.status(200).json({ message: 'League deleted successfully' });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  updateSeasonControls = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const userId = requireUserId(req);
+      const leagueId = requireLeagueId(req);
+      const input = seasonControlsSchema.parse(req.body);
+
+      const league = await this.leagueService.updateSeasonControls(leagueId, userId, input);
+      res.status(200).json(league);
     } catch (error) {
       next(error);
     }

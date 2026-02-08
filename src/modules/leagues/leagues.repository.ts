@@ -200,6 +200,9 @@ export class LeagueRepository {
       await client.query('DELETE FROM playoff_brackets WHERE league_id = $1', [leagueId]);
       await client.query('DELETE FROM roster_transactions WHERE league_id = $1', [leagueId]);
 
+      // Clear dues payment records for fresh season (keep league_dues config)
+      await client.query('DELETE FROM dues_payments WHERE league_id = $1', [leagueId]);
+
       // Clear roster player data
       await client.query(
         `
@@ -405,5 +408,49 @@ export class LeagueRepository {
 
     // Free league at capacity
     return 'filled';
+  }
+
+  /**
+   * Update season controls (season_status and/or current_week)
+   * Commissioner-only endpoint for manual season management
+   */
+  async updateSeasonControls(
+    id: number,
+    updates: { seasonStatus?: string; currentWeek?: number }
+  ): Promise<League> {
+    const setClauses: string[] = [];
+    const values: any[] = [];
+    let paramIndex = 1;
+
+    if (updates.seasonStatus !== undefined) {
+      setClauses.push(`season_status = $${paramIndex++}`);
+      values.push(updates.seasonStatus);
+    }
+
+    if (updates.currentWeek !== undefined) {
+      setClauses.push(`current_week = $${paramIndex++}`);
+      values.push(updates.currentWeek);
+    }
+
+    if (setClauses.length === 0) {
+      const existing = await this.findById(id);
+      if (!existing) throw new Error('League not found');
+      return existing;
+    }
+
+    values.push(id);
+
+    const result = await this.db.query(
+      `UPDATE leagues SET ${setClauses.join(', ')}, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $${paramIndex}
+       RETURNING *`,
+      values
+    );
+
+    if (result.rows.length === 0) {
+      throw new Error('League not found');
+    }
+
+    return League.fromDatabase(result.rows[0]);
   }
 }

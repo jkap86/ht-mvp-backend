@@ -106,6 +106,9 @@ router.delete('/:id', leagueController.deleteLeague);
 // POST /api/leagues/:id/reset - Reset league for new season (commissioner only)
 router.post('/:id/reset', leagueController.resetLeague);
 
+// POST /api/leagues/:id/season-controls - Update season status/week (commissioner only)
+router.post('/:id/season-controls', leagueController.updateSeasonControls);
+
 // GET /api/leagues/:id/members
 router.get('/:id/members', apiReadLimiter, leagueController.getMembers);
 

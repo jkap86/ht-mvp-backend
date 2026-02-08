@@ -76,6 +76,7 @@ const createMockLeagueRepo = (): jest.Mocked<LeagueRepository> =>
     delete: jest.fn(),
     findPublicLeagues: jest.fn(),
     canChangeLeagueMode: jest.fn(),
+    updateSeasonControls: jest.fn(),
   }) as unknown as jest.Mocked<LeagueRepository>;
 
 const createMockRosterRepo = (): jest.Mocked<RosterRepository> =>
@@ -254,11 +255,12 @@ describe('LeagueService', () => {
   });
 
   describe('deleteLeague', () => {
-    it('should delete league when user is commissioner', async () => {
+    it('should delete league when user is commissioner with correct confirmation', async () => {
       mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockLeagueRepo.findById.mockResolvedValue(mockLeague);
       mockLeagueRepo.delete.mockResolvedValue(undefined);
 
-      await leagueService.deleteLeague(1, 'user-123');
+      await leagueService.deleteLeague(1, 'user-123', 'Test League');
 
       expect(mockLeagueRepo.delete).toHaveBeenCalledWith(1);
     });
@@ -266,8 +268,12 @@ describe('LeagueService', () => {
     it('should throw ForbiddenException when not commissioner', async () => {
       mockLeagueRepo.isCommissioner.mockResolvedValue(false);
 
-      await expect(leagueService.deleteLeague(1, 'other-user')).rejects.toThrow(ForbiddenException);
-      await expect(leagueService.deleteLeague(1, 'other-user')).rejects.toThrow('commissioner');
+      await expect(
+        leagueService.deleteLeague(1, 'other-user', 'Test League')
+      ).rejects.toThrow(ForbiddenException);
+      await expect(
+        leagueService.deleteLeague(1, 'other-user', 'Test League')
+      ).rejects.toThrow('commissioner');
     });
   });
 
@@ -531,6 +537,106 @@ describe('LeagueService', () => {
           'user-123'
         )
       ).rejects.toThrow('Valid season year');
+    });
+  });
+
+  describe('deleteLeague confirmation', () => {
+    it('should reject deletion without confirmationName', async () => {
+      mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockLeagueRepo.findById.mockResolvedValue(mockLeague);
+
+      await expect(leagueService.deleteLeague(1, 'user-123', '')).rejects.toThrow(
+        ValidationException
+      );
+      await expect(leagueService.deleteLeague(1, 'user-123', '')).rejects.toThrow(
+        'does not match'
+      );
+    });
+
+    it('should reject deletion with wrong confirmationName', async () => {
+      mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockLeagueRepo.findById.mockResolvedValue(mockLeague);
+
+      await expect(leagueService.deleteLeague(1, 'user-123', 'Wrong Name')).rejects.toThrow(
+        ValidationException
+      );
+      await expect(leagueService.deleteLeague(1, 'user-123', 'Wrong Name')).rejects.toThrow(
+        'does not match'
+      );
+    });
+
+    it('should succeed with correct confirmationName (case-insensitive)', async () => {
+      mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockLeagueRepo.findById.mockResolvedValue(mockLeague);
+      mockLeagueRepo.delete.mockResolvedValue();
+
+      // Test with exact match
+      await leagueService.deleteLeague(1, 'user-123', 'Test League');
+      expect(mockLeagueRepo.delete).toHaveBeenCalledWith(1);
+
+      // Reset mock
+      mockLeagueRepo.delete.mockClear();
+
+      // Test with different case
+      await leagueService.deleteLeague(1, 'user-123', 'test league');
+      expect(mockLeagueRepo.delete).toHaveBeenCalledWith(1);
+    });
+
+    it('should reject non-commissioner', async () => {
+      mockLeagueRepo.isCommissioner.mockResolvedValue(false);
+
+      await expect(
+        leagueService.deleteLeague(1, 'user-123', 'Test League')
+      ).rejects.toThrow(ForbiddenException);
+    });
+  });
+
+  describe('updateSeasonControls', () => {
+    it('should reject non-commissioner', async () => {
+      mockLeagueRepo.isCommissioner.mockResolvedValue(false);
+
+      await expect(
+        leagueService.updateSeasonControls(1, 'user-123', { seasonStatus: 'playoffs' })
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('should update seasonStatus', async () => {
+      mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockLeagueRepo.updateSeasonControls.mockResolvedValue(mockLeague);
+
+      await leagueService.updateSeasonControls(1, 'user-123', {
+        seasonStatus: 'regular_season',
+      });
+
+      expect(mockLeagueRepo.updateSeasonControls).toHaveBeenCalledWith(1, {
+        seasonStatus: 'regular_season',
+      });
+    });
+
+    it('should update currentWeek', async () => {
+      mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockLeagueRepo.updateSeasonControls.mockResolvedValue(mockLeague);
+
+      await leagueService.updateSeasonControls(1, 'user-123', { currentWeek: 5 });
+
+      expect(mockLeagueRepo.updateSeasonControls).toHaveBeenCalledWith(1, {
+        currentWeek: 5,
+      });
+    });
+
+    it('should update both seasonStatus and currentWeek', async () => {
+      mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockLeagueRepo.updateSeasonControls.mockResolvedValue(mockLeague);
+
+      await leagueService.updateSeasonControls(1, 'user-123', {
+        seasonStatus: 'playoffs',
+        currentWeek: 15,
+      });
+
+      expect(mockLeagueRepo.updateSeasonControls).toHaveBeenCalledWith(1, {
+        seasonStatus: 'playoffs',
+        currentWeek: 15,
+      });
     });
   });
 });
