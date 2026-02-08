@@ -15,6 +15,36 @@ export class PlayerRepository {
     return result.rows.length > 0 ? playerFromDatabase(result.rows[0]) : null;
   }
 
+  /**
+   * Find a random eligible player for auction auto-nomination.
+   * Uses SQL-level filtering to avoid loading all players into memory.
+   * Excludes players that are already drafted or already nominated in this draft.
+   * @param client - Transaction client for consistency
+   * @param draftId - Draft to check eligibility for
+   * @returns A random available player, or null if none available
+   */
+  async findRandomEligiblePlayerForAuction(
+    client: PoolClient,
+    draftId: number
+  ): Promise<Player | null> {
+    const result = await client.query(
+      `SELECT p.*
+       FROM players p
+       WHERE p.active = true
+         AND p.id NOT IN (
+           SELECT player_id FROM draft_picks
+           WHERE draft_id = $1 AND player_id IS NOT NULL
+         )
+         AND p.id NOT IN (
+           SELECT player_id FROM auction_lots WHERE draft_id = $1
+         )
+       ORDER BY RANDOM()
+       LIMIT 1`,
+      [draftId]
+    );
+    return result.rows.length > 0 ? playerFromDatabase(result.rows[0]) : null;
+  }
+
   async findAll(limit = 100, offset = 0): Promise<Player[]> {
     const result = await this.db.query(
       `SELECT * FROM players WHERE active = true ORDER BY full_name LIMIT $1 OFFSET $2`,

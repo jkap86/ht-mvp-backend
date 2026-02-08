@@ -160,9 +160,9 @@ export class FastAuctionService {
           throw new ValidationException('Player has already been nominated in this draft');
         }
 
-        // Validate budget and roster slots
-        const budgetInfo = await this.lotRepo.getRosterBudgetData(draftId, roster.id);
-        const league = await this.leagueRepo.findById(draft.leagueId);
+        // Validate budget and roster slots (using transaction client for isolation)
+        const budgetInfo = await this.lotRepo.getRosterBudgetDataWithClient(client, draftId, roster.id);
+        const league = await this.leagueRepo.findById(draft.leagueId, client);
         if (!league) {
           throw new NotFoundException('League not found');
         }
@@ -236,12 +236,12 @@ export class FastAuctionService {
       throw new ForbiddenException('You are not a member of this league');
     }
 
-    // Use transaction with roster lock for atomic operations
-    // Using modern lock system (LockDomain.ROSTER) for consistency
+    // Use transaction with lot-based lock for atomic operations
+    // Lock the specific lot to serialize concurrent bids on the same lot
     const { finalLot, outbidNotifications: rawNotifications, playerId } = await runWithLock(
       this.pool,
-      LockDomain.ROSTER,
-      roster.id,
+      LockDomain.AUCTION,
+      lotId,
       async (client) => {
 
         // Get lot with lock
@@ -266,8 +266,14 @@ export class FastAuctionService {
           throw new ValidationException(`Bid must be at least $${minRequired}`);
         }
 
-        // Validate budget
-        const league = await this.leagueRepo.findById(draft.leagueId);
+        // Leaders cannot lower their maxBid below the current bid
+        // This prevents invalid state where leader's commitment < displayed price
+        if (lot.currentBidderRosterId === roster.id && maxBid < lot.currentBid) {
+          throw new ValidationException(`Cannot lower max bid below current bid ($${lot.currentBid})`);
+        }
+
+        // Validate budget (using transaction client for isolation)
+        const league = await this.leagueRepo.findById(draft.leagueId, client);
         if (!league) {
           throw new NotFoundException('League not found');
         }
@@ -581,23 +587,14 @@ export class FastAuctionService {
           return null; // Already has an active lot, nothing to do
         }
 
-        // Get available players (not drafted, not in active lot)
-        const draftedPlayerIds = await this.draftRepo.getDraftedPlayerIds(draftId);
-        const nominatedPlayerIds = await this.lotRepo.getNominatedPlayerIds(draftId);
-        const excludeIds = [...new Set([...draftedPlayerIds, ...nominatedPlayerIds])];
+        // Find a random available player using SQL-level filtering
+        // (avoids loading all players into memory)
+        const randomPlayer = await this.playerRepo.findRandomEligiblePlayerForAuction(client, draftId);
 
-        // Get all players and filter to available ones
-        const allPlayers = await this.playerRepo.findAll();
-        const availablePlayers = allPlayers.filter((p) => !excludeIds.includes(p.id));
-
-        if (availablePlayers.length === 0) {
+        if (!randomPlayer) {
           logger.warn('No available players for auto-nomination', { draftId });
           return { noPlayers: true } as const;
         }
-
-        // Pick a random player
-        const randomIndex = Math.floor(Math.random() * availablePlayers.length);
-        const randomPlayer = availablePlayers[randomIndex];
 
         // Calculate bid deadline
         const bidDeadline = new Date(Date.now() + settings.nominationSeconds * 1000);

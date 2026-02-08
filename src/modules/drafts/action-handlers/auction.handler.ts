@@ -101,7 +101,7 @@ export class AuctionActionHandler implements ActionHandler {
 
     // Socket events are handled by FastAuctionService
 
-    return { ok: true, action: 'nominate', data: { lot: result.lot }, message: result.message };
+    return { ok: true, action: 'nominate', data: { lot: auctionLotToResponse(result.lot) }, message: result.message };
   }
 
   private async handleSetMaxBid(
@@ -165,7 +165,7 @@ export class AuctionActionHandler implements ActionHandler {
       action: 'set_max_bid',
       data: {
         proxyBid: result.proxyBid,
-        lot: result.lot,
+        lot: auctionLotToResponse(result.lot),
         outbidNotifications: result.outbidNotifications,
       },
       message: result.message,
