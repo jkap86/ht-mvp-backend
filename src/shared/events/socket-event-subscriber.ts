@@ -339,6 +339,32 @@ export class SocketEventSubscriber implements DomainEventSubscriber {
         }
         break;
 
+      // Playoff events
+      case EventTypes.PLAYOFF_BRACKET_GENERATED:
+        if (event.leagueId) {
+          socketService.emitPlayoffBracketGenerated(
+            event.leagueId,
+            event.payload as { bracketId: number }
+          );
+        }
+        break;
+      case EventTypes.PLAYOFF_WINNERS_ADVANCED:
+        if (event.leagueId) {
+          socketService.emitPlayoffWinnersAdvanced(
+            event.leagueId,
+            event.payload as { week: number }
+          );
+        }
+        break;
+      case EventTypes.PLAYOFF_CHAMPION_CROWNED:
+        if (event.leagueId) {
+          socketService.emitPlayoffChampionCrowned(
+            event.leagueId,
+            event.payload as { bracketId: number; championRosterId: number }
+          );
+        }
+        break;
+
       default:
         // Unknown event type - log for debugging but don't fail
         logger.debug(`Unhandled domain event type: ${event.type}`);

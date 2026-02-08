@@ -110,6 +110,13 @@ export const SOCKET_EVENTS = {
     DECLINED: 'invitation:declined',
     CANCELLED: 'invitation:cancelled',
   },
+
+  // Playoff events
+  PLAYOFF: {
+    BRACKET_GENERATED: 'playoff:bracket_generated',
+    WINNERS_ADVANCED: 'playoff:winners_advanced',
+    CHAMPION_CROWNED: 'playoff:champion_crowned',
+  },
 } as const;
 
 // Room name helpers

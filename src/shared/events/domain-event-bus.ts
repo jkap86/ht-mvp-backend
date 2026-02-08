@@ -282,6 +282,11 @@ export const EventTypes = {
   INVITATION_RECEIVED: 'invitation:received',
   INVITATION_DECLINED: 'invitation:declined',
   INVITATION_CANCELLED: 'invitation:cancelled',
+
+  // Playoff events
+  PLAYOFF_BRACKET_GENERATED: 'playoff:bracket_generated',
+  PLAYOFF_WINNERS_ADVANCED: 'playoff:winners_advanced',
+  PLAYOFF_CHAMPION_CROWNED: 'playoff:champion_crowned',
 } as const;
 
 export type EventType = (typeof EventTypes)[keyof typeof EventTypes];

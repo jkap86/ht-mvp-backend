@@ -506,6 +506,26 @@ export class SocketService {
     this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.MEMBER.JOINED, data);
   }
 
+  // Playoff events (emitted to league room)
+
+  // Emit playoff bracket generated event
+  emitPlayoffBracketGenerated(leagueId: number, data: { bracketId: number }): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.PLAYOFF.BRACKET_GENERATED, data);
+  }
+
+  // Emit playoff winners advanced event
+  emitPlayoffWinnersAdvanced(leagueId: number, data: { week: number }): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.PLAYOFF.WINNERS_ADVANCED, data);
+  }
+
+  // Emit playoff champion crowned event
+  emitPlayoffChampionCrowned(
+    leagueId: number,
+    data: { bracketId: number; championRosterId: number }
+  ): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.PLAYOFF.CHAMPION_CROWNED, data);
+  }
+
   getIO(): Server {
     return this.io;
   }

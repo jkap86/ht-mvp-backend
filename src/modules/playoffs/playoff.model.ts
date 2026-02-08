@@ -3,6 +3,22 @@
  */
 
 export type PlayoffStatus = 'pending' | 'active' | 'completed';
+export type BracketType = 'WINNERS' | 'THIRD_PLACE' | 'CONSOLATION';
+export type ConsolationType = 'NONE' | 'CONSOLATION';
+
+export interface PlayoffSettings {
+  enableThirdPlaceGame: boolean;
+  consolationType: ConsolationType;
+  consolationTeams: number | null;
+}
+
+export function playoffSettingsToResponse(settings: PlayoffSettings) {
+  return {
+    enable_third_place_game: settings.enableThirdPlaceGame,
+    consolation_type: settings.consolationType,
+    consolation_teams: settings.consolationTeams,
+  };
+}
 
 export interface PlayoffBracket {
   id: number;
@@ -14,6 +30,11 @@ export interface PlayoffBracket {
   championshipWeek: number;
   status: PlayoffStatus;
   championRosterId: number | null;
+  enableThirdPlace: boolean;
+  consolationType: ConsolationType;
+  consolationTeams: number | null;
+  thirdPlaceRosterId: number | null;
+  consolationWinnerRosterId: number | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -29,6 +50,11 @@ export function playoffBracketFromDatabase(row: any): PlayoffBracket {
     championshipWeek: row.championship_week,
     status: row.status as PlayoffStatus,
     championRosterId: row.champion_roster_id,
+    enableThirdPlace: row.enable_third_place ?? false,
+    consolationType: (row.consolation_type as ConsolationType) ?? 'NONE',
+    consolationTeams: row.consolation_teams ?? null,
+    thirdPlaceRosterId: row.third_place_roster_id ?? null,
+    consolationWinnerRosterId: row.consolation_winner_roster_id ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -45,6 +71,11 @@ export function playoffBracketToResponse(bracket: PlayoffBracket) {
     championship_week: bracket.championshipWeek,
     status: bracket.status,
     champion_roster_id: bracket.championRosterId,
+    enable_third_place: bracket.enableThirdPlace,
+    consolation_type: bracket.consolationType,
+    consolation_teams: bracket.consolationTeams,
+    third_place_roster_id: bracket.thirdPlaceRosterId,
+    consolation_winner_roster_id: bracket.consolationWinnerRosterId,
     created_at: bracket.createdAt,
     updated_at: bracket.updatedAt,
   };
@@ -118,6 +149,7 @@ export interface PlayoffMatchup {
   week: number;
   round: number;
   bracketPosition: number;
+  bracketType: BracketType;
   team1: PlayoffTeamInfo | null;
   team2: PlayoffTeamInfo | null;
   winner: PlayoffTeamInfo | null;
@@ -130,6 +162,7 @@ export function playoffMatchupToResponse(matchup: PlayoffMatchup) {
     week: matchup.week,
     round: matchup.round,
     bracket_position: matchup.bracketPosition,
+    bracket_type: matchup.bracketType,
     team1: matchup.team1 ? playoffTeamInfoToResponse(matchup.team1) : null,
     team2: matchup.team2 ? playoffTeamInfoToResponse(matchup.team2) : null,
     winner: matchup.winner ? playoffTeamInfoToResponse(matchup.winner) : null,
@@ -158,6 +191,25 @@ export interface PlayoffBracketView {
   seeds: PlayoffSeed[];
   rounds: PlayoffRound[];
   champion: PlayoffTeamInfo | null;
+  thirdPlace: { matchup: PlayoffMatchup } | null;
+  consolation: { seeds: ConsolationSeed[]; rounds: PlayoffRound[] } | null;
+  settings: PlayoffSettings;
+}
+
+export interface ConsolationSeed {
+  rosterId: number;
+  standingsPosition: number;
+  teamName: string;
+  record: string;
+}
+
+export function consolationSeedToResponse(seed: ConsolationSeed) {
+  return {
+    roster_id: seed.rosterId,
+    standings_position: seed.standingsPosition,
+    team_name: seed.teamName,
+    record: seed.record,
+  };
 }
 
 export function playoffBracketViewToResponse(view: PlayoffBracketView) {
@@ -166,6 +218,16 @@ export function playoffBracketViewToResponse(view: PlayoffBracketView) {
     seeds: view.seeds.map(playoffSeedToResponse),
     rounds: view.rounds.map(playoffRoundToResponse),
     champion: view.champion ? playoffTeamInfoToResponse(view.champion) : null,
+    third_place: view.thirdPlace
+      ? { matchup: playoffMatchupToResponse(view.thirdPlace.matchup) }
+      : null,
+    consolation: view.consolation
+      ? {
+          seeds: view.consolation.seeds.map(consolationSeedToResponse),
+          rounds: view.consolation.rounds.map(playoffRoundToResponse),
+        }
+      : null,
+    settings: playoffSettingsToResponse(view.settings),
   };
 }
 
@@ -250,4 +312,65 @@ export function generateBracketConfig(
   }
 
   return [];
+}
+
+/**
+ * Generate consolation bracket matchup configuration
+ */
+export function generateConsolationBracketConfig(
+  consolationTeams: number,
+  startWeek: number
+): BracketMatchupConfig[] {
+  if (consolationTeams === 4) {
+    return [
+      // Semifinal round - positions 1-2 in consolation
+      { week: startWeek, round: 1, seed1: 1, seed2: 4, bracketPosition: 1 },
+      { week: startWeek, round: 1, seed1: 2, seed2: 3, bracketPosition: 2 },
+      // Final created after round 1
+    ];
+  }
+
+  if (consolationTeams === 6) {
+    return [
+      // Wild Card - seeds 3-6 play, 1-2 have bye
+      { week: startWeek, round: 1, seed1: 3, seed2: 6, bracketPosition: 1 },
+      { week: startWeek, round: 1, seed1: 4, seed2: 5, bracketPosition: 2 },
+      // Semifinals and final created as winners advance
+    ];
+  }
+
+  if (consolationTeams === 8) {
+    return [
+      // Quarterfinals
+      { week: startWeek, round: 1, seed1: 1, seed2: 8, bracketPosition: 1 },
+      { week: startWeek, round: 1, seed1: 4, seed2: 5, bracketPosition: 2 },
+      { week: startWeek, round: 1, seed1: 3, seed2: 6, bracketPosition: 3 },
+      { week: startWeek, round: 1, seed1: 2, seed2: 7, bracketPosition: 4 },
+    ];
+  }
+
+  return [];
+}
+
+/**
+ * Get round name for consolation bracket
+ */
+export function getConsolationRoundName(
+  consolationTeams: number,
+  round: number,
+  totalRounds: number
+): string {
+  if (round === totalRounds) {
+    return 'Consolation Final';
+  }
+  if (round === totalRounds - 1) {
+    return 'Consolation Semifinals';
+  }
+  if (consolationTeams === 8 && round === 1) {
+    return 'Consolation Quarterfinals';
+  }
+  if (consolationTeams === 6 && round === 1) {
+    return 'Consolation Wild Card';
+  }
+  return `Consolation Round ${round}`;
 }
