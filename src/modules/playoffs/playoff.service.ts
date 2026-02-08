@@ -84,7 +84,8 @@ export class PlayoffService {
     const existingBracket = await this.playoffRepo.findByLeagueSeason(leagueId, season);
     if (existingBracket) {
       throw new ConflictException(
-        'Playoff bracket already exists for this league and season.'
+        'Cannot generate playoffs: bracket already exists for this season. ' +
+        'Delete existing bracket before regenerating.'
       );
     }
 
@@ -98,8 +99,8 @@ export class PlayoffService {
     );
     if (conflictingMatchups.length > 0) {
       throw new ConflictException(
-        `Regular season matchups exist in weeks ${config.startWeek}-${lastPlayoffWeek}. ` +
-        `Cannot overlap playoffs with regular season.`
+        `Cannot generate playoffs: regular season matchups already exist in weeks ${config.startWeek}–${lastPlayoffWeek}. ` +
+        `Clear schedule or choose a different start week.`
       );
     }
 
@@ -311,10 +312,17 @@ export class PlayoffService {
 
       // Handle 3rd place game finalization
       if (thirdPlaceMatchups.length > 0 && bracket.enableThirdPlace) {
-        const thirdPlaceMatchup = thirdPlaceMatchups[0];
-        const thirdPlaceWinnerId = this.determineWinner(thirdPlaceMatchup);
-        await this.playoffRepo.setThirdPlaceWinner(bracket.id, thirdPlaceWinnerId, client);
-        logger.info(`League ${leagueId} 3rd place won by roster ${thirdPlaceWinnerId}`);
+        // Explicitly select 3rd place matchup by round and bracket position
+        const thirdPlaceMatchup = thirdPlaceMatchups.find(
+          (m) => m.playoff_round === bracket.totalRounds && m.bracket_position === 2
+        );
+        if (thirdPlaceMatchup) {
+          const thirdPlaceWinnerId = this.determineWinner(thirdPlaceMatchup, true);
+          await this.playoffRepo.setThirdPlaceWinner(bracket.id, thirdPlaceWinnerId, client);
+          logger.info(`League ${leagueId} 3rd place won by roster ${thirdPlaceWinnerId}`);
+        } else {
+          logger.warn(`3rd place matchup not found for league ${leagueId} (expected round=${bracket.totalRounds}, position=2)`);
+        }
       }
 
       // Update bracket status to active if still pending
@@ -340,6 +348,9 @@ export class PlayoffService {
     matchups: any[],
     week: number
   ): Promise<void> {
+    // Validate all matchups are from the same round
+    this.validateSingleRound(matchups, 'WINNERS');
+
     const currentRound = matchups[0].playoff_round;
     const nextRound = currentRound + 1;
     const nextWeek = week + 1;
@@ -355,7 +366,7 @@ export class PlayoffService {
         throw new ValidationException('Championship matchup not found');
       }
 
-      const winnerId = this.determineWinner(championship);
+      const winnerId = this.determineWinner(championship, true);
       await this.playoffRepo.setChampion(bracket.id, winnerId, client);
       this.emitChampionCrowned(leagueId, bracket.id, winnerId);
       logger.info(`League ${leagueId} championship won by roster ${winnerId}`);
@@ -403,7 +414,7 @@ export class PlayoffService {
     const losers: Array<{ rosterId: number; seed: number }> = [];
 
     for (const matchup of semifinalMatchups) {
-      const loserId = this.determineLoser(matchup);
+      const loserId = this.determineLoser(matchup, true);
       const loserSeed = loserId === matchup.roster1_id
         ? matchup.playoff_seed1
         : matchup.playoff_seed2;
@@ -446,6 +457,9 @@ export class PlayoffService {
     matchups: any[],
     week: number
   ): Promise<void> {
+    // Validate all matchups are from the same round
+    this.validateSingleRound(matchups, 'CONSOLATION');
+
     const currentRound = matchups[0].playoff_round;
     const consolationTotalRounds = calculateTotalRounds(bracket.consolationTeams!);
     const nextRound = currentRound + 1;
@@ -453,12 +467,16 @@ export class PlayoffService {
 
     // Check if consolation is complete
     if (currentRound === consolationTotalRounds) {
-      // Find consolation final
-      const consolationFinal = matchups.find((m) => m.bracket_position === 1);
+      // Find consolation final explicitly by round and bracket position
+      const consolationFinal = matchups.find(
+        (m) => m.playoff_round === consolationTotalRounds && m.bracket_position === 1
+      );
       if (consolationFinal) {
-        const winnerId = this.determineWinner(consolationFinal);
+        const winnerId = this.determineWinner(consolationFinal, true);
         await this.playoffRepo.setConsolationWinner(bracket.id, winnerId, client);
         logger.info(`League ${leagueId} consolation won by roster ${winnerId}`);
+      } else {
+        logger.warn(`Consolation final not found for league ${leagueId} (expected round=${consolationTotalRounds}, position=1)`);
       }
       return;
     }
@@ -488,14 +506,17 @@ export class PlayoffService {
     bracketType: BracketType,
     client: PoolClient
   ): Promise<void> {
-    // Get winners from previous matchups
-    const winners = previousMatchups.map((matchup) => ({
-      rosterId: this.determineWinner(matchup),
-      seed: this.determineWinner(matchup) === matchup.roster1_id
-        ? matchup.playoff_seed1
-        : matchup.playoff_seed2,
-      bracketPosition: matchup.bracket_position,
-    }));
+    // Get winners from previous matchups (require points for advancement)
+    const winners = previousMatchups.map((matchup) => {
+      const winnerId = this.determineWinner(matchup, true);
+      return {
+        rosterId: winnerId,
+        seed: winnerId === matchup.roster1_id
+          ? matchup.playoff_seed1
+          : matchup.playoff_seed2,
+        bracketPosition: matchup.bracket_position,
+      };
+    });
 
     // Handle 6-team format with byes
     const teamCount = bracketType === 'CONSOLATION'
@@ -534,18 +555,43 @@ export class PlayoffService {
   }
 
   /**
-   * Determine winner of a matchup with tie-breaker
+   * Validate that all matchups are from the same playoff round.
+   * Prevents advancing matchups that span multiple rounds.
    */
-  private determineWinner(matchup: any): number {
-    const p1 = matchup.roster1_points === null || matchup.roster1_points === undefined
-      ? 0
-      : parseFloat(matchup.roster1_points);
-    const p2 = matchup.roster2_points === null || matchup.roster2_points === undefined
-      ? 0
-      : parseFloat(matchup.roster2_points);
+  private validateSingleRound(matchups: any[], bracketType: string): void {
+    if (matchups.length === 0) return;
 
-    if (p1 > p2) return matchup.roster1_id;
-    if (p2 > p1) return matchup.roster2_id;
+    const rounds = new Set(matchups.map((m) => m.playoff_round));
+    if (rounds.size > 1) {
+      throw new ValidationException(
+        `Cannot advance playoffs: ${bracketType} matchups span multiple rounds (${[...rounds].join(', ')})`
+      );
+    }
+  }
+
+  /**
+   * Determine winner of a matchup with tie-breaker.
+   * @param matchup The matchup to determine winner for
+   * @param requirePoints If true, throws if points are missing (for advancement flows)
+   */
+  private determineWinner(matchup: any, requirePoints: boolean = false): number {
+    const p1 = matchup.roster1_points;
+    const p2 = matchup.roster2_points;
+
+    // Guard: If advancing, points must exist
+    if (requirePoints) {
+      if (p1 === null || p1 === undefined || p2 === null || p2 === undefined) {
+        throw new ValidationException(
+          `Cannot advance playoffs: matchup ${matchup.id} is finalized but missing scores`
+        );
+      }
+    }
+
+    const pts1 = p1 === null || p1 === undefined ? 0 : parseFloat(p1);
+    const pts2 = p2 === null || p2 === undefined ? 0 : parseFloat(p2);
+
+    if (pts1 > pts2) return matchup.roster1_id;
+    if (pts2 > pts1) return matchup.roster2_id;
     // Tie: higher seed (lower number) wins
     return matchup.playoff_seed1 < matchup.playoff_seed2
       ? matchup.roster1_id
@@ -553,10 +599,12 @@ export class PlayoffService {
   }
 
   /**
-   * Determine loser of a matchup
+   * Determine loser of a matchup.
+   * @param matchup The matchup to determine loser for
+   * @param requirePoints If true, throws if points are missing (for advancement flows)
    */
-  private determineLoser(matchup: any): number {
-    const winnerId = this.determineWinner(matchup);
+  private determineLoser(matchup: any, requirePoints: boolean = false): number {
+    const winnerId = this.determineWinner(matchup, requirePoints);
     return winnerId === matchup.roster1_id ? matchup.roster2_id : matchup.roster1_id;
   }
 
@@ -574,28 +622,11 @@ export class PlayoffService {
   ): Promise<void> {
     const seeds = await this.playoffRepo.getSeeds(bracket.id);
 
-    // Get winners from previous matchups
+    // Get winners from previous matchups (require points for advancement)
     const winners: Array<{ rosterId: number; seed: number; bracketPosition: number }> = [];
 
     for (const matchup of previousMatchups) {
-      // Determine winner with tie-breaker: higher seed (lower number) wins ties
-      let winnerId: number;
-      const p1 = matchup.roster1_points === null || matchup.roster1_points === undefined
-        ? 0
-        : parseFloat(matchup.roster1_points);
-      const p2 = matchup.roster2_points === null || matchup.roster2_points === undefined
-        ? 0
-        : parseFloat(matchup.roster2_points);
-      if (p1 > p2) {
-        winnerId = matchup.roster1_id;
-      } else if (p2 > p1) {
-        winnerId = matchup.roster2_id;
-      } else {
-        // Tie: higher seed (lower number) wins
-        winnerId = matchup.playoff_seed1 < matchup.playoff_seed2
-          ? matchup.roster1_id
-          : matchup.roster2_id;
-      }
+      const winnerId = this.determineWinner(matchup, true);
       const winnerSeed =
         winnerId === matchup.roster1_id ? matchup.playoff_seed1 : matchup.playoff_seed2;
 
