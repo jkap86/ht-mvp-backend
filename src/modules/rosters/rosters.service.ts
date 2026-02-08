@@ -9,6 +9,7 @@ import { runWithLock, LockDomain } from '../../shared/transaction-runner';
 import {
   NotFoundException,
   ForbiddenException,
+  ValidationException,
 } from '../../utils/exceptions';
 
 export class RosterService {
@@ -106,6 +107,15 @@ export class RosterService {
       const league = await this.leagueRepo.findById(leagueId);
       if (!league) {
         throw new NotFoundException('League not found');
+      }
+
+      // Enforce waivers: cannot add a player who is currently on the waiver wire
+      const waiverSettings = parseWaiverSettings(league.settings);
+      if (waiverSettings.waiverType !== 'none' && this.waiverWireRepo) {
+        const isOnWaivers = await this.waiverWireRepo.isOnWaivers(leagueId, playerId, client);
+        if (isOnWaivers) {
+          throw new ValidationException('Player is on waivers. Submit a waiver claim instead.');
+        }
       }
 
       // Use mutation service for validation and add
@@ -216,6 +226,15 @@ export class RosterService {
       const league = await this.leagueRepo.findById(leagueId);
       if (!league) {
         throw new NotFoundException('League not found');
+      }
+
+      // Enforce waivers: cannot add a player who is currently on the waiver wire
+      const waiverSettings = parseWaiverSettings(league.settings);
+      if (waiverSettings.waiverType !== 'none' && this.waiverWireRepo) {
+        const isOnWaivers = await this.waiverWireRepo.isOnWaivers(leagueId, addPlayerId, client);
+        if (isOnWaivers) {
+          throw new ValidationException('Player is on waivers. Submit a waiver claim instead.');
+        }
       }
 
       // Use mutation service for validation and swap

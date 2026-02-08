@@ -6,6 +6,7 @@ import {
   waiverClaimToResponse,
   waiverPriorityToResponse,
   faabBudgetToResponse,
+  waiverWirePlayerToResponse,
 } from './waivers.model';
 import { requireUserId, requireLeagueId } from '../../utils/controller-helpers';
 
@@ -147,7 +148,7 @@ export class WaiversController {
       const players = await this.waiversService.getWaiverWirePlayers(leagueId);
 
       res.status(200).json({
-        players,
+        players: players.map(waiverWirePlayerToResponse),
       });
     } catch (error) {
       next(error);

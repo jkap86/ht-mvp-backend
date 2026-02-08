@@ -277,3 +277,11 @@ export function parseWaiverSettings(settings: Record<string, any> | null): Waive
     faabBudget: settings?.faab_budget ?? 100,
   };
 }
+
+/**
+ * Resolve current week from league object
+ * Checks settings.current_week first (legacy/flexible storage), then currentWeek property, then current_week property
+ */
+export function resolveLeagueCurrentWeek(league: any): number | null {
+  return league?.settings?.current_week ?? league?.currentWeek ?? league?.current_week ?? null;
+}

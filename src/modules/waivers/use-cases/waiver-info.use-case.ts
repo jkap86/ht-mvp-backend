@@ -10,6 +10,7 @@ import {
   FaabBudgetWithDetails,
   WaiverWirePlayerWithDetails,
   parseWaiverSettings,
+  resolveLeagueCurrentWeek,
 } from '../waivers.model';
 import { NotFoundException, ForbiddenException } from '../../../utils/exceptions';
 import { runInTransaction } from '../../../shared/transaction-runner';
@@ -127,7 +128,7 @@ export async function addToWaiverWire(
   if (settings.waiverType === 'none') return;
 
   const season = parseInt(league.season, 10);
-  const currentWeek = league.currentWeek || 1;
+  const currentWeek = resolveLeagueCurrentWeek(league) ?? 1;
 
   // Calculate expiration
   const expiresAt = new Date();

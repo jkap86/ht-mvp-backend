@@ -15,6 +15,7 @@ import {
   waiverClaimToResponse,
   waiverPriorityToResponse,
   faabBudgetToResponse,
+  resolveLeagueCurrentWeek,
 } from '../waivers.model';
 import { NotFoundException } from '../../../utils/exceptions';
 import { runWithLock, LockDomain } from '../../../shared/transaction-runner';
@@ -48,7 +49,7 @@ export async function processLeagueClaims(
   }
 
   const season = parseInt(league.season, 10);
-  const currentWeek = league.settings?.current_week ?? league.currentWeek ?? null;
+  const currentWeek = resolveLeagueCurrentWeek(league);
 
   // Skip processing if no current week set (pre-season)
   if (currentWeek === null) {

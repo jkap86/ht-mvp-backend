@@ -12,6 +12,7 @@ import {
   SubmitClaimRequest,
   parseWaiverSettings,
   waiverClaimToResponse,
+  resolveLeagueCurrentWeek,
 } from '../waivers.model';
 import {
   NotFoundException,
@@ -56,7 +57,7 @@ export async function submitClaim(
   }
 
   const season = parseInt(league.season, 10);
-  const currentWeek = league.currentWeek || 1;
+  const currentWeek = resolveLeagueCurrentWeek(league) ?? 1;
 
   // Execute in transaction with lock
   const claim = await runWithLock(
