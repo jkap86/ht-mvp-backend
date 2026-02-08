@@ -76,6 +76,7 @@
 
 import type { PoolClient } from 'pg';
 import { logger } from '../config/logger.config';
+import { tryGetEventBus } from './events';
 
 /**
  * Lock domain enum with priority values.
@@ -322,9 +323,11 @@ export async function runInDraftTransaction<T>(
 ): Promise<T> {
   const client = await pool.connect();
   const slowThreshold = options?.slowThresholdMs ?? DEFAULT_SLOW_LOCK_THRESHOLD_MS;
+  const eventBus = tryGetEventBus();
 
   try {
     await client.query('BEGIN');
+    eventBus?.beginTransaction();
 
     const lockId = getLockId(LockDomain.DRAFT, draftId);
     const start = Date.now();
@@ -340,8 +343,10 @@ export async function runInDraftTransaction<T>(
 
     const result = await fn(client);
     await client.query('COMMIT');
+    eventBus?.commitTransaction();
     return result;
   } catch (error) {
+    eventBus?.rollbackTransaction();
     await client.query('ROLLBACK');
     throw error;
   } finally {
