@@ -34,6 +34,12 @@ export const proposeTradeSchema = z
   .refine(
     (data) => data.requesting_player_ids.length > 0 || data.requesting_pick_asset_ids.length > 0,
     { message: 'Must request at least one player or draft pick' }
+  )
+  .refine(
+    (data) =>
+      data.offering_player_ids.length > 0 ||
+      data.offering_pick_asset_ids.length > 0,
+    { message: 'Must offer at least one player or draft pick' }
   );
 
 /** Schema for countering a trade */
@@ -58,6 +64,12 @@ export const counterTradeSchema = z
   .refine(
     (data) => data.requesting_player_ids.length > 0 || data.requesting_pick_asset_ids.length > 0,
     { message: 'Must request at least one player or draft pick' }
+  )
+  .refine(
+    (data) =>
+      data.offering_player_ids.length > 0 ||
+      data.offering_pick_asset_ids.length > 0,
+    { message: 'Must offer at least one player or draft pick' }
   );
 
 /** Schema for voting on a trade */

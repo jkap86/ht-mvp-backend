@@ -224,6 +224,16 @@ async function proposeTradeCore(
     toRosterId: number;
   }> = [];
 
+  // Fail fast if picks are provided but pick trading is not configured
+  if (
+    (offeringPickAssetIds.length > 0 || requestingPickAssetIds.length > 0) &&
+    !ctx.pickAssetRepo
+  ) {
+    throw new ValidationException(
+      'Draft pick trading is not configured for this league.'
+    );
+  }
+
   if (
     (offeringPickAssetIds.length > 0 || requestingPickAssetIds.length > 0) &&
     ctx.pickAssetRepo
