@@ -1,5 +1,9 @@
 import { PoolClient } from 'pg';
-import { WaiverClaimsRepository, WaiverClaimWithCurrentPriority } from '../waivers.repository';
+import {
+  WaiverClaimsRepository,
+  WaiverClaimWithCurrentPriority,
+  WaiverProcessingRunsRepository,
+} from '../waivers.repository';
 import {
   RosterPlayersRepository,
   RosterTransactionsRepository,
@@ -45,6 +49,7 @@ export interface ProcessWaiversContext extends WaiverInfoContext {
   tradesRepo?: TradesRepository;
   eventListenerService?: EventListenerService;
   rosterMutationService?: RosterMutationService;
+  processingRunsRepo?: WaiverProcessingRunsRepository;
 }
 
 /**
@@ -89,13 +94,51 @@ export async function processLeagueClaims(
     LockDomain.WAIVER,
     leagueId,
     async (client) => {
-      // Get all pending claims ordered by roster, then claim_order
-      const allClaims = await ctx.claimsRepo.getPendingByLeagueWithCurrentPriority(
-        leagueId,
-        season,
-        currentWeek,
-        client
-      );
+      // Calculate window start for deduplication (truncate to hour)
+      const windowStart = new Date();
+      windowStart.setMinutes(0, 0, 0);
+
+      // Create processing run record FIRST to establish snapshot point
+      // If a run already exists for this window, we skip processing
+      let processingRunId: number | null = null;
+      if (ctx.processingRunsRepo) {
+        const processingRun = await ctx.processingRunsRepo.tryCreate(
+          leagueId,
+          season,
+          currentWeek,
+          windowStart,
+          client
+        );
+        if (!processingRun) {
+          logger.debug(`Waiver processing already ran for league ${leagueId} in this window`);
+          return { processed: 0, successful: 0 };
+        }
+        processingRunId = processingRun.id;
+
+        // Snapshot: atomically assign this processing_run_id to all pending claims
+        const snapshotCount = await ctx.claimsRepo.snapshotClaimsForProcessingRun(
+          leagueId,
+          season,
+          currentWeek,
+          processingRunId,
+          client
+        );
+        logger.debug(`Snapshotted ${snapshotCount} claims for processing run ${processingRunId}`, { leagueId });
+      }
+
+      // Get claims to process - either snapshotted claims (if using processing runs)
+      // or all pending claims (legacy behavior)
+      let allClaims: WaiverClaimWithCurrentPriority[];
+      if (processingRunId && ctx.processingRunsRepo) {
+        allClaims = await ctx.claimsRepo.getPendingByProcessingRun(processingRunId, client);
+      } else {
+        allClaims = await ctx.claimsRepo.getPendingByLeagueWithCurrentPriority(
+          leagueId,
+          season,
+          currentWeek,
+          client
+        );
+      }
 
       if (allClaims.length === 0) {
         return { processed: 0, successful: 0 };
@@ -282,6 +325,16 @@ export async function processLeagueClaims(
         }
 
         roundNumber++;
+      }
+
+      // Update processing run with results
+      if (processingRunId && ctx.processingRunsRepo) {
+        await ctx.processingRunsRepo.updateResults(
+          processingRunId,
+          processedCount,
+          successfulCount,
+          client
+        );
       }
 
       return { processed: processedCount, successful: successfulCount };

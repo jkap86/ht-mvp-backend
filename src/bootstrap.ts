@@ -58,6 +58,7 @@ import { SleeperApiClient } from './modules/players/sleeper.client';
 import { CFBDApiClient } from './modules/players/cfbd.client';
 import { RosterService as RosterPlayerService } from './modules/rosters/rosters.service';
 import { RosterMutationService } from './modules/rosters/roster-mutation.service';
+import { RosterRulesService } from './modules/rosters/roster-rules.service';
 import { LineupService } from './modules/lineups/lineups.service';
 import { ScoringService } from './modules/scoring/scoring.service';
 import { StatsService } from './modules/scoring/stats.service';
@@ -84,6 +85,7 @@ import { LockHelper } from './shared/locks';
 // Infrastructure
 import { LeaderLock } from './shared/leader-lock';
 import { DomainEventBus, SocketEventSubscriber } from './shared/events';
+import { CommandBus, registerAllHandlers } from './domain';
 
 function bootstrap(): void {
   // Database
@@ -403,6 +405,17 @@ function bootstrap(): void {
       )
   );
 
+  // Roster rules validator (unified validation for roster state transitions)
+  container.register(
+    KEYS.ROSTER_RULES_SERVICE,
+    () =>
+      new RosterRulesService(
+        container.resolve(KEYS.ROSTER_PLAYERS_REPO),
+        container.resolve(KEYS.LEAGUE_REPO),
+        container.resolve(KEYS.PICK_ASSET_REPO)
+      )
+  );
+
   // Season management services
   container.register(
     KEYS.ROSTER_PLAYER_SERVICE,
@@ -593,6 +606,14 @@ function bootstrap(): void {
     // Register the socket subscriber to handle domain events
     eventBus.subscribe(new SocketEventSubscriber());
     return eventBus;
+  });
+
+  // Infrastructure - Command Bus for centralized domain mutations
+  container.register(KEYS.COMMAND_BUS, () => {
+    const commandBus = new CommandBus();
+    // Register all command handlers
+    registerAllHandlers(commandBus);
+    return commandBus;
   });
 
   // Bestball service

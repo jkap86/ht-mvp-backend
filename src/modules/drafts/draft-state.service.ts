@@ -1,16 +1,80 @@
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import { DraftRepository } from './drafts.repository';
-import { DraftSettings, draftToResponse } from './drafts.model';
-import { LeagueRepository } from '../leagues/leagues.repository';
+import { Draft, DraftOrderEntry, DraftSettings, draftToResponse } from './drafts.model';
+import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import { RosterPlayersRepository } from '../rosters/rosters.repository';
-import { DraftEngineFactory } from '../../engines';
-import { NotFoundException, ForbiddenException, ValidationException } from '../../utils/exceptions';
+import { PlayerRepository } from '../players/players.repository';
+import { Player } from '../players/players.model';
+import { DraftEngineFactory, IDraftEngine } from '../../engines';
+import { NotFoundException, ForbiddenException, ValidationException, ErrorCode } from '../../utils/exceptions';
 import { EventTypes, tryGetEventBus } from '../../shared/events';
 import { finalizeDraftCompletion } from './draft-completion.utils';
 import { ScheduleGeneratorService } from '../matchups/schedule-generator.service';
 import { DraftPickAssetRepository } from './draft-pick-asset.repository';
+import { DraftPickAsset } from './draft-pick-asset.model';
 import { container, KEYS } from '../../container';
 import { runInDraftTransaction } from '../../shared/locks';
+
+// ============ Parameter Interfaces for Mutation Methods ============
+
+/**
+ * Parameters for applyPick - user-initiated player pick
+ */
+export interface ApplyPickParams {
+  leagueId: number;
+  draftId: number;
+  rosterId: number;
+  playerId: number;
+  isAutoPick?: boolean;
+  idempotencyKey?: string;
+}
+
+/**
+ * Parameters for applyAutoPick - system auto pick
+ */
+export interface ApplyAutoPickParams {
+  draftId: number;
+  reason: 'timeout' | 'autodraft' | 'empty_queue';
+}
+
+/**
+ * Parameters for advanceTurn - advance to next pick without making a pick
+ */
+export interface AdvanceTurnParams {
+  draftId: number;
+}
+
+/**
+ * Parameters for applyTimeoutAction - handle pick timeout
+ */
+export interface ApplyTimeoutActionParams {
+  draftId: number;
+  forceAutodraft?: boolean;
+}
+
+/**
+ * Result of applying a pick
+ */
+export interface ApplyPickResult {
+  pick: any;
+  draft: any;
+  nextPickState: NextPickState;
+  player?: Player | null;
+}
+
+/**
+ * Next pick state computed after a pick
+ */
+export interface NextPickState {
+  currentPick: number | null;
+  currentRound: number | null;
+  currentRosterId: number | null;
+  originalRosterId?: number | null;
+  isTraded?: boolean;
+  pickDeadline: Date | null;
+  status?: 'in_progress' | 'completed';
+  completedAt?: Date | null;
+}
 
 export class DraftStateService {
   constructor(
@@ -441,5 +505,498 @@ export class DraftStateService {
     }
 
     return { draft: response, undone: undoneItem };
+  }
+
+  // ============ NEW CENTRALIZED MUTATION METHODS ============
+
+  /**
+   * Apply a pick to the draft state.
+   * This is the SINGLE entry point for all draft picks (manual and auto).
+   * All draft state mutations flow through this method.
+   */
+  async applyPick(params: ApplyPickParams): Promise<ApplyPickResult> {
+    const { leagueId, draftId, rosterId, playerId, isAutoPick = false, idempotencyKey } = params;
+
+    const pool = container.resolve<Pool>(KEYS.POOL);
+    const playerRepo = container.resolve<PlayerRepository>(KEYS.PLAYER_REPO);
+
+    const { pick, updatedDraft, nextPickState, player } = await runInDraftTransaction(
+      pool,
+      draftId,
+      async (client) => {
+        // Read fresh draft state inside lock
+        const draft = await this.draftRepo.findByIdWithClient(client, draftId);
+        if (!draft) throw new NotFoundException('Draft not found');
+
+        if (draft.leagueId !== leagueId) {
+          throw new NotFoundException('Draft not found in this league');
+        }
+
+        if (draft.status !== 'in_progress') {
+          throw new ValidationException('Draft is not in progress');
+        }
+
+        // Validate scheduled start time has passed
+        if (draft.scheduledStart && new Date() < draft.scheduledStart) {
+          throw new ValidationException('Draft has not started yet', ErrorCode.DRAFT_NOT_STARTED);
+        }
+
+        // Validate order is confirmed (non-auction drafts only)
+        if (!draft.orderConfirmed && draft.draftType !== 'auction') {
+          throw new ValidationException('Draft order must be confirmed before making picks');
+        }
+
+        // Validate player pool eligibility
+        await this.validatePlayerPoolEligibility(client, draft, playerId, playerRepo);
+
+        // Read fresh draft order inside lock
+        const draftOrder = await this.draftRepo.getDraftOrderWithClient(client, draftId);
+        const engine = this.engineFactory.createEngine(draft.draftType);
+
+        // Load pick assets inside lock for fresh traded picks state
+        const pickAssets = this.pickAssetRepo
+          ? await this.pickAssetRepo.findByDraftIdWithClient(client, draftId)
+          : [];
+
+        // Verify it's this roster's turn (skip for auto-picks which are system-initiated)
+        if (!isAutoPick) {
+          const actualPicker = engine.getActualPickerForPickNumber?.(
+            draft,
+            draftOrder,
+            pickAssets,
+            draft.currentPick
+          );
+          const currentPickerRosterId =
+            actualPicker?.rosterId ??
+            engine.getPickerForPickNumber(draft, draftOrder, draft.currentPick)?.rosterId;
+
+          if (currentPickerRosterId !== rosterId) {
+            throw new ValidationException('It is not your turn to pick');
+          }
+        }
+
+        // Calculate pick position
+        const totalRosters = draftOrder.length;
+        const pickInRound = engine.getPickInRound(draft.currentPick, totalRosters);
+
+        // Compute next pick state with FRESH data inside the lock
+        const computedNextPickState = this.computeNextPickState(draft, draftOrder, engine, pickAssets);
+
+        // Make the pick using the client that already holds the lock
+        const result = await this.draftRepo.makePickAndAdvanceTxWithClient(client, {
+          draftId,
+          expectedPickNumber: draft.currentPick,
+          round: draft.currentRound,
+          pickInRound,
+          rosterId,
+          playerId,
+          nextPickState: computedNextPickState,
+          idempotencyKey,
+          isAutoPick,
+        });
+
+        // If draft completed, run unified finalization inside the transaction
+        if (computedNextPickState.status === 'completed') {
+          await finalizeDraftCompletion(
+            {
+              draftRepo: this.draftRepo,
+              leagueRepo: this.leagueRepo,
+              rosterPlayersRepo: this.rosterPlayersRepo,
+              scheduleGeneratorService: this.scheduleGeneratorService,
+            },
+            draftId,
+            leagueId
+          );
+        }
+
+        // Fetch player info for socket event
+        const playerData = await playerRepo.findByIdWithClient(client, playerId);
+
+        return {
+          pick: result.pick,
+          updatedDraft: result.draft,
+          nextPickState: computedNextPickState,
+          player: playerData,
+        };
+      }
+    );
+
+    // Emit events AFTER transaction commits
+    this.emitPickEvents(draftId, pick, updatedDraft, nextPickState, player, isAutoPick);
+
+    return { pick, draft: updatedDraft, nextPickState, player };
+  }
+
+  /**
+   * Apply an automatic pick (timeout, autodraft, or empty queue).
+   * Called by autopick job or engine.tick().
+   */
+  async applyAutoPick(params: ApplyAutoPickParams): Promise<ApplyPickResult | { actionTaken: false; reason: string }> {
+    const { draftId, reason } = params;
+
+    const pool = container.resolve<Pool>(KEYS.POOL);
+
+    // First, determine what to pick
+    const pickDecision = await runInDraftTransaction(pool, draftId, async (client) => {
+      const draft = await this.draftRepo.findByIdWithClient(client, draftId);
+      if (!draft) throw new NotFoundException('Draft not found');
+
+      if (draft.status !== 'in_progress') {
+        return { actionTaken: false as const, reason: 'not_in_progress' };
+      }
+
+      const draftOrder = await this.draftRepo.getDraftOrderWithClient(client, draftId);
+      const engine = this.engineFactory.createEngine(draft.draftType);
+      const pickAssets = this.pickAssetRepo
+        ? await this.pickAssetRepo.findByDraftIdWithClient(client, draftId)
+        : [];
+
+      // Determine current picker
+      const actualPicker = engine.getActualPickerForPickNumber?.(
+        draft,
+        draftOrder,
+        pickAssets,
+        draft.currentPick
+      );
+      const currentRosterId =
+        actualPicker?.rosterId ??
+        engine.getPickerForPickNumber(draft, draftOrder, draft.currentPick)?.rosterId;
+
+      if (!currentRosterId) {
+        return { actionTaken: false as const, reason: 'no_current_picker' };
+      }
+
+      // Get best available player from queue or rankings
+      const playerRepo = container.resolve<PlayerRepository>(KEYS.PLAYER_REPO);
+      const bestPlayer = await this.getBestAvailablePlayer(client, draft, currentRosterId, playerRepo);
+
+      if (!bestPlayer) {
+        return { actionTaken: false as const, reason: 'no_available_players' };
+      }
+
+      return {
+        actionTaken: true as const,
+        leagueId: draft.leagueId,
+        rosterId: currentRosterId,
+        playerId: bestPlayer.id,
+      };
+    });
+
+    if (!pickDecision.actionTaken) {
+      return pickDecision;
+    }
+
+    // Now apply the pick
+    return await this.applyPick({
+      leagueId: pickDecision.leagueId,
+      draftId,
+      rosterId: pickDecision.rosterId,
+      playerId: pickDecision.playerId,
+      isAutoPick: true,
+      idempotencyKey: `autopick-${draftId}-${Date.now()}`,
+    });
+  }
+
+  /**
+   * Advance to the next turn without making a pick.
+   * Used for recovery scenarios or commissioner skip.
+   */
+  async advanceTurn(params: AdvanceTurnParams): Promise<{ draft: any; nextPickState: NextPickState }> {
+    const { draftId } = params;
+    const pool = container.resolve<Pool>(KEYS.POOL);
+
+    const { response, nextPickState } = await runInDraftTransaction(pool, draftId, async (client) => {
+      const draft = await this.draftRepo.findByIdWithClient(client, draftId);
+      if (!draft) throw new NotFoundException('Draft not found');
+
+      if (draft.status !== 'in_progress') {
+        throw new ValidationException('Draft is not in progress');
+      }
+
+      const draftOrder = await this.draftRepo.getDraftOrderWithClient(client, draftId);
+      const engine = this.engineFactory.createEngine(draft.draftType);
+      const pickAssets = this.pickAssetRepo
+        ? await this.pickAssetRepo.findByDraftIdWithClient(client, draftId)
+        : [];
+
+      // Compute next state (as if a pick was made)
+      const computedNextPickState = this.computeNextPickState(draft, draftOrder, engine, pickAssets);
+
+      // Update draft state without recording a pick
+      const updatedDraft = await this.draftRepo.updateStateWithClient(client, draftId, {
+        currentPick: computedNextPickState.currentPick,
+        currentRound: computedNextPickState.currentRound,
+        currentRosterId: computedNextPickState.currentRosterId,
+        pickDeadline: computedNextPickState.pickDeadline,
+        status: computedNextPickState.status,
+        completedAt: computedNextPickState.completedAt,
+      });
+
+      if (computedNextPickState.status === 'completed') {
+        await finalizeDraftCompletion(
+          {
+            draftRepo: this.draftRepo,
+            leagueRepo: this.leagueRepo,
+            rosterPlayersRepo: this.rosterPlayersRepo,
+            scheduleGeneratorService: this.scheduleGeneratorService,
+          },
+          draftId,
+          draft.leagueId
+        );
+      }
+
+      return {
+        response: draftToResponse(updatedDraft),
+        nextPickState: computedNextPickState,
+      };
+    });
+
+    // Emit next pick event
+    const eventBus = tryGetEventBus();
+    if (nextPickState.status !== 'completed') {
+      eventBus?.publish({
+        type: EventTypes.DRAFT_NEXT_PICK,
+        payload: {
+          draftId,
+          ...nextPickState,
+        },
+      });
+    } else {
+      eventBus?.publish({
+        type: EventTypes.DRAFT_COMPLETED,
+        payload: { draftId, draft: response },
+      });
+    }
+
+    return { draft: response, nextPickState };
+  }
+
+  /**
+   * Handle pick timeout - triggers autopick and optionally force-enables autodraft.
+   * Called by autopick job when deadline expires.
+   */
+  async applyTimeoutAction(params: ApplyTimeoutActionParams): Promise<ApplyPickResult | { actionTaken: false; reason: string }> {
+    const { draftId, forceAutodraft = true } = params;
+
+    // Perform the autopick
+    const result = await this.applyAutoPick({ draftId, reason: 'timeout' });
+
+    // If autopick succeeded and forceAutodraft is enabled, enable autodraft for the timed-out user
+    if ('pick' in result && forceAutodraft) {
+      const rosterId = result.pick.rosterId;
+      try {
+        await this.draftRepo.setAutodraftEnabled(draftId, rosterId, true);
+
+        const eventBus = tryGetEventBus();
+        eventBus?.publish({
+          type: EventTypes.DRAFT_AUTODRAFT_TOGGLED,
+          payload: {
+            draftId,
+            rosterId,
+            enabled: true,
+            forced: true,
+          },
+        });
+      } catch (error) {
+        // Log but don't fail the timeout action
+        console.warn(`Failed to enable autodraft for roster ${rosterId}:`, error);
+      }
+    }
+
+    return result;
+  }
+
+  // ============ Private Helper Methods ============
+
+  /**
+   * Compute the next pick state without making any DB changes.
+   */
+  private computeNextPickState(
+    draft: Draft,
+    draftOrder: DraftOrderEntry[],
+    engine: IDraftEngine,
+    pickAssets: DraftPickAsset[] = []
+  ): NextPickState {
+    const totalRosters = draftOrder.length;
+    const totalPicks = totalRosters * draft.rounds;
+    const nextPick = draft.currentPick + 1;
+
+    if (nextPick > totalPicks) {
+      return {
+        currentPick: null,
+        currentRound: null,
+        currentRosterId: null,
+        originalRosterId: null,
+        isTraded: false,
+        pickDeadline: null,
+        status: 'completed',
+        completedAt: new Date(),
+      };
+    }
+
+    const nextRound = engine.getRound(nextPick, totalRosters);
+
+    const actualPicker = engine.getActualPickerForPickNumber?.(
+      draft,
+      draftOrder,
+      pickAssets,
+      nextPick
+    );
+
+    const originalPicker = engine.getPickerForPickNumber(draft, draftOrder, nextPick);
+    const nextPickerRosterId = actualPicker?.rosterId ?? originalPicker?.rosterId ?? null;
+
+    const pickDeadline = engine.calculatePickDeadline(draft);
+
+    return {
+      currentPick: nextPick,
+      currentRound: nextRound,
+      currentRosterId: nextPickerRosterId,
+      originalRosterId: actualPicker?.originalRosterId ?? originalPicker?.rosterId ?? null,
+      isTraded: actualPicker?.isTraded ?? false,
+      pickDeadline,
+      status: 'in_progress',
+    };
+  }
+
+  /**
+   * Validate that a player is eligible for this draft's player pool.
+   */
+  private async validatePlayerPoolEligibility(
+    client: PoolClient,
+    draft: Draft,
+    playerId: number,
+    playerRepo: PlayerRepository
+  ): Promise<void> {
+    const settings = draft.settings as DraftSettings;
+    const playerPool = settings?.playerPool;
+
+    if (!playerPool || playerPool.length === 0) {
+      return;
+    }
+
+    const player = await playerRepo.findByIdWithClient(client, playerId);
+    if (!player) {
+      throw new NotFoundException('Player not found');
+    }
+
+    if (!this.isPlayerInPool(player, playerPool)) {
+      const poolLabels = playerPool
+        .map((p) => (p === 'veteran' ? 'veterans' : p === 'rookie' ? 'rookies' : 'college players'))
+        .join(', ');
+      throw new ValidationException(
+        `This draft only allows ${poolLabels}. ${player.fullName} is not eligible.`
+      );
+    }
+  }
+
+  private isPlayerInPool(player: Player, playerPool: string[]): boolean {
+    for (const poolType of playerPool) {
+      if (poolType === 'veteran' && player.playerType === 'nfl' && (player.yearsExp === null || player.yearsExp > 0)) {
+        return true;
+      }
+      if (poolType === 'rookie' && player.playerType === 'nfl' && player.yearsExp === 0) {
+        return true;
+      }
+      if (poolType === 'college' && player.playerType === 'college') {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Get the best available player for autopick.
+   */
+  private async getBestAvailablePlayer(
+    client: PoolClient,
+    draft: Draft,
+    rosterId: number,
+    playerRepo: PlayerRepository
+  ): Promise<Player | null> {
+    // First try to get from user's queue
+    const queueResult = await client.query(
+      `SELECT player_id FROM draft_queues
+       WHERE draft_id = $1 AND roster_id = $2
+       AND player_id NOT IN (
+         SELECT player_id FROM draft_picks WHERE draft_id = $1 AND player_id IS NOT NULL
+       )
+       ORDER BY queue_position ASC
+       LIMIT 1`,
+      [draft.id, rosterId]
+    );
+
+    if (queueResult.rows.length > 0) {
+      return await playerRepo.findByIdWithClient(client, queueResult.rows[0].player_id);
+    }
+
+    // Fall back to best available by ADP
+    const bestAvailableResult = await client.query(
+      `SELECT id FROM players
+       WHERE player_type = 'nfl'
+       AND id NOT IN (
+         SELECT player_id FROM draft_picks WHERE draft_id = $1 AND player_id IS NOT NULL
+       )
+       ORDER BY adp ASC NULLS LAST
+       LIMIT 1`,
+      [draft.id]
+    );
+
+    if (bestAvailableResult.rows.length > 0) {
+      return await playerRepo.findByIdWithClient(client, bestAvailableResult.rows[0].id);
+    }
+
+    return null;
+  }
+
+  /**
+   * Emit pick-related events after transaction commits.
+   */
+  private emitPickEvents(
+    draftId: number,
+    pick: any,
+    updatedDraft: Draft,
+    nextPickState: NextPickState,
+    player: Player | null | undefined,
+    isAutoPick: boolean
+  ): void {
+    const enrichedPick = {
+      ...pick,
+      is_auto_pick: isAutoPick,
+      player_name: player?.fullName,
+      player_position: player?.position,
+      player_team: player?.team,
+    };
+
+    const eventBus = tryGetEventBus();
+    eventBus?.publish({
+      type: EventTypes.DRAFT_PICK,
+      payload: { draftId, pick: enrichedPick },
+    });
+
+    eventBus?.publish({
+      type: EventTypes.DRAFT_QUEUE_UPDATED,
+      payload: { draftId, playerId: pick.playerId, action: 'removed' },
+    });
+
+    if (nextPickState.status !== 'completed') {
+      eventBus?.publish({
+        type: EventTypes.DRAFT_NEXT_PICK,
+        payload: {
+          draftId,
+          currentPick: nextPickState.currentPick,
+          currentRound: nextPickState.currentRound,
+          currentRosterId: nextPickState.currentRosterId,
+          originalRosterId: nextPickState.originalRosterId,
+          isTraded: nextPickState.isTraded,
+          pickDeadline: nextPickState.pickDeadline,
+        },
+      });
+    } else {
+      eventBus?.publish({
+        type: EventTypes.DRAFT_COMPLETED,
+        payload: { draftId, draft: draftToResponse(updatedDraft) },
+      });
+    }
   }
 }

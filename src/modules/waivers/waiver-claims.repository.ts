@@ -326,4 +326,76 @@ export class WaiverClaimsRepository {
     );
     return result.rows.length > 0;
   }
+
+  // ============ Snapshotting Methods ============
+
+  /**
+   * Snapshot pending claims for a processing run.
+   * Atomically assigns a processing_run_id to all pending claims for a league/week.
+   * Returns the number of claims snapshotted.
+   *
+   * Only claims that:
+   * - Are in 'pending' status
+   * - Match the season/week
+   * - Have NOT already been snapshotted (processing_run_id IS NULL)
+   *
+   * will be included in the snapshot.
+   */
+  async snapshotClaimsForProcessingRun(
+    leagueId: number,
+    season: number,
+    week: number,
+    processingRunId: number,
+    client: PoolClient
+  ): Promise<number> {
+    const result = await client.query(
+      `UPDATE waiver_claims
+       SET processing_run_id = $4
+       WHERE league_id = $1
+         AND season = $2
+         AND week = $3
+         AND status = 'pending'
+         AND processing_run_id IS NULL`,
+      [leagueId, season, week, processingRunId]
+    );
+    return result.rowCount ?? 0;
+  }
+
+  /**
+   * Get pending claims by processing run ID with current priority.
+   * Only returns claims that were snapshotted to this specific processing run.
+   * This ensures claims submitted AFTER snapshotting are not included.
+   */
+  async getPendingByProcessingRun(
+    processingRunId: number,
+    client: PoolClient
+  ): Promise<WaiverClaimWithCurrentPriority[]> {
+    const result = await client.query(
+      `SELECT wc.*, wp.priority as current_priority
+       FROM waiver_claims wc
+       LEFT JOIN waiver_priority wp ON wp.roster_id = wc.roster_id
+         AND wp.league_id = wc.league_id AND wp.season = wc.season
+       WHERE wc.processing_run_id = $1 AND wc.status = 'pending'
+       ORDER BY wc.roster_id, wc.claim_order ASC`,
+      [processingRunId]
+    );
+    return result.rows.map((row) => ({
+      ...waiverClaimFromDatabase(row),
+      currentPriority: row.current_priority !== null ? parseInt(row.current_priority, 10) : null,
+    }));
+  }
+
+  /**
+   * Clear processing_run_id for claims that weren't processed.
+   * Called if processing fails and needs to be retried.
+   */
+  async clearProcessingRunId(processingRunId: number, client: PoolClient): Promise<number> {
+    const result = await client.query(
+      `UPDATE waiver_claims
+       SET processing_run_id = NULL
+       WHERE processing_run_id = $1 AND status = 'pending'`,
+      [processingRunId]
+    );
+    return result.rowCount ?? 0;
+  }
 }

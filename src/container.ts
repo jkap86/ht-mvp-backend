@@ -143,4 +143,8 @@ export const KEYS = {
   // Infrastructure
   LEADER_LOCK: 'leaderLock',
   DOMAIN_EVENT_BUS: 'domainEventBus',
+  COMMAND_BUS: 'commandBus',
+
+  // Validation Services
+  ROSTER_RULES_SERVICE: 'rosterRulesService',
 };

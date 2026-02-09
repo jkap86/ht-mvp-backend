@@ -57,6 +57,7 @@ export interface WaiverClaim {
   week: number;
   processedAt: Date | null;
   failureReason: string | null;
+  processingRunId: number | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -69,6 +70,33 @@ export interface WaiverClaimWithDetails extends WaiverClaim {
   playerTeam: string | null;
   dropPlayerName: string | null;
   dropPlayerPosition: string | null;
+}
+
+/**
+ * Waiver processing run - tracks a specific processing execution
+ */
+export interface WaiverProcessingRun {
+  id: number;
+  leagueId: number;
+  season: number;
+  week: number;
+  windowStartAt: Date;
+  ranAt: Date;
+  claimsFound: number;
+  claimsSuccessful: number;
+}
+
+export function waiverProcessingRunFromDatabase(row: any): WaiverProcessingRun {
+  return {
+    id: row.id,
+    leagueId: row.league_id,
+    season: row.season,
+    week: row.week,
+    windowStartAt: row.window_start_at,
+    ranAt: row.ran_at,
+    claimsFound: row.claims_found,
+    claimsSuccessful: row.claims_successful,
+  };
 }
 
 /**
@@ -164,6 +192,7 @@ export function waiverClaimFromDatabase(row: any): WaiverClaim {
     week: row.week,
     processedAt: row.processed_at,
     failureReason: row.failure_reason,
+    processingRunId: row.processing_run_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
