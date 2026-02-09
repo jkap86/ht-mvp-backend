@@ -16,6 +16,22 @@ jest.mock('../../../socket/socket.service', () => ({
   tryGetSocketService: jest.fn(() => null),
 }));
 
+// Mock event bus (used by roster service and transaction runner)
+jest.mock('../../../shared/events', () => ({
+  tryGetEventBus: jest.fn(() => ({
+    publish: jest.fn(),
+    rollbackTransaction: jest.fn(),
+    beginTransaction: jest.fn(),
+    commitTransaction: jest.fn(),
+  })),
+  EventTypes: {
+    MEMBER_JOINED: 'MEMBER_JOINED',
+    MEMBER_LEFT: 'MEMBER_LEFT',
+    MEMBER_KICKED: 'MEMBER_KICKED',
+    MEMBER_REINSTATED: 'MEMBER_REINSTATED',
+  },
+}));
+
 // Mock league for testing
 const createMockLeague = (overrides: Partial<League> = {}): League =>
   new League(
@@ -64,6 +80,7 @@ const createMockPoolClient = () => {
 const createMockPool = (mockClient: jest.Mocked<PoolClient>): jest.Mocked<Pool> =>
   ({
     connect: jest.fn().mockResolvedValue(mockClient),
+    query: jest.fn().mockResolvedValue({ rows: [] }),
   }) as unknown as jest.Mocked<Pool>;
 
 // Mock repositories
@@ -107,8 +124,8 @@ const createMockDuesRepo = (): jest.Mocked<DuesRepository> =>
 
 const createMockEventListenerService = (): jest.Mocked<EventListenerService> =>
   ({
-    handleMemberJoined: jest.fn(),
-    handleMemberKicked: jest.fn(),
+    handleMemberJoined: jest.fn().mockResolvedValue(undefined),
+    handleMemberKicked: jest.fn().mockResolvedValue(undefined),
   }) as unknown as jest.Mocked<EventListenerService>;
 
 describe('RosterService', () => {

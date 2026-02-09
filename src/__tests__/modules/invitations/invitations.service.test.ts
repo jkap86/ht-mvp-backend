@@ -70,6 +70,7 @@ const createMockInvitationsRepo = (): jest.Mocked<InvitationsRepository> =>
     findByLeagueId: jest.fn(),
     hasPendingInvite: jest.fn(),
     updateStatus: jest.fn(),
+    updateStatusConditional: jest.fn(),
     delete: jest.fn(),
     expireOldInvitations: jest.fn(),
     searchUsersForInvite: jest.fn(),
@@ -281,15 +282,15 @@ describe('InvitationsService', () => {
   describe('acceptInvitation', () => {
     it('should add user to league and update invitation status', async () => {
       mockInvitationsRepo.findById.mockResolvedValue(mockInvitation);
+      mockInvitationsRepo.updateStatusConditional.mockResolvedValue({ ...mockInvitation, status: 'accepted' });
       mockRosterService.joinLeague.mockResolvedValue({ message: 'Joined successfully' } as any);
-      mockInvitationsRepo.updateStatus.mockResolvedValue({ ...mockInvitation, status: 'accepted' });
       mockLeagueRepo.findByIdWithUserRoster.mockResolvedValue(mockLeague as any);
 
       const result = await invitationsService.acceptInvitation(1, 'user-456');
 
       expect(result.message).toBe('Joined successfully');
       expect(mockRosterService.joinLeague).toHaveBeenCalledWith(1, 'user-456');
-      expect(mockInvitationsRepo.updateStatus).toHaveBeenCalledWith(1, 'accepted');
+      expect(mockInvitationsRepo.updateStatusConditional).toHaveBeenCalledWith(1, 'accepted', 'pending');
     });
 
     it('should throw NotFoundException when invitation not found', async () => {

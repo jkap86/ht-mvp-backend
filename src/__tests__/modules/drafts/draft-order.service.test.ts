@@ -265,21 +265,20 @@ describe('DraftOrderService', () => {
     });
 
     it('should create empty rosters when league is not full', async () => {
-      const partialRosters = [mockRosters[0], mockRosters[1]]; // Only 2 of 3 rosters exist
       const leagueWith3Slots = { ...mockLeague, totalRosters: 3 };
 
       mockLeagueRepo.findById.mockResolvedValue(leagueWith3Slots as any);
-      // First call returns partial rosters, second call returns all after empty roster creation
-      mockRosterRepo.findByLeagueId
-        .mockResolvedValueOnce(partialRosters as any)
-        .mockResolvedValueOnce(mockRosters as any);
+      // getRosterCount returns 2 (inside transaction, only user-owned rosters)
       mockRosterRepo.getRosterCount.mockResolvedValue(2);
       mockRosterRepo.createEmptyRoster.mockResolvedValue(undefined as any);
+      mockRosterRepo.deleteEmptyRosters.mockResolvedValue(undefined as any);
+      // findByLeagueId is called AFTER transaction, should return all rosters including new empty one
+      mockRosterRepo.findByLeagueId.mockResolvedValue(mockRosters as any);
       mockDraftRepo.updateDraftOrderAtomic.mockResolvedValue(undefined);
 
       await draftOrderService.createInitialOrder(1, 1);
 
-      // Should have created one empty roster
+      // Should have created one empty roster for slot 3
       expect(mockRosterRepo.createEmptyRoster).toHaveBeenCalledWith(1, 3, expect.anything());
       expect(mockDraftRepo.updateDraftOrderAtomic).toHaveBeenCalledWith(1, [1, 2, 3]);
     });

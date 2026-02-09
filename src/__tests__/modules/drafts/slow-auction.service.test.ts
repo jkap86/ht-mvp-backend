@@ -12,6 +12,59 @@ import {
 import { Draft } from '../../../modules/drafts/drafts.model';
 import { NotFoundException, ValidationException } from '../../../utils/exceptions';
 
+// Mock runWithLock and runWithLocks to bypass actual database locking
+jest.mock('../../../shared/transaction-runner', () => ({
+  runWithLock: jest.fn(async (_pool, _domain, _id, fn) => {
+    const mockClient = {
+      query: jest.fn().mockResolvedValue({ rows: [] }),
+      release: jest.fn(),
+    };
+    return fn(mockClient);
+  }),
+  runWithLocks: jest.fn(async (_pool, _locks, fn) => {
+    const mockClient = {
+      query: jest.fn().mockResolvedValue({ rows: [] }),
+      release: jest.fn(),
+    };
+    return fn(mockClient);
+  }),
+  runInTransaction: jest.fn(async (_pool, fn) => {
+    const mockClient = {
+      query: jest.fn().mockResolvedValue({ rows: [] }),
+      release: jest.fn(),
+    };
+    return fn(mockClient);
+  }),
+  LockDomain: {
+    DRAFT: 700_000_000,
+    ROSTER: 200_000_000,
+    AUCTION: 500_000_000,
+  },
+}));
+
+// Mock auction-budget-calculator functions
+jest.mock('../../../modules/drafts/auction/auction-budget-calculator', () => ({
+  getRosterBudgetDataWithClient: jest.fn().mockResolvedValue({
+    spent: 50,
+    wonCount: 5,
+    leadingCommitment: 10,
+  }),
+}));
+
+// Import the mocked function for test manipulation
+import { getRosterBudgetDataWithClient as mockGetRosterBudgetDataWithClient } from '../../../modules/drafts/auction/auction-budget-calculator';
+const mockedGetRosterBudgetDataWithClient = mockGetRosterBudgetDataWithClient as jest.MockedFunction<
+  typeof mockGetRosterBudgetDataWithClient
+>;
+
+// Mock socket service
+jest.mock('../../../socket/socket.service', () => ({
+  tryGetSocketService: jest.fn(() => ({
+    emitAuctionLotCreated: jest.fn(),
+    emitAuctionLotUpdated: jest.fn(),
+  })),
+}));
+
 // Mock data
 const mockDraft: Draft = {
   id: 1,
@@ -106,12 +159,17 @@ const mockSettings: SlowAuctionSettings = {
 const createMockLotRepo = (): jest.Mocked<AuctionLotRepository> =>
   ({
     createLot: jest.fn(),
+    createLotWithClient: jest.fn(),
     findLotById: jest.fn(),
     findActiveLotsByDraft: jest.fn(),
     findLotByDraftAndPlayer: jest.fn(),
+    findLotByDraftAndPlayerWithClient: jest.fn(),
     countActiveLotsForRoster: jest.fn(),
+    countActiveLotsForRosterWithClient: jest.fn(),
     countAllActiveLots: jest.fn(),
+    countAllActiveLotsWithClient: jest.fn(),
     countDailyNominationsForRoster: jest.fn(),
+    countDailyNominationsForRosterWithClient: jest.fn(),
     updateLot: jest.fn(),
     settleLot: jest.fn(),
     passLot: jest.fn(),
@@ -123,6 +181,7 @@ const createMockLotRepo = (): jest.Mocked<AuctionLotRepository> =>
     recordBidHistory: jest.fn(),
     getBidHistoryForLot: jest.fn(),
     getRosterBudgetData: jest.fn(),
+    getRosterBudgetDataWithClient: jest.fn(),
     getAllRosterBudgetData: jest.fn(),
   }) as unknown as jest.Mocked<AuctionLotRepository>;
 
@@ -177,6 +236,20 @@ describe('SlowAuctionService', () => {
       mockPlayerRepo,
       mockPool
     );
+
+    // Set up default return values for WithClient methods
+    mockLotRepo.countActiveLotsForRosterWithClient.mockResolvedValue(0);
+    mockLotRepo.countAllActiveLotsWithClient.mockResolvedValue(0);
+    mockLotRepo.countDailyNominationsForRosterWithClient.mockResolvedValue(0);
+    mockLotRepo.findLotByDraftAndPlayerWithClient.mockResolvedValue(null);
+    mockLotRepo.createLotWithClient.mockResolvedValue(mockLot);
+
+    // Reset the budget calculator mock to default values
+    mockedGetRosterBudgetDataWithClient.mockResolvedValue({
+      spent: 50,
+      wonCount: 5,
+      leadingCommitment: 10,
+    });
   });
 
   describe('getSettings', () => {
@@ -253,7 +326,8 @@ describe('SlowAuctionService', () => {
         expect.objectContaining({
           currentBidderRosterId: 2,
           currentBid: 1,
-        })
+        }),
+        expect.anything() // expected current bid for CAS
       );
       expect(result.updatedLot.currentBidderRosterId).toBe(2);
       expect(result.updatedLot.currentBid).toBe(1);
@@ -279,7 +353,8 @@ describe('SlowAuctionService', () => {
         expect.objectContaining({
           currentBidderRosterId: 2,
           currentBid: 31,
-        })
+        }),
+        expect.anything() // expected current bid for CAS
       );
       expect(result.updatedLot.currentBid).toBe(31);
     });
@@ -303,7 +378,8 @@ describe('SlowAuctionService', () => {
         1,
         expect.objectContaining({
           currentBid: 30,
-        })
+        }),
+        expect.anything() // expected current bid for CAS
       );
     });
 
@@ -332,7 +408,8 @@ describe('SlowAuctionService', () => {
         1,
         expect.objectContaining({
           bidDeadline: expect.any(Date),
-        })
+        }),
+        expect.anything() // expected current bid for CAS
       );
 
       // Should notify previous leader
@@ -417,6 +494,12 @@ describe('SlowAuctionService', () => {
         wonCount: 15, // Full roster
         leadingCommitment: 0,
       });
+      // Also mock the WithClient version used inside the transaction
+      mockedGetRosterBudgetDataWithClient.mockResolvedValue({
+        spent: 180,
+        wonCount: 15, // Full roster
+        leadingCommitment: 0,
+      });
 
       await expect(service.nominate(1, 1, 100)).rejects.toThrow(ValidationException);
       await expect(service.nominate(1, 1, 100)).rejects.toThrow('roster is full');
@@ -432,7 +515,8 @@ describe('SlowAuctionService', () => {
         wonCount: 5,
         leadingCommitment: 10,
       });
-      mockLotRepo.countActiveLotsForRoster.mockResolvedValue(2); // At limit
+      mockLotRepo.countActiveLotsForRoster.mockResolvedValue(2); // At limit (pre-check)
+      mockLotRepo.countActiveLotsForRosterWithClient.mockResolvedValue(2); // At limit (in-transaction check)
 
       await expect(service.nominate(1, 1, 100)).rejects.toThrow(ValidationException);
       await expect(service.nominate(1, 1, 100)).rejects.toThrow('active nominations allowed');
@@ -455,8 +539,10 @@ describe('SlowAuctionService', () => {
         wonCount: 5,
         leadingCommitment: 10,
       });
-      mockLotRepo.countActiveLotsForRoster.mockResolvedValue(1); // Under per-team limit
-      mockLotRepo.countAllActiveLots.mockResolvedValue(10); // At global cap
+      mockLotRepo.countActiveLotsForRoster.mockResolvedValue(1); // Under per-team limit (pre-check)
+      mockLotRepo.countActiveLotsForRosterWithClient.mockResolvedValue(1); // Under per-team limit (in-transaction)
+      mockLotRepo.countAllActiveLots.mockResolvedValue(10); // At global cap (pre-check)
+      mockLotRepo.countAllActiveLotsWithClient.mockResolvedValue(10); // At global cap (in-transaction check)
 
       await expect(service.nominate(1, 1, 100)).rejects.toThrow(ValidationException);
       await expect(service.nominate(1, 1, 100)).rejects.toThrow(
@@ -481,9 +567,12 @@ describe('SlowAuctionService', () => {
         wonCount: 5,
         leadingCommitment: 10,
       });
-      mockLotRepo.countActiveLotsForRoster.mockResolvedValue(1); // Under per-team limit
-      mockLotRepo.countAllActiveLots.mockResolvedValue(5); // Under global cap
-      mockLotRepo.countDailyNominationsForRoster.mockResolvedValue(2); // At daily limit
+      mockLotRepo.countActiveLotsForRoster.mockResolvedValue(1); // Under per-team limit (pre-check)
+      mockLotRepo.countActiveLotsForRosterWithClient.mockResolvedValue(1); // Under per-team limit (in-transaction)
+      mockLotRepo.countAllActiveLots.mockResolvedValue(5); // Under global cap (pre-check)
+      mockLotRepo.countAllActiveLotsWithClient.mockResolvedValue(5); // Under global cap (in-transaction)
+      mockLotRepo.countDailyNominationsForRoster.mockResolvedValue(2); // At daily limit (pre-check)
+      mockLotRepo.countDailyNominationsForRosterWithClient.mockResolvedValue(2); // At daily limit (in-transaction check)
 
       await expect(service.nominate(1, 1, 100)).rejects.toThrow(ValidationException);
       await expect(service.nominate(1, 1, 100)).rejects.toThrow(
@@ -511,13 +600,14 @@ describe('SlowAuctionService', () => {
       mockLotRepo.countActiveLotsForRoster.mockResolvedValue(1);
       mockLotRepo.countAllActiveLots.mockResolvedValue(5);
       mockLotRepo.countDailyNominationsForRoster.mockResolvedValue(2); // Under daily limit (2 < 3)
+      mockLotRepo.countDailyNominationsForRosterWithClient.mockResolvedValue(2); // Under daily limit (2 < 3)
       mockLotRepo.findLotByDraftAndPlayer.mockResolvedValue(null);
-      mockLotRepo.createLot.mockResolvedValue(mockLot);
+      mockLotRepo.createLotWithClient.mockResolvedValue(mockLot);
 
       const result = await service.nominate(1, 1, 100);
 
       expect(result.lot).toEqual(mockLot);
-      expect(mockLotRepo.createLot).toHaveBeenCalled();
+      expect(mockLotRepo.createLotWithClient).toHaveBeenCalled();
     });
 
     it('should throw ValidationException when player already nominated', async () => {
@@ -532,7 +622,8 @@ describe('SlowAuctionService', () => {
       });
       mockLotRepo.countActiveLotsForRoster.mockResolvedValue(1);
       mockLotRepo.countAllActiveLots.mockResolvedValue(5);
-      mockLotRepo.findLotByDraftAndPlayer.mockResolvedValue(mockLot); // Already nominated
+      // Service uses WithClient version inside transaction
+      mockLotRepo.findLotByDraftAndPlayerWithClient.mockResolvedValue(mockLot); // Already nominated
 
       await expect(service.nominate(1, 1, 100)).rejects.toThrow(ValidationException);
       await expect(service.nominate(1, 1, 100)).rejects.toThrow('already been nominated');
@@ -551,13 +642,14 @@ describe('SlowAuctionService', () => {
       mockLotRepo.countActiveLotsForRoster.mockResolvedValue(1);
       mockLotRepo.countAllActiveLots.mockResolvedValue(5);
       mockLotRepo.findLotByDraftAndPlayer.mockResolvedValue(null);
-      mockLotRepo.createLot.mockResolvedValue(mockLot);
+      // createLotWithClient is used within the transaction
+      mockLotRepo.createLotWithClient.mockResolvedValue(mockLot);
 
       const result = await service.nominate(1, 1, 100);
 
       expect(result.lot).toEqual(mockLot);
       expect(result.message).toBe('Player nominated successfully');
-      expect(mockLotRepo.createLot).toHaveBeenCalled();
+      expect(mockLotRepo.createLotWithClient).toHaveBeenCalled();
     });
 
     it('should skip global cap check when not configured', async () => {
@@ -579,7 +671,8 @@ describe('SlowAuctionService', () => {
       });
       mockLotRepo.countActiveLotsForRoster.mockResolvedValue(1);
       mockLotRepo.findLotByDraftAndPlayer.mockResolvedValue(null);
-      mockLotRepo.createLot.mockResolvedValue(mockLot);
+      // createLotWithClient is used within the transaction
+      mockLotRepo.createLotWithClient.mockResolvedValue(mockLot);
 
       const result = await service.nominate(1, 1, 100);
 

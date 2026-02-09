@@ -175,6 +175,12 @@ const createMockPlayerRepo = (): jest.Mocked<PlayerRepository> =>
       position: 'QB',
       team: 'TST',
     }),
+    findByIdWithClient: jest.fn().mockResolvedValue({
+      id: 100,
+      fullName: 'Test Player',
+      position: 'QB',
+      team: 'TST',
+    }),
   }) as unknown as jest.Mocked<PlayerRepository>;
 
 const createMockEngine = (): jest.Mocked<IDraftEngine> =>

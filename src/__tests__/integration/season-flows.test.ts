@@ -31,6 +31,141 @@ import { WaiverClaim } from '../../modules/waivers/waivers.model';
 import { Trade, TradeItem } from '../../modules/trades/trades.model';
 import { RosterTransaction } from '../../modules/rosters/rosters.model';
 
+// Track batch validation calls and allow tests to configure responses
+let batchValidationConfig: {
+  rosterPlayers: Map<string, { found: Map<number, { playerId: number }>; missing: number[] }>;
+  pickAssets: Map<string, { found: Map<number, { id: number; currentOwnerId: number }>; missing: number[] }>;
+} = {
+  rosterPlayers: new Map(),
+  pickAssets: new Map(),
+};
+
+// Helper to set up batch validation for tests
+const configureBatchValidation = {
+  rosterPlayers: (rosterId: number, playerIds: number[], allValid: boolean = true) => {
+    const key = `${rosterId}`;
+    if (allValid) {
+      const found = new Map<number, { playerId: number }>(
+        playerIds.map((id) => [id, { playerId: id }])
+      );
+      batchValidationConfig.rosterPlayers.set(key, { found, missing: [] });
+    } else {
+      batchValidationConfig.rosterPlayers.set(key, { found: new Map(), missing: playerIds });
+    }
+  },
+  pickAssets: (ownerId: number, pickAssetIds: number[], allValid: boolean = true) => {
+    const key = `${ownerId}`;
+    if (allValid) {
+      const found = new Map<number, { id: number; currentOwnerId: number }>(
+        pickAssetIds.map((id) => [id, { id, currentOwnerId: ownerId }])
+      );
+      batchValidationConfig.pickAssets.set(key, { found, missing: [] });
+    } else {
+      batchValidationConfig.pickAssets.set(key, { found: new Map(), missing: pickAssetIds });
+    }
+  },
+  reset: () => {
+    batchValidationConfig = { rosterPlayers: new Map(), pickAssets: new Map() };
+  },
+};
+
+// Mock batch-queries module
+jest.mock('../../shared/batch-queries', () => ({
+  batchValidateRosterPlayers: jest.fn(async (_client, rosterId, playerIds) => {
+    const key = `${rosterId}`;
+    const config = batchValidationConfig.rosterPlayers.get(key);
+    if (config) {
+      return config;
+    }
+    // Default: all players are valid
+    const found = new Map<number, { playerId: number }>(
+      playerIds.map((id: number) => [id, { playerId: id }])
+    );
+    return { found, missing: [] };
+  }),
+  batchValidatePickAssets: jest.fn(async (_client, expectedOwnerId, pickAssetIds) => {
+    const key = `${expectedOwnerId}`;
+    const config = batchValidationConfig.pickAssets.get(key);
+    if (config) {
+      return config;
+    }
+    // Default: all picks are valid
+    const found = new Map<number, { id: number; currentOwnerId: number }>(
+      pickAssetIds.map((id: number) => [id, { id, currentOwnerId: expectedOwnerId }])
+    );
+    return { found, missing: [] };
+  }),
+  batchValidateTradeAssets: jest.fn(async (_client, rosterId, playerIds, pickAssetIds) => {
+    const playersKey = `${rosterId}`;
+    const playerConfig = batchValidationConfig.rosterPlayers.get(playersKey);
+    const picksKey = `${rosterId}`;
+    const picksConfig = batchValidationConfig.pickAssets.get(picksKey);
+
+    let playersResult;
+    if (playerConfig) {
+      playersResult = playerConfig;
+    } else {
+      const found = new Map<number, { playerId: number }>(
+        playerIds.map((id: number) => [id, { playerId: id }])
+      );
+      playersResult = { found, missing: [] };
+    }
+
+    let picksResult;
+    if (picksConfig) {
+      picksResult = picksConfig;
+    } else {
+      const found = new Map<number, { id: number; currentOwnerId: number }>(
+        pickAssetIds.map((id: number) => [id, { id, currentOwnerId: rosterId }])
+      );
+      picksResult = { found, missing: [] };
+    }
+
+    return {
+      players: playersResult,
+      picks: picksResult,
+      valid: playersResult.missing.length === 0 && picksResult.missing.length === 0,
+    };
+  }),
+  batchGetRostersByPlayers: jest.fn(async () => new Map()),
+  batchCheckRosteredPlayers: jest.fn(async () => new Set()),
+}));
+
+// Mock transaction runner to use the mock client
+jest.mock('../../shared/transaction-runner', () => ({
+  runWithLock: jest.fn(async (_pool, _domain, _id, fn) => {
+    const mockClient = {
+      query: jest.fn().mockResolvedValue({ rows: [] }),
+      release: jest.fn(),
+    };
+    return fn(mockClient);
+  }),
+  runWithLocks: jest.fn(async (_pool, _locks, fn) => {
+    const mockClient = {
+      query: jest.fn().mockResolvedValue({ rows: [] }),
+      release: jest.fn(),
+    };
+    return fn(mockClient);
+  }),
+  runInTransaction: jest.fn(async (_pool, fn) => {
+    const mockClient = {
+      query: jest.fn().mockResolvedValue({ rows: [] }),
+      release: jest.fn(),
+    };
+    return fn(mockClient);
+  }),
+  LockDomain: {
+    LEAGUE: 100_000_000,
+    ROSTER: 200_000_000,
+    TRADE: 300_000_000,
+    WAIVER: 400_000_000,
+    AUCTION: 500_000_000,
+    LINEUP: 600_000_000,
+    DRAFT: 700_000_000,
+    JOB: 900_000_000,
+  },
+}));
+
 // Mock socket service to prevent emission errors
 jest.mock('../../socket', () => ({
   tryGetSocketService: jest.fn(() => ({
@@ -171,6 +306,7 @@ describe('Season Sanity Integration Tests', () => {
         findByLeagueAndWeek: jest.fn(),
         updatePoints: jest.fn(),
         finalize: jest.fn(),
+        countByLeagueSeason: jest.fn().mockResolvedValue(0), // No existing schedule by default
       } as unknown as jest.Mocked<MatchupsRepository>;
 
       mockLineupsRepo = {
@@ -214,7 +350,8 @@ describe('Season Sanity Integration Tests', () => {
       mockLeagueRepo.isCommissioner.mockResolvedValue(true);
       mockLeagueRepo.findById.mockResolvedValue(mockLeague);
       mockRosterRepo.findByLeagueId.mockResolvedValue(mockRosters);
-      mockMatchupsRepo.deleteByLeague.mockResolvedValue();
+      // Ensure countByLeagueSeason returns 0 (no existing schedule)
+      mockMatchupsRepo.countByLeagueSeason.mockResolvedValue(0);
       mockMatchupsRepo.create.mockImplementation(
         async (leagueId, season, week, roster1Id, roster2Id) => ({
           id: Math.floor(Math.random() * 1000),
@@ -235,7 +372,9 @@ describe('Season Sanity Integration Tests', () => {
       await scheduleGeneratorService.generateSchedule(1, 13, 'user-1');
 
       // Verify schedule was generated (4 teams, 2 matchups per week)
-      expect(mockMatchupsRepo.deleteByLeague).toHaveBeenCalledWith(1, 2024);
+      // Note: The service now checks for existing schedule first (countByLeagueSeason)
+      // and throws if one exists, rather than deleting it
+      expect(mockMatchupsRepo.countByLeagueSeason).toHaveBeenCalledWith(1, 2024);
       expect(mockMatchupsRepo.create).toHaveBeenCalled();
       const createCalls = mockMatchupsRepo.create.mock.calls;
       // Week 1 should have 2 matchups for 4 teams
@@ -752,6 +891,7 @@ describe('Season Sanity Integration Tests', () => {
         findOwner: jest.fn(),
         getByRosterId: jest.fn(),
         getPlayerIdsByRoster: jest.fn(),
+        getOwnedPlayerIdsByLeague: jest.fn().mockResolvedValue(new Set<number>()),
       } as unknown as jest.Mocked<RosterPlayersRepository>;
 
       mockTransactionsRepo = {

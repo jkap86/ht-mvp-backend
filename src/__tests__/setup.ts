@@ -30,6 +30,22 @@ jest.mock('../utils/jwt', () => ({
   }),
 }));
 
+// Mock event bus for tests
+jest.mock('../shared/events', () => ({
+  tryGetEventBus: jest.fn(() => ({
+    publish: jest.fn().mockReturnValue({ catch: jest.fn() }),
+    rollbackTransaction: jest.fn(),
+    beginTransaction: jest.fn(),
+    commitTransaction: jest.fn(),
+  })),
+  EventTypes: {
+    MEMBER_JOINED: 'MEMBER_JOINED',
+    MEMBER_LEFT: 'MEMBER_LEFT',
+    MEMBER_KICKED: 'MEMBER_KICKED',
+    MEMBER_REINSTATED: 'MEMBER_REINSTATED',
+  },
+}));
+
 // Mock Socket.IO service for tests
 jest.mock('../socket', () => ({
   tryGetSocketService: jest.fn().mockReturnValue({

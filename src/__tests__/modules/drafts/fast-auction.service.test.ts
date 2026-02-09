@@ -183,6 +183,7 @@ const createMockLotRepo = (): jest.Mocked<AuctionLotRepository> =>
     getRosterBudgetData: jest.fn(),
     getAllRosterBudgetData: jest.fn(),
     getNominatedPlayerIds: jest.fn(),
+    hasActiveLotWithClient: jest.fn(),
   }) as unknown as jest.Mocked<AuctionLotRepository>;
 
 const createMockDraftRepo = (): jest.Mocked<DraftRepository> =>
@@ -214,6 +215,7 @@ const createMockPlayerRepo = (): jest.Mocked<PlayerRepository> =>
   ({
     findById: jest.fn(),
     findAll: jest.fn(),
+    findRandomEligiblePlayerForAuction: jest.fn(),
   }) as unknown as jest.Mocked<PlayerRepository>;
 
 const createMockPool = (): jest.Mocked<Pool> =>
@@ -474,14 +476,8 @@ describe('FastAuctionService', () => {
 
     it('should return null when active lot already exists', async () => {
       mockDraftRepo.findById.mockResolvedValue(mockFastDraft);
-
-      const { runWithLock } = require('../../../shared/transaction-runner');
-      runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
-        const mockClient = {
-          query: jest.fn().mockResolvedValueOnce({ rows: [{ id: 1 }] }), // Active lot exists
-        };
-        return fn(mockClient);
-      });
+      // Mock hasActiveLotWithClient to return true (active lot exists)
+      mockLotRepo.hasActiveLotWithClient.mockResolvedValue(true);
 
       const result = await service.autoNominate(1);
 
@@ -490,32 +486,24 @@ describe('FastAuctionService', () => {
 
     it('should advance nominator when no players available', async () => {
       mockDraftRepo.findById.mockResolvedValue(mockFastDraft);
-      mockDraftRepo.getDraftedPlayerIds.mockResolvedValue(new Set([100]));
-      mockLotRepo.getNominatedPlayerIds.mockResolvedValue([]);
-      mockPlayerRepo.findAll.mockResolvedValue([mockPlayer]); // Only player already drafted
+      // Mock hasActiveLotWithClient to return false (no active lot)
+      mockLotRepo.hasActiveLotWithClient.mockResolvedValue(false);
+      // Mock findRandomEligiblePlayerForAuction to return null (no players available)
+      mockPlayerRepo.findRandomEligiblePlayerForAuction.mockResolvedValue(null);
 
       const { runWithLock } = require('../../../shared/transaction-runner');
 
-      // First call for autoNominate check, second for advanceNominator
+      // Mock both calls: first autoNominate, then advanceNominator
       let callCount = 0;
       runWithLock.mockImplementation(async (_pool: any, _domain: any, _id: any, fn: any) => {
         callCount++;
-        if (callCount === 1) {
-          // autoNominate transaction
-          const mockClient = {
-            query: jest.fn().mockResolvedValueOnce({ rows: [] }), // No active lot
-          };
-          return fn(mockClient);
-        } else {
-          // advanceNominator transaction
-          const mockClient = {
-            query: jest.fn()
-              .mockResolvedValueOnce({ rows: [mockFastDraft] }) // Draft
-              .mockResolvedValueOnce({ rows: [{ roster_id: 2, draft_position: 1 }] }) // Order
-              .mockResolvedValueOnce({ rows: [] }), // Update
-          };
-          return fn(mockClient);
-        }
+        const mockClient = {
+          query: jest.fn()
+            .mockResolvedValueOnce({ rows: [mockFastDraft] }) // Draft query
+            .mockResolvedValueOnce({ rows: [{ roster_id: 2, draft_position: 1 }] }) // Order query
+            .mockResolvedValueOnce({ rows: [] }), // Update query
+        };
+        return fn(mockClient);
       });
 
       const result = await service.autoNominate(1);
