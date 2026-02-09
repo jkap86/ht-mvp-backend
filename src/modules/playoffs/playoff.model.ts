@@ -10,6 +10,23 @@ export interface PlayoffSettings {
   enableThirdPlaceGame: boolean;
   consolationType: ConsolationType;
   consolationTeams: number | null;
+  weeksByRound: number[] | null;
+}
+
+/**
+ * Series aggregation for multi-week playoff series
+ */
+export interface SeriesAggregation {
+  seriesId: string;
+  roster1Id: number;
+  roster2Id: number;
+  roster1TotalPoints: number;
+  roster2TotalPoints: number;
+  roster1Seed: number;
+  roster2Seed: number;
+  gamesCompleted: number;
+  seriesLength: number;
+  isComplete: boolean;
 }
 
 export function playoffSettingsToResponse(settings: PlayoffSettings) {
@@ -17,6 +34,7 @@ export function playoffSettingsToResponse(settings: PlayoffSettings) {
     enable_third_place_game: settings.enableThirdPlaceGame,
     consolation_type: settings.consolationType,
     consolation_teams: settings.consolationTeams,
+    weeks_by_round: settings.weeksByRound,
   };
 }
 
@@ -35,6 +53,7 @@ export interface PlayoffBracket {
   consolationTeams: number | null;
   thirdPlaceRosterId: number | null;
   consolationWinnerRosterId: number | null;
+  weeksByRound: number[] | null; // [1, 2, 2] = R1:1wk, R2:2wk, R3:2wk
   createdAt: Date;
   updatedAt: Date;
 }
@@ -55,6 +74,7 @@ export function playoffBracketFromDatabase(row: any): PlayoffBracket {
     consolationTeams: row.consolation_teams ?? null,
     thirdPlaceRosterId: row.third_place_roster_id ?? null,
     consolationWinnerRosterId: row.consolation_winner_roster_id ?? null,
+    weeksByRound: row.weeks_by_round ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -76,6 +96,7 @@ export function playoffBracketToResponse(bracket: PlayoffBracket) {
     consolation_teams: bracket.consolationTeams,
     third_place_roster_id: bracket.thirdPlaceRosterId,
     consolation_winner_roster_id: bracket.consolationWinnerRosterId,
+    weeks_by_round: bracket.weeksByRound,
     created_at: bracket.createdAt,
     updated_at: bracket.updatedAt,
   };
@@ -159,6 +180,10 @@ export interface PlayoffMatchup {
   team2: PlayoffTeamInfo | null;
   winner: PlayoffTeamInfo | null;
   isFinal: boolean;
+  // Multi-week series fields
+  seriesId: string | null;
+  seriesGame: number; // 1 or 2
+  seriesLength: number; // 1 or 2
 }
 
 export function playoffMatchupToResponse(matchup: PlayoffMatchup) {
@@ -172,12 +197,17 @@ export function playoffMatchupToResponse(matchup: PlayoffMatchup) {
     team2: matchup.team2 ? playoffTeamInfoToResponse(matchup.team2) : null,
     winner: matchup.winner ? playoffTeamInfoToResponse(matchup.winner) : null,
     is_final: matchup.isFinal,
+    series_id: matchup.seriesId,
+    series_game: matchup.seriesGame,
+    series_length: matchup.seriesLength,
   };
 }
 
 export interface PlayoffRound {
   round: number;
-  week: number;
+  week: number; // Start week for this round (deprecated, use weekStart)
+  weekStart: number;
+  weekEnd: number;
   name: string; // "Quarterfinals", "Semifinals", "Championship"
   matchups: PlayoffMatchup[];
 }
@@ -186,6 +216,8 @@ export function playoffRoundToResponse(round: PlayoffRound) {
   return {
     round: round.round,
     week: round.week,
+    week_start: round.weekStart,
+    week_end: round.weekEnd,
     name: round.name,
     matchups: round.matchups.map(playoffMatchupToResponse),
   };
@@ -378,4 +410,67 @@ export function getConsolationRoundName(
     return 'Consolation Wild Card';
   }
   return `Consolation Round ${round}`;
+}
+
+/**
+ * Calculate the week range for a specific round given weeksByRound config
+ * @param startWeek - Playoff start week
+ * @param weeksByRound - Array of weeks per round, e.g., [1, 2, 2]
+ * @param round - Round number (1-indexed)
+ * @returns { weekStart, weekEnd }
+ */
+export function getWeekRangeForRound(
+  startWeek: number,
+  weeksByRound: number[] | null,
+  round: number
+): { weekStart: number; weekEnd: number } {
+  // Default to 1 week per round if not specified
+  const weeksArray = weeksByRound ?? [];
+
+  let weekStart = startWeek;
+  for (let r = 0; r < round - 1; r++) {
+    weekStart += weeksArray[r] ?? 1;
+  }
+
+  const weeksForRound = weeksArray[round - 1] ?? 1;
+  const weekEnd = weekStart + weeksForRound - 1;
+
+  return { weekStart, weekEnd };
+}
+
+/**
+ * Calculate the week for a specific game in a round
+ * @param startWeek - Playoff start week
+ * @param weeksByRound - Array of weeks per round
+ * @param round - Round number (1-indexed)
+ * @param game - Game number in series (1 or 2)
+ */
+export function getWeekForRoundGame(
+  startWeek: number,
+  weeksByRound: number[] | null,
+  round: number,
+  game: number
+): number {
+  const { weekStart } = getWeekRangeForRound(startWeek, weeksByRound, round);
+  return weekStart + game - 1;
+}
+
+/**
+ * Calculate total playoff weeks given weeksByRound configuration
+ */
+export function calculateTotalPlayoffWeeks(
+  weeksByRound: number[] | null,
+  totalRounds: number
+): number {
+  if (!weeksByRound) {
+    return totalRounds; // 1 week per round
+  }
+  return weeksByRound.reduce((sum, weeks) => sum + weeks, 0);
+}
+
+/**
+ * Get default weeksByRound for a given number of rounds (all 1-week)
+ */
+export function getDefaultWeeksByRound(totalRounds: number): number[] {
+  return Array(totalRounds).fill(1);
 }

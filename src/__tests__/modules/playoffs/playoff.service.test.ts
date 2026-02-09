@@ -7,6 +7,8 @@ import {
   PlayoffBracket,
   PlayoffSeed,
   calculateTotalRounds,
+  getWeekRangeForRound,
+  SeriesAggregation,
 } from '../../../modules/playoffs/playoff.model';
 import {
   ValidationException,
@@ -40,14 +42,19 @@ const createMockPlayoffRepo = (): jest.Mocked<PlayoffRepository> =>
     getSeeds: jest.fn(),
     getSeedsByType: jest.fn(),
     createPlayoffMatchup: jest.fn(),
+    createPlayoffMatchupWithSeries: jest.fn(),
     setChampion: jest.fn(),
     setThirdPlaceWinner: jest.fn(),
     setConsolationWinner: jest.fn(),
     finalizeBracketIfComplete: jest.fn(),
     updateStatus: jest.fn(),
     getFinalizedMatchupsForWeekByType: jest.fn(),
+    getFinalizedSeriesEndingInWeek: jest.fn(),
     getPlayoffMatchupsByType: jest.fn(),
     roundMatchupsExistForType: jest.fn(),
+    getSeriesMatchups: jest.fn(),
+    getSeriesAggregation: jest.fn(),
+    isSeriesComplete: jest.fn(),
   }) as unknown as jest.Mocked<PlayoffRepository>;
 
 const createMockMatchupsRepo = (): jest.Mocked<MatchupsRepository> =>
@@ -85,6 +92,7 @@ function createMockBracket(overrides: Partial<PlayoffBracket> = {}): PlayoffBrac
     consolationTeams: 6,
     thirdPlaceRosterId: null,
     consolationWinnerRosterId: null,
+    weeksByRound: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
@@ -465,6 +473,244 @@ describe('PlayoffService', () => {
 
     it('should return 3 for 8-team brackets', () => {
       expect(calculateTotalRounds(8)).toBe(3);
+    });
+  });
+
+  describe('getWeekRangeForRound', () => {
+    it('should return single week when no weeksByRound', () => {
+      const result = getWeekRangeForRound(14, null, 1);
+      expect(result).toEqual({ weekStart: 14, weekEnd: 14 });
+    });
+
+    it('should return single week for 1-week round', () => {
+      const result = getWeekRangeForRound(14, [1, 1, 1], 1);
+      expect(result).toEqual({ weekStart: 14, weekEnd: 14 });
+    });
+
+    it('should return week range for 2-week round', () => {
+      const result = getWeekRangeForRound(14, [1, 2, 2], 2);
+      expect(result).toEqual({ weekStart: 15, weekEnd: 16 });
+    });
+
+    it('should accumulate weeks correctly', () => {
+      // [1, 2, 2] means R1=1wk (14), R2=2wk (15-16), R3=2wk (17-18)
+      expect(getWeekRangeForRound(14, [1, 2, 2], 1)).toEqual({ weekStart: 14, weekEnd: 14 });
+      expect(getWeekRangeForRound(14, [1, 2, 2], 2)).toEqual({ weekStart: 15, weekEnd: 16 });
+      expect(getWeekRangeForRound(14, [1, 2, 2], 3)).toEqual({ weekStart: 17, weekEnd: 18 });
+    });
+  });
+
+  describe('multi-week series generation', () => {
+    it('should create 2 matchup rows for 2-week rounds', async () => {
+      const mockBracket = createMockBracket({
+        id: 1,
+        weeksByRound: [1, 2, 2],
+        championshipWeek: 18, // 14 + 1 + 2 + 2 - 1 = 18
+      });
+      const mockStandings = createMockStandings(12);
+      const mockWinnersSeeds = createMockSeeds(6, 'WINNERS');
+
+      mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockLeagueRepo.findById.mockResolvedValue({
+        id: 1,
+        season: '2024',
+        currentWeek: 13,
+      } as any);
+      mockPlayoffRepo.findByLeagueSeason.mockResolvedValue(null);
+      mockMatchupsRepo.findMatchupsInWeekRange.mockResolvedValue([]);
+      mockMatchupsRepo.getStandings.mockResolvedValue(mockStandings);
+      mockPlayoffRepo.createBracket.mockResolvedValue(mockBracket);
+      mockPlayoffRepo.createSeeds.mockResolvedValue(mockWinnersSeeds);
+      mockPlayoffRepo.createPlayoffMatchupWithSeries.mockResolvedValue(1);
+      mockPlayoffRepo.findById.mockResolvedValue(mockBracket);
+      mockPlayoffRepo.getSeeds.mockResolvedValue(mockWinnersSeeds);
+      mockPlayoffRepo.getSeedsByType.mockResolvedValue([]);
+      mockPlayoffRepo.getPlayoffMatchupsByType.mockResolvedValue([]);
+
+      await playoffService.generatePlayoffBracket(1, 'user-123', {
+        playoffTeams: 6,
+        startWeek: 14,
+        weeksByRound: [1, 2, 2],
+        enableThirdPlaceGame: false,
+        consolationType: 'NONE',
+      });
+
+      // Round 1 (1 week): 2 matchups x 1 game = 2 calls
+      // For 6-team with byes, round 1 has 3v6 and 4v5
+      const round1Calls = mockPlayoffRepo.createPlayoffMatchupWithSeries.mock.calls.filter(
+        call => call[5] === 1 // playoff_round = 1
+      );
+      expect(round1Calls).toHaveLength(2); // 2 matchups, 1 game each
+
+      // Verify series_length = 1 for round 1
+      round1Calls.forEach(call => {
+        expect(call[12]).toBe(1); // series_length = 1
+      });
+    });
+
+    it('should reject weeksByRound with values other than 1 or 2', async () => {
+      mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockLeagueRepo.findById.mockResolvedValue({
+        id: 1,
+        season: '2024',
+        currentWeek: 13,
+      } as any);
+      mockPlayoffRepo.findByLeagueSeason.mockResolvedValue(null);
+
+      await expect(
+        playoffService.generatePlayoffBracket(1, 'user-123', {
+          playoffTeams: 6,
+          startWeek: 14,
+          weeksByRound: [1, 3, 1], // Invalid: 3 is not allowed
+          enableThirdPlaceGame: false,
+          consolationType: 'NONE',
+        })
+      ).rejects.toThrow(ValidationException);
+    });
+
+    it('should reject weeksByRound with wrong length', async () => {
+      mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockLeagueRepo.findById.mockResolvedValue({
+        id: 1,
+        season: '2024',
+        currentWeek: 13,
+      } as any);
+      mockPlayoffRepo.findByLeagueSeason.mockResolvedValue(null);
+
+      await expect(
+        playoffService.generatePlayoffBracket(1, 'user-123', {
+          playoffTeams: 6,
+          startWeek: 14,
+          weeksByRound: [1, 2], // Invalid: 6-team needs 3 rounds
+          enableThirdPlaceGame: false,
+          consolationType: 'NONE',
+        })
+      ).rejects.toThrow(ValidationException);
+    });
+
+    it('should reject weeksByRound that exceeds week 18', async () => {
+      mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockLeagueRepo.findById.mockResolvedValue({
+        id: 1,
+        season: '2024',
+        currentWeek: 13,
+      } as any);
+      mockPlayoffRepo.findByLeagueSeason.mockResolvedValue(null);
+
+      await expect(
+        playoffService.generatePlayoffBracket(1, 'user-123', {
+          playoffTeams: 6,
+          startWeek: 16, // 16 + 2 + 2 + 2 - 1 = 21 > 18
+          weeksByRound: [2, 2, 2],
+          enableThirdPlaceGame: false,
+          consolationType: 'NONE',
+        })
+      ).rejects.toThrow(ValidationException);
+    });
+  });
+
+  describe('multi-week series advancement', () => {
+    it('should advance winners based on aggregate scoring', async () => {
+      const mockBracket = createMockBracket({
+        status: 'active',
+        weeksByRound: [1, 2, 2],
+        consolationType: 'NONE',
+        enableThirdPlace: false,
+      });
+
+      const mockWinnersSeeds = createMockSeeds(6, 'WINNERS');
+
+      // Series aggregation for round 1 (single week, so immediate)
+      const seriesAggregation: SeriesAggregation[] = [
+        {
+          seriesId: 'series-1',
+          roster1Id: 3,
+          roster2Id: 6,
+          roster1TotalPoints: 100,
+          roster2TotalPoints: 90,
+          roster1Seed: 3,
+          roster2Seed: 6,
+          gamesCompleted: 1,
+          seriesLength: 1,
+          isComplete: true,
+        },
+        {
+          seriesId: 'series-2',
+          roster1Id: 4,
+          roster2Id: 5,
+          roster1TotalPoints: 85,
+          roster2TotalPoints: 95,
+          roster1Seed: 4,
+          roster2Seed: 5,
+          gamesCompleted: 1,
+          seriesLength: 1,
+          isComplete: true,
+        },
+      ];
+
+      mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockLeagueRepo.findById.mockResolvedValue({ id: 1, season: '2024' } as any);
+      mockPlayoffRepo.findByLeagueSeason.mockResolvedValue(mockBracket);
+      mockPlayoffRepo.getFinalizedSeriesEndingInWeek.mockResolvedValue(seriesAggregation);
+      mockPlayoffRepo.roundMatchupsExistForType.mockResolvedValue(false);
+      mockPlayoffRepo.getSeedsByType.mockResolvedValue(mockWinnersSeeds);
+      mockPlayoffRepo.createPlayoffMatchupWithSeries.mockResolvedValue(1);
+      mockPlayoffRepo.findById.mockResolvedValue(mockBracket);
+      mockPlayoffRepo.getSeeds.mockResolvedValue(mockWinnersSeeds);
+      mockPlayoffRepo.getPlayoffMatchupsByType.mockResolvedValue([]);
+
+      await playoffService.advanceWinners(1, 14, 'user-123');
+
+      // Round 2 matchups should be created
+      // Seed 1 (bye) vs winner of 4v5 (seed 5 won with 95 pts)
+      // Seed 2 (bye) vs winner of 3v6 (seed 3 won with 100 pts)
+      expect(mockPlayoffRepo.createPlayoffMatchupWithSeries).toHaveBeenCalled();
+    });
+
+    it('should use lower seed as tiebreaker for aggregate ties', async () => {
+      const mockBracket = createMockBracket({
+        status: 'active',
+        weeksByRound: [2, 1, 1], // 2-week round 1
+        consolationType: 'NONE',
+        enableThirdPlace: false,
+      });
+
+      const mockWinnersSeeds = createMockSeeds(4, 'WINNERS');
+
+      // Tie in aggregate points - lower seed (higher rank) should win
+      const seriesAggregation: SeriesAggregation[] = [
+        {
+          seriesId: 'series-1',
+          roster1Id: 1,
+          roster2Id: 4,
+          roster1TotalPoints: 200, // Tied
+          roster2TotalPoints: 200, // Tied
+          roster1Seed: 1, // Lower seed = higher rank
+          roster2Seed: 4,
+          gamesCompleted: 2,
+          seriesLength: 2,
+          isComplete: true,
+        },
+      ];
+
+      mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockLeagueRepo.findById.mockResolvedValue({ id: 1, season: '2024' } as any);
+      mockPlayoffRepo.findByLeagueSeason.mockResolvedValue(mockBracket);
+      mockPlayoffRepo.getFinalizedSeriesEndingInWeek.mockResolvedValue(seriesAggregation);
+      mockPlayoffRepo.roundMatchupsExistForType.mockResolvedValue(false);
+      mockPlayoffRepo.getSeedsByType.mockResolvedValue(mockWinnersSeeds);
+      mockPlayoffRepo.createPlayoffMatchupWithSeries.mockResolvedValue(1);
+      mockPlayoffRepo.findById.mockResolvedValue(mockBracket);
+      mockPlayoffRepo.getSeeds.mockResolvedValue(mockWinnersSeeds);
+      mockPlayoffRepo.getPlayoffMatchupsByType.mockResolvedValue([]);
+
+      await playoffService.advanceWinners(1, 15, 'user-123'); // Week 15 is end of 2-week round 1
+
+      // Seed 1 should advance (tiebreaker)
+      const createCalls = mockPlayoffRepo.createPlayoffMatchupWithSeries.mock.calls;
+      // The winner (roster 1, seed 1) should be in the next round
+      const advancedRosterId = createCalls.find(call => call[5] === 2)?.[3] || createCalls.find(call => call[5] === 2)?.[4];
+      expect([1]).toContain(advancedRosterId); // Roster 1 should advance
     });
   });
 });

@@ -15,6 +15,7 @@ export class PlayoffController {
    * Body params:
    * - playoff_teams (required): 4, 6, or 8
    * - start_week (required): week number to start playoffs
+   * - weeks_by_round (optional): array of weeks per round, e.g., [1, 2, 2]
    * - enable_third_place_game (optional): boolean, enable 3rd place game
    * - consolation_type (optional): 'NONE' | 'CONSOLATION'
    * - consolation_teams (optional): 4, 6, or 8 (or null for auto)
@@ -27,6 +28,7 @@ export class PlayoffController {
       const {
         playoff_teams,
         start_week,
+        weeks_by_round,
         enable_third_place_game,
         consolation_type,
         consolation_teams,
@@ -43,6 +45,21 @@ export class PlayoffController {
         throw new ValidationException('playoff_teams and start_week must be numbers');
       }
 
+      // Parse optional weeks_by_round
+      let weeksByRound: number[] | undefined;
+      if (weeks_by_round !== undefined && weeks_by_round !== null) {
+        if (!Array.isArray(weeks_by_round)) {
+          throw new ValidationException('weeks_by_round must be an array');
+        }
+        weeksByRound = weeks_by_round.map((w: any) => {
+          const num = parseInt(w, 10);
+          if (isNaN(num) || (num !== 1 && num !== 2)) {
+            throw new ValidationException('weeks_by_round must contain only 1 or 2');
+          }
+          return num;
+        });
+      }
+
       // Parse optional consolation_teams
       let consolationTeamsNum: number | undefined;
       if (consolation_teams !== undefined && consolation_teams !== null) {
@@ -55,6 +72,7 @@ export class PlayoffController {
       const bracketView = await this.playoffService.generatePlayoffBracket(leagueId, userId, {
         playoffTeams,
         startWeek,
+        weeksByRound,
         enableThirdPlaceGame: enable_third_place_game === true,
         consolationType: consolation_type ?? 'NONE',
         consolationTeams: consolationTeamsNum,
@@ -89,6 +107,7 @@ export class PlayoffController {
             enable_third_place_game: false,
             consolation_type: 'NONE',
             consolation_teams: null,
+            weeks_by_round: null,
           },
         });
         return;
