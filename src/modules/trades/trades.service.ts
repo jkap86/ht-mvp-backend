@@ -7,6 +7,7 @@ import {
 import { RosterMutationService } from '../rosters/roster-mutation.service';
 import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import { PlayerRepository } from '../players/players.repository';
+import { DraftPickAssetRepository } from '../drafts/draft-pick-asset.repository';
 import { TradeWithDetails, ProposeTradeRequest, CounterTradeRequest } from './trades.model';
 import { EventListenerService } from '../chat/event-listener.service';
 
@@ -42,8 +43,9 @@ export class TradesService {
     private readonly transactionsRepo: RosterTransactionsRepository,
     private readonly leagueRepo: LeagueRepository,
     private readonly playerRepo: PlayerRepository,
+    private readonly rosterMutationService: RosterMutationService,
     private readonly eventListenerService?: EventListenerService,
-    private readonly rosterMutationService?: RosterMutationService
+    private readonly pickAssetRepo?: DraftPickAssetRepository
   ) {}
 
   /**
@@ -64,6 +66,7 @@ export class TradesService {
         leagueRepo: this.leagueRepo,
         playerRepo: this.playerRepo,
         eventListenerService: this.eventListenerService,
+        pickAssetRepo: this.pickAssetRepo,
       },
       leagueId,
       userId,
@@ -86,6 +89,7 @@ export class TradesService {
         leagueRepo: this.leagueRepo,
         eventListenerService: this.eventListenerService,
         rosterMutationService: this.rosterMutationService,
+        pickAssetRepo: this.pickAssetRepo,
       },
       tradeId,
       userId
@@ -142,6 +146,7 @@ export class TradesService {
         leagueRepo: this.leagueRepo,
         playerRepo: this.playerRepo,
         eventListenerService: this.eventListenerService,
+        pickAssetRepo: this.pickAssetRepo,
       },
       tradeId,
       userId,
@@ -241,6 +246,7 @@ export class TradesService {
       leagueRepo: this.leagueRepo,
       eventListenerService: this.eventListenerService,
       rosterMutationService: this.rosterMutationService,
+      pickAssetRepo: this.pickAssetRepo,
     });
   }
 }

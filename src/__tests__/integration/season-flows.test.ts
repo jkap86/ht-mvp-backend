@@ -1167,8 +1167,8 @@ describe('Season Sanity Integration Tests', () => {
         mockTransactionsRepo,
         mockLeagueRepo,
         mockPlayerRepo,
-        undefined, // eventListenerService
-        mockRosterMutationService
+        mockRosterMutationService,
+        undefined // eventListenerService
       );
     });
 

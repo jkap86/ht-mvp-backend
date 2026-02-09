@@ -301,6 +301,11 @@ async function proposeTradeCore(
     ...pickTradeItems,
   ];
 
+  // Guard: trades must include at least one item
+  if (allItems.length === 0) {
+    throw new ValidationException('Trade must include at least one player or draft pick');
+  }
+
   await ctx.tradeItemsRepo.createBulk(trade.id, allItems, client);
 
   // Get full trade details

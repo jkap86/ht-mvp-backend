@@ -198,7 +198,7 @@ export class TradesRepository {
       `SELECT ti.*,
         p.full_name, p.position, p.team, p.status,
         dpa.season as asset_season, dpa.round as asset_round,
-        COALESCE(orig_r.settings->>'teamName', orig_u.username) as asset_original_team
+        COALESCE(orig_r.settings->>'team_name', orig_u.username) as asset_original_team
       FROM trade_items ti
       LEFT JOIN players p ON p.id = ti.player_id
       LEFT JOIN draft_pick_assets dpa ON dpa.id = ti.draft_pick_asset_id
@@ -424,7 +424,7 @@ export class TradesRepository {
       `SELECT ti.*,
         p.full_name, p.position, p.team, p.status,
         dpa.season as asset_season, dpa.round as asset_round,
-        COALESCE(orig_r.settings->>'teamName', orig_u.username) as asset_original_team
+        COALESCE(orig_r.settings->>'team_name', orig_u.username) as asset_original_team
       FROM trade_items ti
       LEFT JOIN players p ON p.id = ti.player_id
       LEFT JOIN draft_pick_assets dpa ON dpa.id = ti.draft_pick_asset_id

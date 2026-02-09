@@ -18,7 +18,6 @@ import {
 import { runWithLock, LockDomain } from '../../../shared/transaction-runner';
 import { batchValidateRosterPlayers } from '../../../shared/batch-queries';
 import { EventListenerService } from '../../chat/event-listener.service';
-import { container, KEYS } from '../../../container'; // Keep for ROSTER_MUTATION_SERVICE
 import { logger } from '../../../config/logger.config';
 
 const DEFAULT_REVIEW_HOURS = 24;
@@ -33,7 +32,7 @@ export interface AcceptTradeContext {
   leagueRepo: LeagueRepository;
   pickAssetRepo?: DraftPickAssetRepository;
   eventListenerService?: EventListenerService;
-  rosterMutationService?: RosterMutationService;
+  rosterMutationService: RosterMutationService;
 }
 
 /**
@@ -255,9 +254,8 @@ export async function executeTrade(
   const playerItems = items.filter((item) => item.itemType === 'player' && item.playerId);
   const pickItems = items.filter((item) => item.itemType === 'draft_pick' && item.draftPickAssetId);
 
-  // Get mutation service from context or container
-  const mutationService =
-    ctx.rosterMutationService ?? container.resolve<RosterMutationService>(KEYS.ROSTER_MUTATION_SERVICE);
+  // Get mutation service from context
+  const mutationService = ctx.rosterMutationService;
 
   // Re-validate all picks before any mutations (parallelized for performance)
   if (pickItems.length > 0) {

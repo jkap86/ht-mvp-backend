@@ -269,8 +269,8 @@ describe('TradesService', () => {
       mockTransactionsRepo,
       mockLeagueRepo,
       mockPlayerRepo,
-      undefined, // eventListenerService
-      mockRosterMutationService
+      mockRosterMutationService,
+      undefined // eventListenerService
     );
   });
 
