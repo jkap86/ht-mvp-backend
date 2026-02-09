@@ -902,15 +902,14 @@ describe('Stale Claim Handling (Hardening)', () => {
     expect(statusUpdates.find((u) => u.id === 2)?.status).toBe('successful');
   });
 
-  it('should continue processing after ownership conflict and find next winner', async () => {
+  it('should try next claimant if top claim fails due to ownership conflict', async () => {
     // Setup:
     // - Two rosters claim same player
     // - First winner candidate (A) gets ConflictException during execution
-    // - Player is added to globallyClaimedPlayerIds
-    // - Second candidate (B) is marked as "failed" with "No eligible claimers"
-    //   because winner was reset to null after the conflict
+    //   (player is owned by a non-participating roster)
+    // - Second candidate (B) should be tried next and succeed
     //
-    // This tests graceful handling when the selected winner can't actually execute
+    // This tests the find-first-executable fallthrough behavior
 
     const mockLeague = {
       id: 1,
@@ -935,10 +934,10 @@ describe('Stale Claim Handling (Hardening)', () => {
 
     mockClaimsRepo.getPendingByLeagueWithCurrentPriority.mockResolvedValue(claims);
 
+    // First attempt (Roster A) fails because player is owned by a non-participating roster
+    // Second attempt (Roster B) should succeed because we now fallthrough to try next candidate
     let firstAttempt = true;
     mockRosterMutationService.addPlayerToRoster.mockImplementation(async ({ rosterId }) => {
-      // First attempt (Roster A) fails, second attempt would succeed but isn't tried
-      // because winner is reset to null after ConflictException
       if (firstAttempt && rosterId === 101) {
         firstAttempt = false;
         throw new ConflictException('Player is already on a roster');
@@ -968,18 +967,84 @@ describe('Stale Claim Handling (Hardening)', () => {
     const result = await processLeagueClaims(ctx, 1);
 
     expect(result.processed).toBe(2);
-    expect(result.successful).toBe(0);
+    expect(result.successful).toBe(1); // B should succeed!
 
     // A's claim is invalid (ConflictException caught)
     const claim1Update = statusUpdates.find((u) => u.id === 1);
     expect(claim1Update?.status).toBe('invalid');
     expect(claim1Update?.reason).toContain('already owned');
 
-    // B's claim is failed because winner was reset to null after conflict
-    // (the player is now in globallyClaimedPlayerIds, so B can't win either)
+    // B's claim should now SUCCEED because we fallthrough to try the next candidate
     const claim2Update = statusUpdates.find((u) => u.id === 2);
-    expect(claim2Update?.status).toBe('failed');
-    expect(claim2Update?.reason).toBe('No eligible claimers');
+    expect(claim2Update?.status).toBe('successful');
+  });
+
+  it('should mark remaining claims as no eligible claimers when all candidates fail', async () => {
+    // Setup:
+    // - Two rosters claim same player
+    // - BOTH candidates get ConflictException during execution
+    //   (player is owned by a non-participating roster)
+    // - All claims should be marked invalid, none successful
+
+    const mockLeague = {
+      id: 1,
+      season: '2024',
+      currentWeek: 1,
+      settings: {
+        waiver_type: 'standard',
+        waiver_day: 2,
+        waiver_hour: 3,
+        roster_size: 15,
+        current_week: 1,
+      },
+    };
+
+    mockLeagueRepo.findById.mockResolvedValue(mockLeague as any);
+
+    const claims: WaiverClaimWithCurrentPriority[] = [
+      createMockClaim(1, 101, 1001, 1, 0, 1), // A claims Player X, priority 1
+      createMockClaim(2, 102, 1001, 2, 0, 1), // B claims Player X, priority 2
+    ];
+
+    mockClaimsRepo.getPendingByLeagueWithCurrentPriority.mockResolvedValue(claims);
+
+    // ALL attempts fail because player is owned externally
+    mockRosterMutationService.addPlayerToRoster.mockRejectedValue(
+      new ConflictException('Player is already on a roster')
+    );
+
+    const statusUpdates: Array<{ id: number; status: string; reason?: string }> = [];
+    mockClaimsRepo.updateStatus.mockImplementation(async (id, status, reason) => {
+      statusUpdates.push({ id, status, reason });
+      return { ...claims.find((c) => c.id === id)!, status } as WaiverClaim;
+    });
+
+    const ctx: ProcessWaiversContext = {
+      db: mockPool,
+      claimsRepo: mockClaimsRepo,
+      priorityRepo: mockPriorityRepo,
+      faabRepo: mockFaabRepo,
+      waiverWireRepo: mockWaiverWireRepo,
+      rosterPlayersRepo: mockRosterPlayersRepo,
+      transactionsRepo: mockTransactionsRepo,
+      leagueRepo: mockLeagueRepo,
+      rosterRepo: mockRosterRepo,
+      rosterMutationService: mockRosterMutationService,
+    };
+
+    const result = await processLeagueClaims(ctx, 1);
+
+    expect(result.processed).toBe(2);
+    expect(result.successful).toBe(0);
+
+    // Both should be invalid due to ownership conflicts
+    const claim1Update = statusUpdates.find((u) => u.id === 1);
+    expect(claim1Update?.status).toBe('invalid');
+    expect(claim1Update?.reason).toContain('already owned');
+
+    const claim2Update = statusUpdates.find((u) => u.id === 2);
+    expect(claim2Update?.status).toBe('invalid');
+    expect(claim2Update?.reason).toContain('already owned');
   });
 
   it('should track player as globally owned after ConflictException', async () => {

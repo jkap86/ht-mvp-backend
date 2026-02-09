@@ -154,12 +154,16 @@ export async function processLeagueClaims(
             rosterStates
           );
 
-          let winner: WaiverClaimWithCurrentPriority | null = null;
+          // Find-first-executable: iterate candidates in priority order,
+          // try to execute each one until one succeeds or all fail
+          let executedWinner: WaiverClaimWithCurrentPriority | null = null;
 
-          // Find first eligible winner using in-memory state
           for (const claim of sortedClaims) {
             const state = rosterStates.get(claim.rosterId);
             if (!state) continue;
+
+            // Skip if already processed in this round (shouldn't happen, but safety check)
+            if (state.processedClaimIds.has(claim.id)) continue;
 
             // Check if player was already claimed in an earlier round (global ownership)
             if (globallyClaimedPlayerIds.has(claim.playerId)) {
@@ -168,9 +172,10 @@ export async function processLeagueClaims(
               processedCount++;
               const claimCopy = { ...claim };
               pendingEvents.push(() => emitClaimFailed(ctx, claimCopy, 'Player already owned'));
-              continue;
+              continue; // Try next candidate
             }
 
+            // Validate claim with in-memory state (budget, roster space, drop player)
             const validation = validateClaimWithState(
               claim,
               state,
@@ -178,10 +183,7 @@ export async function processLeagueClaims(
               maxRosterSize
             );
 
-            if (validation.eligible) {
-              winner = claim;
-              break;
-            } else {
+            if (!validation.eligible) {
               // Mark invalid and continue to next candidate
               await ctx.claimsRepo.updateStatus(claim.id, 'invalid', validation.reason, client);
               state.processedClaimIds.add(claim.id);
@@ -189,85 +191,87 @@ export async function processLeagueClaims(
               const claimCopy = { ...claim };
               const reason = validation.reason || 'Invalid claim';
               pendingEvents.push(() => emitClaimFailed(ctx, claimCopy, reason));
+              continue; // Try next candidate
+            }
+
+            // Attempt to execute this claim
+            try {
+              await executeClaim(ctx, claim, settings.waiverType, season, client);
+              await ctx.claimsRepo.updateStatus(claim.id, 'successful', undefined, client);
+              successfulCount++;
+              processedCount++;
+
+              // Update global ownership tracking
+              globallyClaimedPlayerIds.add(claim.playerId);
+
+              // Update in-memory state for this roster's future claims
+              updateRosterStateAfterWin(state, claim, settings.waiverType, rosterStates, maxPriority);
+
+              state.processedClaimIds.add(claim.id);
+
+              // Queue success emit
+              const claimCopy = { ...claim };
+              pendingEvents.push(() => emitClaimSuccessful(ctx, claimCopy));
+
+              // Remove player from waiver wire
+              await ctx.waiverWireRepo.removePlayer(leagueId, playerId, client);
+
+              // Invalidate pending trades
+              if (ctx.tradesRepo) {
+                const invalidatedTrades = await invalidateTradesForPlayer(ctx, leagueId, playerId, client);
+                for (const trade of invalidatedTrades) {
+                  pendingEvents.push(() => emitTradeInvalidated(trade.leagueId, trade.id));
+                }
+                if (claim.dropPlayerId) {
+                  const droppedPlayerTrades = await invalidateTradesForPlayer(
+                    ctx,
+                    leagueId,
+                    claim.dropPlayerId,
+                    client
+                  );
+                  for (const trade of droppedPlayerTrades) {
+                    pendingEvents.push(() => emitTradeInvalidated(trade.leagueId, trade.id));
+                  }
+                }
+              }
+
+              // Mark this claim as the executed winner and stop trying candidates
+              executedWinner = claim;
+              break;
+            } catch (error) {
+              // Handle ownership conflict from addPlayerToRoster
+              if (error instanceof ConflictException && error.message.includes('already on a roster')) {
+                await ctx.claimsRepo.updateStatus(claim.id, 'invalid', 'Player already owned', client);
+                processedCount++;
+                state.processedClaimIds.add(claim.id);
+                const claimCopy = { ...claim };
+                pendingEvents.push(() => emitClaimFailed(ctx, claimCopy, 'Player already owned'));
+                // NOTE: Do NOT add to globallyClaimedPlayerIds here - let the next candidate try.
+                // Each candidate might have different ownership context (e.g., the player might
+                // be on a roster that the next candidate could still acquire from).
+                // Only add to globallyClaimedPlayerIds on SUCCESS (line above).
+                continue;
+              }
+              throw error; // Re-throw other errors
             }
           }
 
-          // Process winner and losers
+          // Mark remaining unprocessed claims in this conflict group as losers
           for (const claim of sortedClaims) {
             const state = rosterStates.get(claim.rosterId);
             if (!state) continue;
 
-            // Skip already processed (invalid) claims
+            // Skip already processed claims (winner, invalid, or ownership conflicts)
             if (state.processedClaimIds.has(claim.id)) continue;
 
-            if (winner && claim.id === winner.id) {
-              // Execute the winning claim with try/catch for ownership conflicts
-              try {
-                await executeClaim(ctx, claim, settings.waiverType, season, client);
-                await ctx.claimsRepo.updateStatus(claim.id, 'successful', undefined, client);
-                successfulCount++;
-                processedCount++;
+            // Determine failure reason based on whether anyone won
+            const reason = executedWinner ? 'Outbid by another team' : 'No eligible claimers';
+            await ctx.claimsRepo.updateStatus(claim.id, 'failed', reason, client);
+            processedCount++;
+            state.processedClaimIds.add(claim.id);
 
-                // Update global ownership tracking
-                globallyClaimedPlayerIds.add(claim.playerId);
-
-                // Update in-memory state for this roster's future claims
-                updateRosterStateAfterWin(state, claim, settings.waiverType, rosterStates, maxPriority);
-
-                state.processedClaimIds.add(claim.id);
-
-                // Queue success emit
-                const claimCopy = { ...claim };
-                pendingEvents.push(() => emitClaimSuccessful(ctx, claimCopy));
-
-                // Remove player from waiver wire
-                await ctx.waiverWireRepo.removePlayer(leagueId, playerId, client);
-
-                // Invalidate pending trades
-                if (ctx.tradesRepo) {
-                  const invalidatedTrades = await invalidateTradesForPlayer(ctx, leagueId, playerId, client);
-                  for (const trade of invalidatedTrades) {
-                    pendingEvents.push(() => emitTradeInvalidated(trade.leagueId, trade.id));
-                  }
-                  if (claim.dropPlayerId) {
-                    const droppedPlayerTrades = await invalidateTradesForPlayer(
-                      ctx,
-                      leagueId,
-                      claim.dropPlayerId,
-                      client
-                    );
-                    for (const trade of droppedPlayerTrades) {
-                      pendingEvents.push(() => emitTradeInvalidated(trade.leagueId, trade.id));
-                    }
-                  }
-                }
-              } catch (error) {
-                // Handle ownership conflict from addPlayerToRoster
-                if (error instanceof ConflictException && error.message.includes('already on a roster')) {
-                  await ctx.claimsRepo.updateStatus(claim.id, 'invalid', 'Player already owned', client);
-                  processedCount++;
-                  state.processedClaimIds.add(claim.id);
-                  const claimCopy = { ...claim };
-                  pendingEvents.push(() => emitClaimFailed(ctx, claimCopy, 'Player already owned'));
-                  // Player is now known to be owned globally
-                  globallyClaimedPlayerIds.add(claim.playerId);
-                  // Continue to next claim in sorted list - no winner for this player
-                  winner = null;
-                  continue;
-                }
-                throw error; // Re-throw other errors
-              }
-            } else {
-              // Loser - mark as failed
-              const reason = winner ? 'Outbid by another team' : 'No eligible claimers';
-              await ctx.claimsRepo.updateStatus(claim.id, 'failed', reason, client);
-              processedCount++;
-
-              state.processedClaimIds.add(claim.id);
-
-              const claimCopy = { ...claim };
-              pendingEvents.push(() => emitClaimFailed(ctx, claimCopy, reason));
-            }
+            const claimCopy = { ...claim };
+            pendingEvents.push(() => emitClaimFailed(ctx, claimCopy, reason));
           }
         }
 
