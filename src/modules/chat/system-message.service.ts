@@ -32,6 +32,7 @@ const TEMPLATES: Record<MessageType, (m: SystemMessageMetadata) => string> = {
   settings_updated: (m) => `League settings updated: ${m.settingName}`,
   member_joined: (m) => `${m.teamName} joined the league`,
   member_kicked: (m) => `${m.teamName} was removed from the league`,
+  member_benched: (m) => `${m.teamName} has been benched due to league size reduction`,
   dues_paid: (m) => `${m.teamName} paid their dues`,
   dues_unpaid: (m) => `${m.teamName}'s dues payment was unmarked`,
 };

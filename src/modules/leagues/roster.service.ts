@@ -47,6 +47,19 @@ async function canJoinLeagueNow(
     };
   }
 
+  // Rule 3: Schedule must not be generated yet (matchups exist = schedule locked)
+  const matchupResult = await client.query(
+    `SELECT 1 FROM matchups WHERE league_id = $1 LIMIT 1`,
+    [league.id]
+  );
+
+  if (matchupResult.rows.length > 0) {
+    return {
+      eligible: false,
+      reason: 'Cannot join league: schedule has already been generated',
+    };
+  }
+
   return { eligible: true };
 }
 
@@ -87,18 +100,19 @@ export class RosterService {
   }
 
   async joinLeague(leagueId: number, userId: string): Promise<{ message: string; roster: any; joinedAsBench?: boolean }> {
-    const league = await this.leagueRepo.findById(leagueId);
-
-    if (!league) {
-      throw new NotFoundException('League not found');
-    }
-
     // Use transaction with advisory lock to prevent exceeding roster limits
+    // IMPORTANT: League is fetched INSIDE the lock to prevent stale reads
     const { roster, joinedAsBench } = await runWithLock(
       this.db,
       LockDomain.LEAGUE,
       leagueId,
       async (client) => {
+        // Fetch league inside the lock with the transaction client for fresh data
+        const league = await this.leagueRepo.findById(leagueId, client);
+        if (!league) {
+          throw new NotFoundException('League not found');
+        }
+
         // Check join eligibility (must be pre_draft with no drafts started)
         const eligibility = await canJoinLeagueNow(client, league);
         if (!eligibility.eligible) {

@@ -268,6 +268,8 @@ export class LeagueService {
         playoffTeams: 'Playoff Teams',
         playoffStartWeek: 'Playoff Start Week',
         playoffRounds: 'Playoff Rounds',
+        rosterType: 'Roster Type',
+        useLeagueMedian: 'League Median',
       };
 
       for (const [key, label] of Object.entries(leagueSettingLabels)) {
@@ -350,6 +352,17 @@ export class LeagueService {
             teamName,
           },
         });
+
+        // Send system message to league chat (fire-and-forget)
+        if (this.eventListenerService) {
+          this.eventListenerService.handleMemberBenched(leagueId, teamName).catch((err) =>
+            logger.warn('Failed to emit member benched message', {
+              leagueId,
+              teamName,
+              error: err.message,
+            })
+          );
+        }
       }
     }
   }

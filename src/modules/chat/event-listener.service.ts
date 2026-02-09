@@ -329,6 +329,18 @@ export class EventListenerService {
   }
 
   /**
+   * Handle member benched from league (due to team count reduction)
+   */
+  async handleMemberBenched(leagueId: number, teamName: string): Promise<void> {
+    const shouldNotify = await this.shouldNotifyLeagueChat(leagueId, 'member_benched');
+    if (!shouldNotify) return;
+
+    await this.systemMessageService.createAndBroadcast(leagueId, 'member_benched', {
+      teamName,
+    });
+  }
+
+  /**
    * Check if a system message should be sent to league chat
    * based on league settings and optional user preference
    */

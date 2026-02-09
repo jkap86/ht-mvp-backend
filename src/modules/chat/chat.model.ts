@@ -16,6 +16,7 @@ export type MessageType =
   | 'settings_updated'
   | 'member_joined'
   | 'member_kicked'
+  | 'member_benched'
   | 'dues_paid'
   | 'dues_unpaid';
 
