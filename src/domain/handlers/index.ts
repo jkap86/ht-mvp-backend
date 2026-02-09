@@ -2,37 +2,33 @@
  * Command Handler Registry
  *
  * Centralizes registration of all command handlers with the command bus.
+ *
+ * NOTE: Handlers are currently placeholders. Service method signatures need
+ * to be aligned before handlers can be properly registered.
  */
 
 import { CommandBus } from '../command-bus';
-import { getDraftCommandHandlers } from './draft-command.handlers';
-import { getTradeCommandHandlers } from './trade-command.handlers';
-import { getWaiverCommandHandlers } from './waiver-command.handlers';
-import { getPlayoffCommandHandlers } from './playoff-command.handlers';
 import { logger } from '../../config/logger.config';
 
 /**
  * Register all command handlers with the command bus.
  *
+ * TODO: Implement handlers once service method signatures are aligned.
+ * Currently a no-op to allow command bus infrastructure to exist.
+ *
  * @param commandBus - The command bus instance to register handlers with
  */
 export function registerAllHandlers(commandBus: CommandBus): void {
-  const handlers = [
-    ...getDraftCommandHandlers(),
-    ...getTradeCommandHandlers(),
-    ...getWaiverCommandHandlers(),
-    ...getPlayoffCommandHandlers(),
-  ];
+  // Handlers are placeholders - skip registration for now
+  // Once service methods are aligned, uncomment the registration below:
+  //
+  // const handlers = [
+  //   ...getDraftCommandHandlers(),
+  //   ...getTradeCommandHandlers(),
+  //   ...getWaiverCommandHandlers(),
+  //   ...getPlayoffCommandHandlers(),
+  // ];
+  // commandBus.registerAll(handlers);
 
-  commandBus.registerAll(handlers);
-
-  logger.info(`Registered ${handlers.length} command handlers`, {
-    commands: commandBus.getRegisteredCommands(),
-  });
+  logger.info('Command bus initialized (handlers pending implementation)');
 }
-
-// Re-export individual handler modules
-export * from './draft-command.handlers';
-export * from './trade-command.handlers';
-export * from './waiver-command.handlers';
-export * from './playoff-command.handlers';

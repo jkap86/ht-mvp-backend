@@ -92,37 +92,9 @@ function formatValidationError(error: z.ZodError): string {
   const path = firstIssue.path.join('.');
   const prefix = path ? `${path}: ` : '';
 
-  switch (firstIssue.code) {
-    case 'invalid_type':
-      if (firstIssue.received === 'undefined') {
-        return `${prefix}Required field is missing`;
-      }
-      return `${prefix}Expected ${firstIssue.expected}, received ${firstIssue.received}`;
-
-    case 'too_small':
-      if (firstIssue.type === 'string') {
-        return `${prefix}Must be at least ${firstIssue.minimum} characters`;
-      }
-      if (firstIssue.type === 'number') {
-        return `${prefix}Must be ${firstIssue.inclusive ? 'at least' : 'greater than'} ${firstIssue.minimum}`;
-      }
-      return `${prefix}Value too small`;
-
-    case 'too_big':
-      if (firstIssue.type === 'string') {
-        return `${prefix}Must be at most ${firstIssue.maximum} characters`;
-      }
-      if (firstIssue.type === 'number') {
-        return `${prefix}Must be ${firstIssue.inclusive ? 'at most' : 'less than'} ${firstIssue.maximum}`;
-      }
-      return `${prefix}Value too large`;
-
-    case 'invalid_enum_value':
-      return `${prefix}Invalid value. Expected one of: ${firstIssue.options.join(', ')}`;
-
-    default:
-      return `${prefix}${firstIssue.message}`;
-  }
+  // Use the message directly - Zod provides good default messages
+  // This approach is more compatible across Zod versions
+  return `${prefix}${firstIssue.message}`;
 }
 
 /**

@@ -184,6 +184,44 @@ export class DraftCoreRepository {
   }
 
   /**
+   * Update a draft within an existing transaction.
+   * Use this when you already have a PoolClient and need to update draft state.
+   */
+  async updateWithClient(
+    client: PoolClient,
+    id: number,
+    updates: Partial<Draft>
+  ): Promise<Draft> {
+    // Convert complex types to JSON strings
+    const dbUpdates: Record<string, any> = {};
+
+    if (updates.status !== undefined) dbUpdates.status = updates.status;
+    if (updates.currentPick !== undefined) dbUpdates.currentPick = updates.currentPick;
+    if (updates.currentRound !== undefined) dbUpdates.currentRound = updates.currentRound;
+    if (updates.currentRosterId !== undefined) dbUpdates.currentRosterId = updates.currentRosterId;
+    if (updates.pickDeadline !== undefined) dbUpdates.pickDeadline = updates.pickDeadline;
+    if (updates.startedAt !== undefined) dbUpdates.startedAt = updates.startedAt;
+    if (updates.completedAt !== undefined) dbUpdates.completedAt = updates.completedAt;
+    if (updates.draftState !== undefined) dbUpdates.draftState = JSON.stringify(updates.draftState);
+    if (updates.settings !== undefined) dbUpdates.settings = JSON.stringify(updates.settings);
+    if (updates.rounds !== undefined) dbUpdates.rounds = updates.rounds;
+    if (updates.pickTimeSeconds !== undefined) dbUpdates.pickTimeSeconds = updates.pickTimeSeconds;
+    if (updates.draftType !== undefined) dbUpdates.draftType = updates.draftType;
+    if (updates.scheduledStart !== undefined) dbUpdates.scheduledStart = updates.scheduledStart;
+
+    if (Object.keys(dbUpdates).length === 0) {
+      const existing = await this.findByIdWithClient(client, id);
+      if (!existing) throw new Error('Draft not found');
+      return existing;
+    }
+
+    const { query, values } = buildUpdateQuery('drafts', dbUpdates, 'id', id);
+    const result = await client.query(query, values);
+
+    return draftFromDatabase(result.rows[0]);
+  }
+
+  /**
    * Delete a draft.
    */
   async delete(id: number): Promise<void> {

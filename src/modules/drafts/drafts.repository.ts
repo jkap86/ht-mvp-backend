@@ -77,6 +77,14 @@ export class DraftRepository {
     return this.core.updateWithLock(id, updates, expectedStatus);
   }
 
+  async updateWithClient(
+    client: PoolClient,
+    id: number,
+    updates: Partial<Draft>
+  ): Promise<Draft> {
+    return this.core.updateWithClient(client, id, updates);
+  }
+
   async delete(id: number): Promise<void> {
     return this.core.delete(id);
   }

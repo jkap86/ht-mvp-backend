@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { BasePlayoffEngine } from './base-playoff.engine';
-import { AdvanceResult, PlayoffEngineContext } from './playoff-engine.interface';
+import { AdvanceResult, PlayoffEngineContext, SeriesWinner } from './playoff-engine.interface';
 import { BracketType, SeriesAggregation, calculateTotalRounds, getWeekRangeForRound } from '../playoff.model';
 import { PlayoffRepository } from '../playoff.repository';
 import { logger } from '../../../config/env.config';
@@ -137,7 +137,7 @@ export class ConsolationEngine extends BasePlayoffEngine {
    */
   private async createRound2WithByes(
     ctx: PlayoffEngineContext,
-    winners: Array<{ rosterId: number; seed: number; bracketPosition: number }>,
+    winners: SeriesWinner[],
     weekStart: number,
     weeks: number
   ): Promise<void> {

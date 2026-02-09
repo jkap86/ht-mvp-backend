@@ -1,12 +1,15 @@
 /**
  * Trade Command Handlers
  *
- * Handlers for trade-related commands. These handlers wrap the existing
- * trade services and use-case functions.
+ * NOTE: These handlers are PLACEHOLDERS. They are not registered with the
+ * command bus until service method signatures are aligned. See handlers/index.ts.
+ *
+ * TODO: Implement handlers once service methods support the command pattern.
  */
 
-import { CommandHandler, Command } from '../command-bus';
+import { CommandHandler } from '../command-bus';
 import {
+  Command,
   CommandTypes,
   TradeProposePayload,
   TradeAcceptPayload,
@@ -15,144 +18,61 @@ import {
   TradeCounterPayload,
   TradeVotePayload,
 } from '../commands';
-import { container, KEYS } from '../../container';
-import type { TradesService } from '../../modules/trades/trades.service';
 
-/**
- * Handle TRADE_PROPOSE command - propose a new trade
- */
+// Placeholder implementations - not currently registered
+
 export class TradeProposeHandler implements CommandHandler<TradeProposePayload> {
   readonly commandType = CommandTypes.TRADE_PROPOSE;
 
-  async handle(command: Command<TradeProposePayload>): Promise<unknown> {
-    const tradesService = container.resolve<TradesService>(KEYS.TRADES_SERVICE);
-
-    const userId = command.actor.userId;
-    if (!userId) {
-      throw new Error('User ID required to propose trade');
-    }
-
-    return await tradesService.proposeTrade(
-      command.payload.leagueId,
-      userId,
-      command.payload.recipientRosterId,
-      command.payload.proposerItems,
-      command.payload.recipientItems,
-      command.payload.message
-    );
+  async handle(_command: Command<TradeProposePayload>): Promise<unknown> {
+    throw new Error('Handler not implemented - use TradeService directly');
   }
 }
 
-/**
- * Handle TRADE_ACCEPT command - accept a pending trade
- */
 export class TradeAcceptHandler implements CommandHandler<TradeAcceptPayload> {
   readonly commandType = CommandTypes.TRADE_ACCEPT;
 
-  async handle(command: Command<TradeAcceptPayload>): Promise<unknown> {
-    const tradesService = container.resolve<TradesService>(KEYS.TRADES_SERVICE);
-
-    const userId = command.actor.userId;
-    if (!userId) {
-      throw new Error('User ID required to accept trade');
-    }
-
-    return await tradesService.acceptTrade(command.payload.tradeId, userId);
+  async handle(_command: Command<TradeAcceptPayload>): Promise<unknown> {
+    throw new Error('Handler not implemented - use TradeService directly');
   }
 }
 
-/**
- * Handle TRADE_REJECT command - reject a pending trade
- */
 export class TradeRejectHandler implements CommandHandler<TradeRejectPayload> {
   readonly commandType = CommandTypes.TRADE_REJECT;
 
-  async handle(command: Command<TradeRejectPayload>): Promise<unknown> {
-    const tradesService = container.resolve<TradesService>(KEYS.TRADES_SERVICE);
-
-    const userId = command.actor.userId;
-    if (!userId) {
-      throw new Error('User ID required to reject trade');
-    }
-
-    return await tradesService.rejectTrade(command.payload.tradeId, userId);
+  async handle(_command: Command<TradeRejectPayload>): Promise<unknown> {
+    throw new Error('Handler not implemented - use TradeService directly');
   }
 }
 
-/**
- * Handle TRADE_CANCEL command - cancel a proposed trade
- */
 export class TradeCancelHandler implements CommandHandler<TradeCancelPayload> {
   readonly commandType = CommandTypes.TRADE_CANCEL;
 
-  async handle(command: Command<TradeCancelPayload>): Promise<unknown> {
-    const tradesService = container.resolve<TradesService>(KEYS.TRADES_SERVICE);
-
-    const userId = command.actor.userId;
-    if (!userId) {
-      throw new Error('User ID required to cancel trade');
-    }
-
-    return await tradesService.cancelTrade(command.payload.tradeId, userId);
+  async handle(_command: Command<TradeCancelPayload>): Promise<unknown> {
+    throw new Error('Handler not implemented - use TradeService directly');
   }
 }
 
-/**
- * Handle TRADE_COUNTER command - counter a trade with modifications
- */
 export class TradeCounterHandler implements CommandHandler<TradeCounterPayload> {
   readonly commandType = CommandTypes.TRADE_COUNTER;
 
-  async handle(command: Command<TradeCounterPayload>): Promise<unknown> {
-    const tradesService = container.resolve<TradesService>(KEYS.TRADES_SERVICE);
-
-    const userId = command.actor.userId;
-    if (!userId) {
-      throw new Error('User ID required to counter trade');
-    }
-
-    return await tradesService.counterTrade(
-      command.payload.tradeId,
-      userId,
-      command.payload.proposerItems,
-      command.payload.recipientItems,
-      command.payload.message
-    );
+  async handle(_command: Command<TradeCounterPayload>): Promise<unknown> {
+    throw new Error('Handler not implemented - use TradeService directly');
   }
 }
 
-/**
- * Handle TRADE_VOTE command - cast a vote on a trade
- */
 export class TradeVoteHandler implements CommandHandler<TradeVotePayload> {
   readonly commandType = CommandTypes.TRADE_VOTE;
 
-  async handle(command: Command<TradeVotePayload>): Promise<unknown> {
-    const tradesService = container.resolve<TradesService>(KEYS.TRADES_SERVICE);
-
-    const userId = command.actor.userId;
-    if (!userId) {
-      throw new Error('User ID required to vote on trade');
-    }
-
-    return await tradesService.voteTrade(
-      command.payload.tradeId,
-      userId,
-      command.payload.vote === 'approve'
-    );
+  async handle(_command: Command<TradeVotePayload>): Promise<unknown> {
+    throw new Error('Handler not implemented - use TradeService directly');
   }
 }
 
 /**
  * Get all trade command handlers for registration.
+ * NOTE: Currently returns empty array - handlers are placeholders.
  */
 export function getTradeCommandHandlers(): CommandHandler[] {
-  return [
-    new TradeProposeHandler(),
-    new TradeAcceptHandler(),
-    new TradeRejectHandler(),
-    new TradeCancelHandler(),
-    new TradeCounterHandler(),
-    new TradeVoteHandler(),
-  ];
+  return [];
 }

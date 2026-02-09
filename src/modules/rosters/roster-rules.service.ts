@@ -436,18 +436,18 @@ export class RosterRulesService {
     client?: PoolClient
   ): Promise<RosterSnapshot | null> {
     // Get current players on roster
-    const players = await this.rosterPlayersRepo.getByRosterIdWithClient
-      ? await this.rosterPlayersRepo.getByRosterIdWithClient(rosterId, client)
-      : await this.rosterPlayersRepo.getByRosterId(rosterId);
+    // Note: getByRosterId doesn't support client parameter, so we use it directly
+    const players = await this.rosterPlayersRepo.getByRosterId(rosterId);
 
-    const playerIds = new Set(players.map((p) => p.playerId));
+    const playerIds = new Set(players.map((p: { playerId: number }) => p.playerId));
 
     // Get pick assets if available
     let pickAssetIds = new Set<number>();
     if (this.pickAssetRepo) {
       try {
-        const pickAssets = await this.pickAssetRepo.findByRosterId(rosterId, client);
-        pickAssetIds = new Set(pickAssets.map((pa) => pa.id));
+        // findByOwner returns assets owned by this roster
+        const pickAssets = await this.pickAssetRepo.findByOwner(rosterId, leagueId);
+        pickAssetIds = new Set(pickAssets.map((pa: { id: number }) => pa.id));
       } catch {
         // Pick assets not available, continue without them
       }

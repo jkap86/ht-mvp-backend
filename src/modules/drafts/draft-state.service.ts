@@ -723,9 +723,9 @@ export class DraftStateService {
       const computedNextPickState = this.computeNextPickState(draft, draftOrder, engine, pickAssets);
 
       // Update draft state without recording a pick
-      const updatedDraft = await this.draftRepo.updateStateWithClient(client, draftId, {
-        currentPick: computedNextPickState.currentPick,
-        currentRound: computedNextPickState.currentRound,
+      const updatedDraft = await this.draftRepo.updateWithClient(client, draftId, {
+        currentPick: computedNextPickState.currentPick ?? undefined,
+        currentRound: computedNextPickState.currentRound ?? undefined,
         currentRosterId: computedNextPickState.currentRosterId,
         pickDeadline: computedNextPickState.pickDeadline,
         status: computedNextPickState.status,
