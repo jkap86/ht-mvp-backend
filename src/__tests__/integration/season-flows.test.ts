@@ -954,6 +954,7 @@ describe('Season Sanity Integration Tests', () => {
         week: 5,
         processedAt: null,
         failureReason: null,
+        processingRunId: null,
         createdAt: new Date(),
         updatedAt: new Date(),
       };

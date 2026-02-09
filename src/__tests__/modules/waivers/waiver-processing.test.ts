@@ -93,6 +93,7 @@ describe('Waiver Processing', () => {
     week: 1,
     processedAt: null,
     failureReason: null,
+    processingRunId: null,
     createdAt: new Date('2024-01-01T00:00:00Z'),
     updatedAt: new Date('2024-01-01T00:00:00Z'),
   });
@@ -431,6 +432,7 @@ describe('Round-based Processing', () => {
     week: 1,
     processedAt: null,
     failureReason: null,
+    processingRunId: null,
     createdAt: new Date('2024-01-01T00:00:00Z'),
     updatedAt: new Date('2024-01-01T00:00:00Z'),
   });
@@ -765,6 +767,7 @@ describe('Stale Claim Handling (Hardening)', () => {
     week: 1,
     processedAt: null,
     failureReason: null,
+    processingRunId: null,
     createdAt: new Date('2024-01-01T00:00:00Z'),
     updatedAt: new Date('2024-01-01T00:00:00Z'),
   });
@@ -1169,6 +1172,7 @@ describe('Full League Ownership Preload', () => {
     week: 1,
     processedAt: null,
     failureReason: null,
+    processingRunId: null,
     createdAt: new Date('2024-01-01T00:00:00Z'),
     updatedAt: new Date('2024-01-01T00:00:00Z'),
   });
