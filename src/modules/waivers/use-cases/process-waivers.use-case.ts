@@ -6,7 +6,7 @@ import {
 } from '../../rosters/rosters.repository';
 import { RosterMutationService } from '../../rosters/roster-mutation.service';
 import { TradesRepository } from '../../trades/trades.repository';
-import { DomainEventBus, EventTypes, tryGetEventBus } from '../../../shared/events';
+import { EventTypes, tryGetEventBus } from '../../../shared/events';
 import { container, KEYS } from '../../../container';
 import {
   WaiverClaim,
@@ -23,6 +23,21 @@ import { addToWaiverWire, WaiverInfoContext } from './waiver-info.use-case';
 import { EventListenerService } from '../../chat/event-listener.service';
 import { logger } from '../../../config/logger.config';
 
+/**
+ * In-memory state for a roster during round-based waiver processing.
+ * Tracks changes from earlier rounds that affect later claims.
+ */
+interface RosterProcessingState {
+  rosterId: number;
+  currentPriority: number;
+  remainingBudget: number;
+  currentRosterSize: number;
+  /** Set of player IDs currently on roster (updated after adds/drops) */
+  ownedPlayerIds: Set<number>;
+  /** Set of claim orders already processed for this roster */
+  processedClaimOrders: Set<number>;
+}
+
 export interface ProcessWaiversContext extends WaiverInfoContext {
   claimsRepo: WaiverClaimsRepository;
   rosterPlayersRepo: RosterPlayersRepository;
@@ -33,8 +48,15 @@ export interface ProcessWaiversContext extends WaiverInfoContext {
 }
 
 /**
- * Process waiver claims for a specific league
- * Now properly scoped to current season/week and uses live priority for winner selection
+ * Process waiver claims for a specific league using round-based processing.
+ *
+ * Round-based algorithm:
+ * - Round 1: Take each roster's claim #1, resolve conflicts
+ * - Round 2: Take each roster's claim #2 (with updated state from round 1), resolve conflicts
+ * - Continue until no more claims
+ *
+ * This allows chained claims: if a roster's #1 claim wins, their #2 claim
+ * uses updated budget/priority/roster composition.
  */
 export async function processLeagueClaims(
   ctx: ProcessWaiversContext,
@@ -67,124 +89,159 @@ export async function processLeagueClaims(
     LockDomain.WAIVER,
     leagueId,
     async (client) => {
-      let processedCount = 0;
-      let successfulCount = 0;
-
-      // Get all pending claims with CURRENT priority (not snapshot) for current season/week
-      const pendingClaims = await ctx.claimsRepo.getPendingByLeagueWithCurrentPriority(
+      // Get all pending claims ordered by roster, then claim_order
+      const allClaims = await ctx.claimsRepo.getPendingByLeagueWithCurrentPriority(
         leagueId,
         season,
         currentWeek,
         client
       );
 
-      if (pendingClaims.length === 0) {
+      if (allClaims.length === 0) {
         return { processed: 0, successful: 0 };
       }
 
-      // Build in-memory priority map for tracking rotations within this run
-      // This ensures priority changes from earlier claims affect later claims
-      const priorityByRoster = new Map<number, number>();
-      let maxPriority = 0;
-      for (const claim of pendingClaims) {
-        if (claim.currentPriority !== null && !priorityByRoster.has(claim.rosterId)) {
-          priorityByRoster.set(claim.rosterId, claim.currentPriority);
-          maxPriority = Math.max(maxPriority, claim.currentPriority);
-        }
-      }
+      // Initialize roster processing states
+      const rosterStates = await initializeRosterStates(
+        ctx,
+        allClaims,
+        settings.waiverType,
+        season,
+        leagueId,
+        client
+      );
 
-      // Group claims by player
-      const claimsByPlayer = new Map<number, WaiverClaimWithCurrentPriority[]>();
-      for (const claim of pendingClaims) {
-        const existing = claimsByPlayer.get(claim.playerId) || [];
+      // Group claims by roster, already sorted by claim_order from query
+      const claimsByRoster = new Map<number, WaiverClaimWithCurrentPriority[]>();
+      for (const claim of allClaims) {
+        const existing = claimsByRoster.get(claim.rosterId) || [];
         existing.push(claim);
-        claimsByPlayer.set(claim.playerId, existing);
+        claimsByRoster.set(claim.rosterId, existing);
       }
 
-      // Process each player's claims
-      for (const [playerId, claims] of claimsByPlayer) {
-        // Sort claims using in-memory priority (reflects rotations from earlier wins)
-        const sortedClaims = sortClaimsByCurrentPriority(claims, settings.waiverType, priorityByRoster);
+      // Track max priority for rotation
+      let maxPriority = 0;
+      for (const state of rosterStates.values()) {
+        maxPriority = Math.max(maxPriority, state.currentPriority);
+      }
 
-        let winner: WaiverClaimWithCurrentPriority | null = null;
+      let processedCount = 0;
+      let successfulCount = 0;
 
-        // Find first eligible winner
-        for (const claim of sortedClaims) {
-          const canExecute = await canExecuteClaim(ctx, claim, settings.waiverType, season, maxRosterSize, client);
-          if (canExecute) {
-            winner = claim;
-            break;
-          }
+      // Process in rounds until no more claims
+      let roundNumber = 1;
+      while (hasUnprocessedClaims(claimsByRoster, rosterStates)) {
+        // Extract active claims for this round (next unprocessed claim from each roster)
+        const roundClaims = extractRoundClaims(claimsByRoster, rosterStates);
+        if (roundClaims.length === 0) break;
+
+        logger.debug(`Processing waiver round ${roundNumber} with ${roundClaims.length} claims`, { leagueId });
+
+        // Group by target player to identify conflicts
+        const conflictGroups = new Map<number, WaiverClaimWithCurrentPriority[]>();
+        for (const claim of roundClaims) {
+          const existing = conflictGroups.get(claim.playerId) || [];
+          existing.push(claim);
+          conflictGroups.set(claim.playerId, existing);
         }
 
-        // Execute winner, fail others
-        for (const claim of sortedClaims) {
-          processedCount++;
+        // Process each player conflict group
+        for (const [playerId, competingClaims] of conflictGroups) {
+          // Sort by bid/priority using CURRENT roster state (tracks rotations)
+          const sortedClaims = sortClaimsByRosterState(
+            competingClaims,
+            settings.waiverType,
+            rosterStates
+          );
 
-          if (winner && claim.id === winner.id) {
-            await executeClaim(ctx, claim, settings.waiverType, season, client);
-            await ctx.claimsRepo.updateStatus(claim.id, 'successful', undefined, client);
-            successfulCount++;
+          let winner: WaiverClaimWithCurrentPriority | null = null;
 
-            // Update in-memory priority map for standard waivers
-            // Winner moves to last place, everyone who was behind them shifts up
-            if (settings.waiverType === 'standard') {
-              const winnerOldPriority = priorityByRoster.get(winner.rosterId);
-              if (winnerOldPriority !== undefined) {
-                // Shift everyone who was behind the winner up by 1
-                for (const [rosterId, priority] of priorityByRoster) {
-                  if (priority > winnerOldPriority) {
-                    priorityByRoster.set(rosterId, priority - 1);
+          // Find first eligible winner using in-memory state
+          for (const claim of sortedClaims) {
+            const state = rosterStates.get(claim.rosterId);
+            if (!state) continue;
+
+            const validation = validateClaimWithState(
+              claim,
+              state,
+              settings.waiverType,
+              maxRosterSize
+            );
+
+            if (validation.eligible) {
+              winner = claim;
+              break;
+            } else {
+              // Mark invalid and continue to next candidate
+              await ctx.claimsRepo.updateStatus(claim.id, 'invalid', validation.reason, client);
+              state.processedClaimOrders.add(claim.claimOrder);
+              processedCount++;
+              const claimCopy = { ...claim };
+              const reason = validation.reason || 'Invalid claim';
+              pendingEvents.push(() => emitClaimFailed(ctx, claimCopy, reason));
+            }
+          }
+
+          // Process winner and losers
+          for (const claim of sortedClaims) {
+            const state = rosterStates.get(claim.rosterId);
+            if (!state) continue;
+
+            // Skip already processed (invalid) claims
+            if (state.processedClaimOrders.has(claim.claimOrder)) continue;
+
+            if (winner && claim.id === winner.id) {
+              // Execute the winning claim
+              await executeClaim(ctx, claim, settings.waiverType, season, client);
+              await ctx.claimsRepo.updateStatus(claim.id, 'successful', undefined, client);
+              successfulCount++;
+              processedCount++;
+
+              // Update in-memory state for this roster's future claims
+              updateRosterStateAfterWin(state, claim, settings.waiverType, rosterStates, maxPriority);
+
+              state.processedClaimOrders.add(claim.claimOrder);
+
+              // Queue success emit
+              const claimCopy = { ...claim };
+              pendingEvents.push(() => emitClaimSuccessful(ctx, claimCopy));
+
+              // Remove player from waiver wire
+              await ctx.waiverWireRepo.removePlayer(leagueId, playerId, client);
+
+              // Invalidate pending trades
+              if (ctx.tradesRepo) {
+                const invalidatedTrades = await invalidateTradesForPlayer(ctx, leagueId, playerId, client);
+                for (const trade of invalidatedTrades) {
+                  pendingEvents.push(() => emitTradeInvalidated(trade.leagueId, trade.id));
+                }
+                if (claim.dropPlayerId) {
+                  const droppedPlayerTrades = await invalidateTradesForPlayer(
+                    ctx,
+                    leagueId,
+                    claim.dropPlayerId,
+                    client
+                  );
+                  for (const trade of droppedPlayerTrades) {
+                    pendingEvents.push(() => emitTradeInvalidated(trade.leagueId, trade.id));
                   }
                 }
-                // Winner goes to max priority (last place)
-                priorityByRoster.set(winner.rosterId, maxPriority);
               }
+            } else {
+              // Loser - mark as failed
+              const reason = winner ? 'Outbid by another team' : 'No eligible claimers';
+              await ctx.claimsRepo.updateStatus(claim.id, 'failed', reason, client);
+              processedCount++;
+
+              state.processedClaimOrders.add(claim.claimOrder);
+
+              const claimCopy = { ...claim };
+              pendingEvents.push(() => emitClaimFailed(ctx, claimCopy, reason));
             }
-
-            // Queue success emit for after commit
-            const claimCopy = { ...claim };
-            pendingEvents.push(() => emitClaimSuccessful(ctx, claimCopy));
-          } else {
-            const reason = winner ? 'Outbid by another team' : 'Could not process claim';
-            await ctx.claimsRepo.updateStatus(claim.id, 'failed', reason, client);
-
-            // Queue failure emit for after commit
-            const claimCopy = { ...claim };
-            pendingEvents.push(() => emitClaimFailed(ctx, claimCopy, reason));
           }
         }
 
-        // Remove player from waiver wire after being claimed
-        if (winner) {
-          await ctx.waiverWireRepo.removePlayer(leagueId, playerId, client);
-
-          // Invalidate pending trades involving the claimed player
-          if (ctx.tradesRepo) {
-            const invalidatedTrades = await invalidateTradesForPlayer(
-              ctx,
-              leagueId,
-              playerId,
-              client
-            );
-            // Queue trade invalidation emits for after commit
-            for (const trade of invalidatedTrades) {
-              pendingEvents.push(() => emitTradeInvalidated(trade.leagueId, trade.id));
-            }
-            // Also invalidate trades involving the dropped player if any
-            if (winner.dropPlayerId) {
-              const droppedPlayerTrades = await invalidateTradesForPlayer(
-                ctx,
-                leagueId,
-                winner.dropPlayerId,
-                client
-              );
-              for (const trade of droppedPlayerTrades) {
-                pendingEvents.push(() => emitTradeInvalidated(trade.leagueId, trade.id));
-              }
-            }
-          }
-        }
+        roundNumber++;
       }
 
       return { processed: processedCount, successful: successfulCount };
@@ -221,19 +278,103 @@ export async function processLeagueClaims(
 }
 
 /**
- * Sort claims by current priority (from in-memory map that tracks rotations)
- * For FAAB: highest bid wins, priority is tiebreaker
- * For Standard: lowest priority number wins
+ * Initialize in-memory roster states for processing.
+ * Loads current priority, budget, and roster composition for each roster with claims.
  */
-function sortClaimsByCurrentPriority(
+async function initializeRosterStates(
+  ctx: ProcessWaiversContext,
   claims: WaiverClaimWithCurrentPriority[],
   waiverType: WaiverType,
-  priorityByRoster: Map<number, number>
+  season: number,
+  leagueId: number,
+  client: PoolClient
+): Promise<Map<number, RosterProcessingState>> {
+  const states = new Map<number, RosterProcessingState>();
+  const rosterIds = [...new Set(claims.map((c) => c.rosterId))];
+
+  for (const rosterId of rosterIds) {
+    // Get current priority from the first claim for this roster (all have same currentPriority)
+    const claimForRoster = claims.find((c) => c.rosterId === rosterId);
+    const currentPriority = claimForRoster?.currentPriority ?? Infinity;
+
+    // Get FAAB budget
+    let remainingBudget = 0;
+    if (waiverType === 'faab') {
+      const budget = await ctx.faabRepo.getByRoster(rosterId, season, client);
+      remainingBudget = budget?.remainingBudget ?? 0;
+    }
+
+    // Get current roster composition
+    const playerIds = await ctx.rosterPlayersRepo.getPlayerIdsByRoster(rosterId, client);
+    const ownedPlayerIds = new Set(playerIds);
+
+    states.set(rosterId, {
+      rosterId,
+      currentPriority,
+      remainingBudget,
+      currentRosterSize: playerIds.length,
+      ownedPlayerIds,
+      processedClaimOrders: new Set(),
+    });
+  }
+
+  return states;
+}
+
+/**
+ * Check if any roster has unprocessed claims remaining.
+ */
+function hasUnprocessedClaims(
+  claimsByRoster: Map<number, WaiverClaimWithCurrentPriority[]>,
+  rosterStates: Map<number, RosterProcessingState>
+): boolean {
+  for (const [rosterId, claims] of claimsByRoster) {
+    const state = rosterStates.get(rosterId);
+    if (!state) continue;
+
+    const hasUnprocessed = claims.some((c) => !state.processedClaimOrders.has(c.claimOrder));
+    if (hasUnprocessed) return true;
+  }
+  return false;
+}
+
+/**
+ * Extract the next unprocessed claim from each roster for this round.
+ */
+function extractRoundClaims(
+  claimsByRoster: Map<number, WaiverClaimWithCurrentPriority[]>,
+  rosterStates: Map<number, RosterProcessingState>
+): WaiverClaimWithCurrentPriority[] {
+  const roundClaims: WaiverClaimWithCurrentPriority[] = [];
+
+  for (const [rosterId, claims] of claimsByRoster) {
+    const state = rosterStates.get(rosterId);
+    if (!state) continue;
+
+    // Find the next claim_order that hasn't been processed
+    const nextClaim = claims.find((c) => !state.processedClaimOrders.has(c.claimOrder));
+    if (nextClaim) {
+      roundClaims.push(nextClaim);
+    }
+  }
+
+  return roundClaims;
+}
+
+/**
+ * Sort claims by current roster state (priority/bid).
+ * Uses in-memory state that reflects rotations from earlier rounds.
+ */
+function sortClaimsByRosterState(
+  claims: WaiverClaimWithCurrentPriority[],
+  waiverType: WaiverType,
+  rosterStates: Map<number, RosterProcessingState>
 ): WaiverClaimWithCurrentPriority[] {
   return [...claims].sort((a, b) => {
-    // Get current priority from in-memory map (reflects rotations within this run)
-    const aPriority = priorityByRoster.get(a.rosterId) ?? a.currentPriority ?? a.priorityAtClaim ?? Infinity;
-    const bPriority = priorityByRoster.get(b.rosterId) ?? b.currentPriority ?? b.priorityAtClaim ?? Infinity;
+    const aState = rosterStates.get(a.rosterId);
+    const bState = rosterStates.get(b.rosterId);
+    const aPriority = aState?.currentPriority ?? Infinity;
+    const bPriority = bState?.currentPriority ?? Infinity;
 
     if (waiverType === 'faab') {
       // Higher bid wins
@@ -250,43 +391,81 @@ function sortClaimsByCurrentPriority(
 }
 
 /**
- * Check if a claim can be executed
+ * Validate a claim using in-memory roster state.
+ * Returns eligibility and failure reason if not eligible.
  */
-async function canExecuteClaim(
-  ctx: ProcessWaiversContext,
-  claim: WaiverClaim,
+function validateClaimWithState(
+  claim: WaiverClaimWithCurrentPriority,
+  state: RosterProcessingState,
   waiverType: WaiverType,
-  season: number,
-  maxRosterSize: number,
-  client: PoolClient
-): Promise<boolean> {
-  // Check if player is still available
-  const owner = await ctx.rosterPlayersRepo.findOwner(claim.leagueId, claim.playerId, client);
-  if (owner) return false;
+  maxRosterSize: number
+): { eligible: boolean; reason?: string } {
+  // Check if player is already owned (by any roster in current state)
+  // Note: We can't check other rosters' state easily here, but we do DB check in executeClaim
+  // For in-memory validation, we check budget/roster constraints
+
+  // Check if player is already on this roster (from a previous round win)
+  if (state.ownedPlayerIds.has(claim.playerId)) {
+    return { eligible: false, reason: 'Player already on your roster' };
+  }
+
+  // Check if drop player is still on roster
+  if (claim.dropPlayerId && !state.ownedPlayerIds.has(claim.dropPlayerId)) {
+    return { eligible: false, reason: 'Drop player no longer on roster' };
+  }
+
+  // Check roster space
+  if (!claim.dropPlayerId && state.currentRosterSize >= maxRosterSize) {
+    return { eligible: false, reason: 'Roster is full' };
+  }
 
   // Check FAAB budget
   if (waiverType === 'faab' && claim.bidAmount > 0) {
-    const budget = await ctx.faabRepo.getByRoster(claim.rosterId, season, client);
-    if (!budget || budget.remainingBudget < claim.bidAmount) return false;
+    if (state.remainingBudget < claim.bidAmount) {
+      return { eligible: false, reason: `Insufficient FAAB budget ($${state.remainingBudget} available)` };
+    }
   }
 
-  // Check if drop player still on roster (if specified)
+  return { eligible: true };
+}
+
+/**
+ * Update roster state after a successful claim.
+ * This affects subsequent claims from the same roster.
+ */
+function updateRosterStateAfterWin(
+  state: RosterProcessingState,
+  claim: WaiverClaim,
+  waiverType: WaiverType,
+  allStates: Map<number, RosterProcessingState>,
+  maxPriority: number
+): void {
+  // Update roster composition
+  state.ownedPlayerIds.add(claim.playerId);
   if (claim.dropPlayerId) {
-    const hasDropPlayer = await ctx.rosterPlayersRepo.findByRosterAndPlayer(
-      claim.rosterId,
-      claim.dropPlayerId,
-      client
-    );
-    if (!hasDropPlayer) return false;
+    state.ownedPlayerIds.delete(claim.dropPlayerId);
+    // Size stays same when dropping
+  } else {
+    state.currentRosterSize++;
   }
 
-  // Check roster has space (if no drop player)
-  if (!claim.dropPlayerId) {
-    const rosterSize = await ctx.rosterPlayersRepo.getPlayerCount(claim.rosterId, client);
-    if (rosterSize >= maxRosterSize) return false;
+  // Deduct FAAB budget
+  if (waiverType === 'faab' && claim.bidAmount > 0) {
+    state.remainingBudget -= claim.bidAmount;
   }
 
-  return true;
+  // Rotate priority for standard waivers
+  if (waiverType === 'standard') {
+    const winnerOldPriority = state.currentPriority;
+    // Shift everyone who was behind the winner up by 1
+    for (const [, otherState] of allStates) {
+      if (otherState.currentPriority > winnerOldPriority) {
+        otherState.currentPriority--;
+      }
+    }
+    // Winner goes to last place (max priority)
+    state.currentPriority = maxPriority;
+  }
 }
 
 /**

@@ -31,18 +31,71 @@ export class WaiverClaimsRepository {
     priorityAtClaim: number | null,
     season: number,
     week: number,
+    claimOrder: number,
     client?: PoolClient
   ): Promise<WaiverClaim> {
     const conn = client || this.db;
     const result = await conn.query(
       `INSERT INTO waiver_claims (
         league_id, roster_id, player_id, drop_player_id,
-        bid_amount, priority_at_claim, season, week
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        bid_amount, priority_at_claim, season, week, claim_order
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       RETURNING *`,
-      [leagueId, rosterId, playerId, dropPlayerId, bidAmount, priorityAtClaim, season, week]
+      [leagueId, rosterId, playerId, dropPlayerId, bidAmount, priorityAtClaim, season, week, claimOrder]
     );
     return waiverClaimFromDatabase(result.rows[0]);
+  }
+
+  /**
+   * Get the next claim order for a roster's pending claims in the current week.
+   * Returns max(claim_order) + 1, or 1 if no pending claims exist.
+   */
+  async getNextClaimOrder(
+    rosterId: number,
+    season: number,
+    week: number,
+    client?: PoolClient
+  ): Promise<number> {
+    const conn = client || this.db;
+    const result = await conn.query(
+      `SELECT COALESCE(MAX(claim_order), 0) + 1 as next_order
+       FROM waiver_claims
+       WHERE roster_id = $1 AND season = $2 AND week = $3 AND status = 'pending'`,
+      [rosterId, season, week]
+    );
+    return parseInt(result.rows[0].next_order, 10);
+  }
+
+  /**
+   * Reorder claims for a roster atomically.
+   * Accepts an array of claim IDs in the desired order.
+   * Returns the updated claims.
+   */
+  async reorderClaims(
+    rosterId: number,
+    claimIds: number[],
+    client?: PoolClient
+  ): Promise<WaiverClaim[]> {
+    const conn = client || this.db;
+
+    // Build VALUES clause with typed casts for PostgreSQL
+    const values = claimIds.map((id, index) => `(${id}::INTEGER, ${index + 1}::INTEGER)`).join(',');
+
+    const result = await conn.query(
+      `WITH new_orders(id, new_order) AS (
+         VALUES ${values}
+       )
+       UPDATE waiver_claims wc
+       SET claim_order = no.new_order, updated_at = NOW()
+       FROM new_orders no
+       WHERE wc.id = no.id
+         AND wc.roster_id = $1
+         AND wc.status = 'pending'
+       RETURNING wc.*`,
+      [rosterId]
+    );
+
+    return result.rows.map(waiverClaimFromDatabase);
   }
 
   /**
@@ -92,7 +145,7 @@ export class WaiverClaimsRepository {
   }
 
   /**
-   * Get pending claims for a roster with details
+   * Get pending claims for a roster with details, ordered by claim_order
    */
   async getPendingByRoster(rosterId: number): Promise<WaiverClaimWithDetails[]> {
     const result = await this.db.query(
@@ -110,7 +163,7 @@ export class WaiverClaimsRepository {
       JOIN players p ON p.id = wc.player_id
       LEFT JOIN players dp ON dp.id = wc.drop_player_id
       WHERE wc.roster_id = $1 AND wc.status = 'pending'
-      ORDER BY wc.created_at ASC`,
+      ORDER BY wc.claim_order ASC`,
       [rosterId]
     );
 
@@ -148,7 +201,7 @@ export class WaiverClaimsRepository {
 
   /**
    * Get all pending claims for a league with current priority from waiver_priority table
-   * This is used for processing to ensure we use current priority, not snapshot
+   * This is used for round-based processing where we need claims ordered by roster and claim_order
    */
   async getPendingByLeagueWithCurrentPriority(
     leagueId: number,
@@ -163,7 +216,7 @@ export class WaiverClaimsRepository {
        LEFT JOIN waiver_priority wp ON wp.roster_id = wc.roster_id
          AND wp.league_id = wc.league_id AND wp.season = $2
        WHERE wc.league_id = $1 AND wc.status = 'pending' AND wc.season = $2 AND wc.week = $3
-       ORDER BY wc.player_id, wc.bid_amount DESC, wp.priority ASC NULLS LAST, wc.created_at ASC`,
+       ORDER BY wc.roster_id, wc.claim_order ASC`,
       [leagueId, season, week]
     );
     return result.rows.map((row) => ({

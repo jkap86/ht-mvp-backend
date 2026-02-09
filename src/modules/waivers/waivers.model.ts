@@ -51,6 +51,7 @@ export interface WaiverClaim {
   dropPlayerId: number | null;
   bidAmount: number;
   priorityAtClaim: number | null;
+  claimOrder: number;
   status: WaiverClaimStatus;
   season: number;
   week: number;
@@ -157,6 +158,7 @@ export function waiverClaimFromDatabase(row: any): WaiverClaim {
     dropPlayerId: row.drop_player_id,
     bidAmount: row.bid_amount,
     priorityAtClaim: row.priority_at_claim,
+    claimOrder: row.claim_order ?? 1,
     status: row.status,
     season: row.season,
     week: row.week,
@@ -233,6 +235,7 @@ export function waiverClaimToResponse(wc: WaiverClaimWithDetails): Record<string
     drop_player_position: wc.dropPlayerPosition,
     bid_amount: wc.bidAmount,
     priority_at_claim: wc.priorityAtClaim,
+    claim_order: wc.claimOrder,
     status: wc.status,
     season: wc.season,
     week: wc.week,

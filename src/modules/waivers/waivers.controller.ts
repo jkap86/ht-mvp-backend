@@ -202,4 +202,24 @@ export class WaiversController {
       next(error);
     }
   };
+
+  /**
+   * Reorder waiver claims
+   * PATCH /leagues/:leagueId/waivers/claims/reorder
+   */
+  reorderClaims = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const leagueId = requireLeagueId(req);
+      const userId = requireUserId(req);
+      const { claim_ids } = req.body;
+
+      const claims = await this.waiversService.reorderClaims(leagueId, userId, claim_ids);
+
+      res.status(200).json({
+        claims: claims.map(waiverClaimToResponse),
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
 }

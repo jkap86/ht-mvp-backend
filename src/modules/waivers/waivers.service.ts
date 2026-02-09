@@ -28,6 +28,7 @@ import {
   getMyClaims as getMyClaimsUseCase,
   cancelClaim as cancelClaimUseCase,
   updateClaim as updateClaimUseCase,
+  reorderClaims as reorderClaimsUseCase,
   getPriorityOrder as getPriorityOrderUseCase,
   getFaabBudgets as getFaabBudgetsUseCase,
   getWaiverWirePlayers as getWaiverWirePlayersUseCase,
@@ -138,6 +139,28 @@ export class WaiversService {
       claimId,
       userId,
       request
+    );
+  }
+
+  /**
+   * Reorder pending claims for a roster
+   */
+  async reorderClaims(
+    leagueId: number,
+    userId: string,
+    claimIds: number[]
+  ): Promise<WaiverClaimWithDetails[]> {
+    return reorderClaimsUseCase(
+      {
+        faabRepo: this.faabRepo,
+        claimsRepo: this.claimsRepo,
+        rosterRepo: this.rosterRepo,
+        rosterPlayersRepo: this.rosterPlayersRepo,
+        leagueRepo: this.leagueRepo,
+      },
+      leagueId,
+      userId,
+      claimIds
     );
   }
 

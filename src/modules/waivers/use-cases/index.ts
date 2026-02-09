@@ -1,5 +1,11 @@
 export { submitClaim, SubmitClaimContext } from './submit-claim.use-case';
-export { getMyClaims, cancelClaim, updateClaim, ManageClaimContext } from './manage-claim.use-case';
+export {
+  getMyClaims,
+  cancelClaim,
+  updateClaim,
+  reorderClaims,
+  ManageClaimContext,
+} from './manage-claim.use-case';
 export {
   getPriorityOrder,
   getFaabBudgets,

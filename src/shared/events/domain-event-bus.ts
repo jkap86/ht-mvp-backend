@@ -255,6 +255,7 @@ export const EventTypes = {
   WAIVER_CLAIM_FAILED: 'waiver:claim_failed',
   WAIVER_CLAIM_CANCELLED: 'waiver:claim_cancelled',
   WAIVER_CLAIM_UPDATED: 'waiver:claim_updated',
+  WAIVER_CLAIMS_REORDERED: 'waiver:claims_reordered',
   WAIVER_PRIORITY_UPDATED: 'waiver:priority_updated',
   WAIVER_BUDGET_UPDATED: 'waiver:budget_updated',
 

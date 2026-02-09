@@ -198,6 +198,18 @@ export class RosterPlayersRepository {
     const result = await db.query('DELETE FROM roster_players WHERE roster_id = $1', [rosterId]);
     return result.rowCount || 0;
   }
+
+  /**
+   * Get all player IDs on a roster (for waiver processing state tracking)
+   */
+  async getPlayerIdsByRoster(rosterId: number, client?: PoolClient): Promise<number[]> {
+    const db = client || this.db;
+    const result = await db.query(
+      'SELECT player_id FROM roster_players WHERE roster_id = $1',
+      [rosterId]
+    );
+    return result.rows.map((row) => row.player_id);
+  }
 }
 
 export class RosterTransactionsRepository {

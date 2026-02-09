@@ -13,6 +13,7 @@ import {
   getWaiverWireSchema,
   initializeWaiversSchema,
   processClaimsSchema,
+  reorderClaimsSchema,
 } from './waivers.schemas';
 
 export function createWaiversRoutes(controller: WaiversController): Router {
@@ -50,6 +51,15 @@ export function createWaiversRoutes(controller: WaiversController): Router {
     waiverLimiter,
     validateRequest(cancelClaimSchema),
     controller.cancelClaim.bind(controller)
+  );
+
+  // Reorder waiver claims
+  // PATCH /leagues/:leagueId/waivers/claims/reorder
+  router.patch(
+    '/claims/reorder',
+    waiverLimiter,
+    validateRequest(reorderClaimsSchema),
+    controller.reorderClaims.bind(controller)
   );
 
   // Get waiver priority order

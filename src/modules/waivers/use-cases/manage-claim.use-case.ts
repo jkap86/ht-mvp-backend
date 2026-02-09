@@ -138,6 +138,62 @@ export async function updateClaim(
   return claimWithDetails;
 }
 
+/**
+ * Reorder pending claims for a roster
+ */
+export async function reorderClaims(
+  ctx: ManageClaimContext,
+  leagueId: number,
+  userId: string,
+  claimIds: number[]
+): Promise<WaiverClaimWithDetails[]> {
+  // Verify user owns a roster in this league
+  const roster = await ctx.rosterRepo.findByLeagueAndUser(leagueId, userId);
+  if (!roster) {
+    throw new ForbiddenException('You are not a member of this league');
+  }
+
+  // Validate claim_ids is not empty
+  if (!claimIds || claimIds.length === 0) {
+    throw new ValidationException('Must provide at least one claim ID');
+  }
+
+  // Get all pending claims for this roster
+  const pendingClaims = await ctx.claimsRepo.getPendingByRoster(roster.id);
+  const pendingIds = new Set(pendingClaims.map((c) => c.id));
+
+  // Check that all provided claim IDs are valid pending claims for this roster
+  for (const claimId of claimIds) {
+    if (!pendingIds.has(claimId)) {
+      throw new ValidationException(`Claim ${claimId} is not a valid pending claim for your roster`);
+    }
+  }
+
+  // Check that all pending claims are included (no partial reorder)
+  if (claimIds.length !== pendingClaims.length) {
+    throw new ValidationException(
+      `Must provide all ${pendingClaims.length} pending claim IDs. Received ${claimIds.length}.`
+    );
+  }
+
+  // Check for duplicates
+  const uniqueIds = new Set(claimIds);
+  if (uniqueIds.size !== claimIds.length) {
+    throw new ValidationException('Duplicate claim IDs are not allowed');
+  }
+
+  // Perform the reorder
+  await ctx.claimsRepo.reorderClaims(roster.id, claimIds);
+
+  // Fetch updated claims with details
+  const updatedClaims = await ctx.claimsRepo.getPendingByRoster(roster.id);
+
+  // Emit event
+  emitClaimsReordered(leagueId, roster.id, updatedClaims);
+
+  return updatedClaims;
+}
+
 function emitClaimCancelled(leagueId: number, claimId: number, rosterId: number): void {
   const eventBus = tryGetEventBus();
   eventBus?.publish({
@@ -153,5 +209,21 @@ function emitClaimUpdated(leagueId: number, claim: WaiverClaimWithDetails): void
     type: EventTypes.WAIVER_CLAIM_UPDATED,
     leagueId,
     payload: waiverClaimToResponse(claim),
+  });
+}
+
+function emitClaimsReordered(
+  leagueId: number,
+  rosterId: number,
+  claims: WaiverClaimWithDetails[]
+): void {
+  const eventBus = tryGetEventBus();
+  eventBus?.publish({
+    type: EventTypes.WAIVER_CLAIMS_REORDERED,
+    leagueId,
+    payload: {
+      rosterId,
+      claims: claims.map(waiverClaimToResponse),
+    },
   });
 }

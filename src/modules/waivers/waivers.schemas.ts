@@ -88,6 +88,16 @@ export const processClaimsSchema = z.object({
   }),
 });
 
+// Reorder waiver claims
+export const reorderClaimsSchema = z.object({
+  params: z.object({
+    leagueId: z.string().regex(/^\d+$/).transform(Number),
+  }),
+  body: z.object({
+    claim_ids: z.array(z.number().int().positive()).min(1, 'At least one claim ID is required'),
+  }),
+});
+
 export type SubmitClaimInput = z.infer<typeof submitClaimSchema>;
 export type UpdateClaimInput = z.infer<typeof updateClaimSchema>;
 export type CancelClaimInput = z.infer<typeof cancelClaimSchema>;
@@ -97,3 +107,4 @@ export type GetFaabBudgetsInput = z.infer<typeof getFaabBudgetsSchema>;
 export type GetWaiverWireInput = z.infer<typeof getWaiverWireSchema>;
 export type InitializeWaiversInput = z.infer<typeof initializeWaiversSchema>;
 export type ProcessClaimsInput = z.infer<typeof processClaimsSchema>;
+export type ReorderClaimsInput = z.infer<typeof reorderClaimsSchema>;

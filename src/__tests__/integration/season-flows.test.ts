@@ -723,6 +723,7 @@ describe('Season Sanity Integration Tests', () => {
         findById: jest.fn(),
         findByIdWithDetails: jest.fn(),
         getPendingByLeague: jest.fn(),
+        getPendingByLeagueWithCurrentPriority: jest.fn(),
         getPendingByPlayer: jest.fn(),
         updateStatus: jest.fn(),
         hasPendingClaim: jest.fn(),
@@ -750,6 +751,7 @@ describe('Season Sanity Integration Tests', () => {
         getPlayerCount: jest.fn(),
         findOwner: jest.fn(),
         getByRosterId: jest.fn(),
+        getPlayerIdsByRoster: jest.fn(),
       } as unknown as jest.Mocked<RosterPlayersRepository>;
 
       mockTransactionsRepo = {
@@ -806,6 +808,7 @@ describe('Season Sanity Integration Tests', () => {
         dropPlayerId: dropPlayerId,
         bidAmount: 0,
         priorityAtClaim: 1,
+        claimOrder: 1,
         status: 'pending',
         season: 2024,
         week: 5,
@@ -818,12 +821,17 @@ describe('Season Sanity Integration Tests', () => {
       // Mock league lookup
       mockLeagueRepo.findById.mockResolvedValue(mockLeague);
 
-      // Mock pending claims for the league
-      mockClaimsRepo.getPendingByLeague.mockResolvedValue([mockClaim]);
+      // Mock pending claims for the league with current priority
+      mockClaimsRepo.getPendingByLeagueWithCurrentPriority.mockResolvedValue([
+        { ...mockClaim, currentPriority: 1 },
+      ]);
 
       // Mock roster lookup
       mockRosterRepo.findById.mockResolvedValue(mockRoster);
       mockRosterRepo.findByLeagueId.mockResolvedValue([mockRoster]);
+
+      // Mock player IDs for roster (includes drop player)
+      mockRosterPlayersRepo.getPlayerIdsByRoster.mockResolvedValue([dropPlayerId, 101, 102]);
 
       // Mock player ownership check (player 500 not owned)
       mockRosterPlayersRepo.findOwner.mockResolvedValue(null);

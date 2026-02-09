@@ -119,6 +119,14 @@ export async function submitClaim(
       }
       priorityAtClaim = priority?.priority ?? null;
 
+      // Get next claim order for this roster (claims are processed in order)
+      const nextClaimOrder = await ctx.claimsRepo.getNextClaimOrder(
+        roster.id,
+        season,
+        currentWeek,
+        client
+      );
+
       // Create the claim
       return await ctx.claimsRepo.create(
         leagueId,
@@ -129,6 +137,7 @@ export async function submitClaim(
         priorityAtClaim,
         season,
         currentWeek,
+        nextClaimOrder,
         client
       );
     }
