@@ -13,6 +13,7 @@ export const SOCKET_EVENTS = {
   LEAGUE: {
     JOIN: 'join:league',
     LEAVE: 'leave:league',
+    SETTINGS_UPDATED: 'league:settings_updated',
   },
 
   // Draft events
@@ -101,6 +102,7 @@ export const SOCKET_EVENTS = {
   MEMBER: {
     KICKED: 'member:kicked',
     JOINED: 'member:joined',
+    BENCHED: 'member:benched',
   },
 
   // Invitation events

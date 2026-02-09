@@ -15,6 +15,40 @@ import {
 } from '../../utils/exceptions';
 import { runWithLock, LockDomain } from '../../shared/transaction-runner';
 import { logger } from '../../config/logger.config';
+import { League } from './leagues.model';
+
+/**
+ * Check if a user can join a league at the current time.
+ * Enforces that league is pre_draft and all drafts are not_started.
+ */
+async function canJoinLeagueNow(
+  client: PoolClient,
+  league: League
+): Promise<{ eligible: boolean; reason?: string }> {
+  // Rule 1: League must be in pre_draft status
+  if (league.status !== 'pre_draft') {
+    return {
+      eligible: false,
+      reason: `Cannot join league: league is currently in ${league.status} phase`,
+    };
+  }
+
+  // Rule 2: All drafts must be not_started
+  const draftResult = await client.query(
+    `SELECT status FROM drafts WHERE league_id = $1 AND status != 'not_started' LIMIT 1`,
+    [league.id]
+  );
+
+  if (draftResult.rows.length > 0) {
+    const draftStatus = draftResult.rows[0].status;
+    return {
+      eligible: false,
+      reason: `Cannot join league: a draft is ${draftStatus === 'in_progress' ? 'currently in progress' : draftStatus}`,
+    };
+  }
+
+  return { eligible: true };
+}
 
 export class RosterService {
   constructor(
@@ -39,6 +73,19 @@ export class RosterService {
     return { rosterId: roster.rosterId };
   }
 
+  /**
+   * Creates the initial roster with explicit client (for transaction support)
+   */
+  async createInitialRosterWithClient(
+    client: PoolClient,
+    leagueId: number,
+    userId: string
+  ): Promise<{ rosterId: number }> {
+    const roster = await this.rosterRepo.create(leagueId, userId, 1, client);
+    await this.leagueRepo.updateCommissionerRosterIdWithClient(client, leagueId, roster.rosterId);
+    return { rosterId: roster.rosterId };
+  }
+
   async joinLeague(leagueId: number, userId: string): Promise<{ message: string; roster: any; joinedAsBench?: boolean }> {
     const league = await this.leagueRepo.findById(leagueId);
 
@@ -52,6 +99,12 @@ export class RosterService {
       LockDomain.LEAGUE,
       leagueId,
       async (client) => {
+        // Check join eligibility (must be pre_draft with no drafts started)
+        const eligibility = await canJoinLeagueNow(client, league);
+        if (!eligibility.eligible) {
+          throw new ConflictException(eligibility.reason!);
+        }
+
         // Check if already a member (inside transaction)
         const existingRoster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId, client);
         if (existingRoster) {
@@ -105,7 +158,8 @@ export class RosterService {
       type: EventTypes.MEMBER_JOINED,
       leagueId,
       payload: {
-        rosterId: roster.rosterId,
+        rosterDbId: roster.id,
+        rosterSlotId: roster.rosterId,
         teamName,
         userId,
       },
@@ -296,7 +350,8 @@ export class RosterService {
         type: EventTypes.MEMBER_JOINED,
         leagueId,
         payload: {
-          rosterId: targetRosterId,
+          rosterDbId: targetRosterId,
+          rosterSlotId: targetRoster.rosterId,
           teamName,
           userId: targetRoster.userId,
         },
@@ -357,12 +412,15 @@ async devBulkAddUsers(
         }
 
         // Emit domain event for real-time UI update
+        // For devBulkAddUsers, we need to get the roster DB id
+        const addedRoster = await this.rosterRepo.findByLeagueAndUser(leagueId, user.userId);
         const eventBus = tryGetEventBus();
         eventBus?.publish({
           type: EventTypes.MEMBER_JOINED,
           leagueId,
           payload: {
-            rosterId: rosterId,
+            rosterDbId: addedRoster?.id ?? 0,
+            rosterSlotId: rosterId,
             teamName: username,
             userId: user.userId,
           },
@@ -409,8 +467,9 @@ async devBulkAddUsers(
       throw new ValidationException('Cannot kick yourself from the league');
     }
 
-    // Get team name before deletion
+    // Get team name and slot ID before deletion
     const teamName = (await this.rosterRepo.getTeamName(targetRosterId)) || 'Unknown Team';
+    const rosterSlotId = targetRoster.rosterId;
 
     // Use transaction with roster lock to delete everything
     await runWithLock(this.db, LockDomain.ROSTER, targetRosterId, async (client) => {
@@ -454,7 +513,11 @@ async devBulkAddUsers(
     eventBus?.publish({
       type: EventTypes.MEMBER_KICKED,
       leagueId,
-      payload: { rosterId: targetRosterId, teamName },
+      payload: {
+        rosterDbId: targetRosterId,
+        rosterSlotId,
+        teamName,
+      },
     });
 
     // Send system message to league chat

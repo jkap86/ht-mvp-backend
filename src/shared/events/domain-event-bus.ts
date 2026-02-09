@@ -275,9 +275,11 @@ export const EventTypes = {
 
   // League events
   LEAGUE_UPDATED: 'league:updated',
+  LEAGUE_SETTINGS_UPDATED: 'league:settings_updated',
   MEMBER_JOINED: 'league:member_joined',
   MEMBER_LEFT: 'league:member_left',
   MEMBER_KICKED: 'league:member_kicked',
+  MEMBER_BENCHED: 'league:member_benched',
 
   // Invitation events
   INVITATION_RECEIVED: 'invitation:received',

@@ -1,3 +1,4 @@
+import { Pool } from 'pg';
 import { LeagueService } from '../../../modules/leagues/leagues.service';
 import { LeagueRepository, RosterRepository } from '../../../modules/leagues/leagues.repository';
 import { RosterService } from '../../../modules/leagues/roster.service';
@@ -126,7 +127,10 @@ describe('LeagueService', () => {
     mockRosterRepo = createMockRosterRepo();
     mockRosterService = createMockRosterService();
     mockDraftService = createMockDraftService();
+    // Create a mock pool (not used in tests but required by constructor)
+    const mockPool = {} as Pool;
     leagueService = new LeagueService(
+      mockPool,
       mockLeagueRepo,
       mockRosterRepo,
       mockRosterService,

@@ -281,6 +281,7 @@ function bootstrap(): void {
     KEYS.LEAGUE_SERVICE,
     () =>
       new LeagueService(
+        pool,
         container.resolve(KEYS.LEAGUE_REPO),
         container.resolve(KEYS.ROSTER_REPO),
         container.resolve(KEYS.ROSTER_SERVICE),

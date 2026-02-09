@@ -568,16 +568,37 @@ export class SocketService {
   // Member events (emitted to league room)
 
   // Emit member kicked event
-  emitMemberKicked(leagueId: number, data: { rosterId: number; teamName: string }): void {
+  emitMemberKicked(
+    leagueId: number,
+    data: { rosterDbId: number; rosterSlotId: number; teamName: string }
+  ): void {
     this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.MEMBER.KICKED, data);
   }
 
   // Emit member joined event
   emitMemberJoined(
     leagueId: number,
-    data: { rosterId: number; teamName: string; userId: string }
+    data: { rosterDbId: number; rosterSlotId: number; teamName: string; userId: string }
   ): void {
     this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.MEMBER.JOINED, data);
+  }
+
+  // Emit member benched event
+  emitMemberBenched(
+    leagueId: number,
+    data: { rosterDbId: number; rosterSlotId: number; teamName: string }
+  ): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.MEMBER.BENCHED, data);
+  }
+
+  // League events (emitted to league room)
+
+  // Emit league settings updated event
+  emitLeagueSettingsUpdated(
+    leagueId: number,
+    data: { leagueId: number; changedSettings: string[] }
+  ): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.LEAGUE.SETTINGS_UPDATED, data);
   }
 
   // Playoff events (emitted to league room)

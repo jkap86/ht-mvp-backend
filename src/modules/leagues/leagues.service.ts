@@ -1,3 +1,4 @@
+import { Pool } from 'pg';
 import { LeagueRepository, RosterRepository, CreateLeagueParams } from './leagues.repository';
 import { RosterService } from './roster.service';
 import { League } from './leagues.model';
@@ -6,9 +7,13 @@ import { getDraftStructure } from '../drafts/draft-structure-presets';
 import { EventListenerService } from '../chat/event-listener.service';
 import { MatchupsRepository } from '../matchups/matchups.repository';
 import { NotFoundException, ForbiddenException, ValidationException } from '../../utils/exceptions';
+import { runInTransaction } from '../../shared/transaction-runner';
+import { EventTypes, tryGetEventBus } from '../../shared/events';
+import { logger } from '../../config/logger.config';
 
 export class LeagueService {
   constructor(
+    private readonly db: Pool,
     private readonly leagueRepo: LeagueRepository,
     private readonly rosterRepo: RosterRepository,
     private readonly rosterService: RosterService,
@@ -45,7 +50,7 @@ export class LeagueService {
     params: CreateLeagueParams & { draftStructure?: string },
     userId: string
   ): Promise<any> {
-    // Validate
+    // Validate before starting transaction
     if (!params.name || params.name.trim().length === 0) {
       throw new ValidationException('League name is required');
     }
@@ -58,22 +63,7 @@ export class LeagueService {
       throw new ValidationException('Total rosters must be between 2 and 20');
     }
 
-    // Create league
-    const league = await this.leagueRepo.create({
-      name: params.name.trim(),
-      season: params.season,
-      totalRosters: params.totalRosters,
-      settings: params.settings || {},
-      scoringSettings: params.scoringSettings || {},
-      isPublic: params.isPublic || false,
-      mode: params.mode,
-      leagueSettings: params.leagueSettings,
-    });
-
-    // Create first roster for the creator (commissioner) via RosterService
-    await this.rosterService.createInitialRoster(league.id, userId);
-
-    // Get draft structure preset (default to 'combined')
+    // Validate draft structure before creating anything
     const structureId = params.draftStructure || 'combined';
     const leagueMode = params.mode || 'redraft';
     const structure = getDraftStructure(leagueMode, structureId);
@@ -82,14 +72,50 @@ export class LeagueService {
       throw new ValidationException('Invalid draft structure');
     }
 
-    // Create all drafts in the structure
-    for (const preset of structure.drafts) {
-      await this.draftService.createDraft(league.id, userId, {
-        draftType: league.leagueSettings?.draftType || 'snake',
-        pickTimeSeconds: 90,
-        rounds: preset.defaultRounds, // undefined uses default calculation
-        playerPool: preset.playerPool,
+    // Create league and commissioner roster atomically in a transaction
+    const league = await runInTransaction(this.db, async (client) => {
+      // Create league with client
+      const league = await this.leagueRepo.createWithClient(client, {
+        name: params.name.trim(),
+        season: params.season,
+        totalRosters: params.totalRosters,
+        settings: params.settings || {},
+        scoringSettings: params.scoringSettings || {},
+        isPublic: params.isPublic || false,
+        mode: params.mode,
+        leagueSettings: params.leagueSettings,
       });
+
+      // Create first roster for the creator (commissioner) with client
+      await this.rosterService.createInitialRosterWithClient(client, league.id, userId);
+
+      return league;
+    });
+
+    // Create drafts outside transaction (they have their own transaction logic)
+    // If draft creation fails, clean up by deleting the league
+    try {
+      for (const preset of structure.drafts) {
+        await this.draftService.createDraft(league.id, userId, {
+          draftType: league.leagueSettings?.draftType || 'snake',
+          pickTimeSeconds: 90,
+          rounds: preset.defaultRounds,
+          playerPool: preset.playerPool,
+        });
+      }
+    } catch (error) {
+      // Rollback: delete the league if draft creation fails
+      logger.error(`Draft creation failed for league ${league.id}, rolling back league creation`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      try {
+        await this.leagueRepo.delete(league.id);
+      } catch (deleteError) {
+        logger.error(`Failed to rollback league ${league.id}`, {
+          error: deleteError instanceof Error ? deleteError.message : String(deleteError),
+        });
+      }
+      throw error;
     }
 
     // Get updated league with commissioner info
@@ -166,12 +192,27 @@ export class LeagueService {
 
     const league = await this.leagueRepo.update(leagueId, updates);
 
+    // Get changed settings for notifications
+    const changedSettings = this.getChangedSettings(currentLeague, updates);
+
     // Send system messages for changed settings
-    if (this.eventListenerService) {
-      const changedSettings = this.getChangedSettings(currentLeague, updates);
+    if (this.eventListenerService && changedSettings.length > 0) {
       for (const settingName of changedSettings) {
         await this.eventListenerService.handleSettingsUpdated(leagueId, settingName);
       }
+    }
+
+    // Emit LEAGUE_SETTINGS_UPDATED event for real-time UI refresh
+    if (changedSettings.length > 0) {
+      const eventBus = tryGetEventBus();
+      eventBus?.publish({
+        type: EventTypes.LEAGUE_SETTINGS_UPDATED,
+        leagueId,
+        payload: {
+          leagueId,
+          changedSettings,
+        },
+      });
     }
 
     return league.toResponse();
@@ -292,9 +333,23 @@ export class LeagueService {
         commissionerRoster.rosterId
       );
 
-      // Bench each member (no player data to clear pre-draft)
+      // Bench each member and emit events (no player data to clear pre-draft)
+      const eventBus = tryGetEventBus();
       for (const member of membersToBlock) {
+        const teamName =
+          (await this.rosterRepo.getTeamName(member.id)) || `Team ${member.rosterId}`;
         await this.rosterRepo.benchMember(member.id);
+
+        // Emit MEMBER_BENCHED event for each benched member
+        eventBus?.publish({
+          type: EventTypes.MEMBER_BENCHED,
+          leagueId,
+          payload: {
+            rosterDbId: member.id,
+            rosterSlotId: member.rosterId,
+            teamName,
+          },
+        });
       }
     }
   }

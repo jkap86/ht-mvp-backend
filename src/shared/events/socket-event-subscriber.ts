@@ -297,7 +297,7 @@ export class SocketEventSubscriber implements DomainEventSubscriber {
         if (event.leagueId) {
           socketService.emitMemberJoined(
             event.leagueId,
-            event.payload as { rosterId: number; teamName: string; userId: string }
+            event.payload as { rosterDbId: number; rosterSlotId: number; teamName: string; userId: string }
           );
         }
         break;
@@ -305,7 +305,7 @@ export class SocketEventSubscriber implements DomainEventSubscriber {
         if (event.leagueId) {
           socketService.emitMemberKicked(
             event.leagueId,
-            event.payload as { rosterId: number; teamName: string }
+            event.payload as { rosterDbId: number; rosterSlotId: number; teamName: string }
           );
         }
         break;
@@ -313,7 +313,23 @@ export class SocketEventSubscriber implements DomainEventSubscriber {
         if (event.leagueId) {
           socketService.emitMemberKicked(
             event.leagueId,
-            event.payload as { rosterId: number; teamName: string }
+            event.payload as { rosterDbId: number; rosterSlotId: number; teamName: string }
+          );
+        }
+        break;
+      case EventTypes.MEMBER_BENCHED:
+        if (event.leagueId) {
+          socketService.emitMemberBenched(
+            event.leagueId,
+            event.payload as { rosterDbId: number; rosterSlotId: number; teamName: string }
+          );
+        }
+        break;
+      case EventTypes.LEAGUE_SETTINGS_UPDATED:
+        if (event.leagueId) {
+          socketService.emitLeagueSettingsUpdated(
+            event.leagueId,
+            event.payload as { leagueId: number; changedSettings: string[] }
           );
         }
         break;

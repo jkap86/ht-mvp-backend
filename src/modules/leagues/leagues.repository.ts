@@ -84,6 +84,70 @@ export class LeagueRepository {
     return League.fromDatabase(result.rows[0]);
   }
 
+  /**
+   * Create league with explicit client (for transaction support)
+   */
+  async createWithClient(client: PoolClient, params: CreateLeagueParams): Promise<League> {
+    const result = await client.query(
+      `INSERT INTO leagues (name, total_rosters, season, settings, scoring_settings, mode, league_settings, is_public)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING *`,
+      [
+        params.name,
+        params.totalRosters,
+        params.season,
+        JSON.stringify(params.settings || {}),
+        JSON.stringify(params.scoringSettings || {}),
+        params.mode || 'redraft',
+        JSON.stringify(params.leagueSettings || {}),
+        params.isPublic || false,
+      ]
+    );
+
+    return League.fromDatabase(result.rows[0]);
+  }
+
+  /**
+   * Find league by ID with user roster info, using explicit client (for transaction support)
+   */
+  async findByIdWithUserRosterWithClient(
+    client: PoolClient,
+    id: number,
+    userId: string
+  ): Promise<League | null> {
+    const result = await client.query(
+      `SELECT l.*,
+              r.roster_id as user_roster_id,
+              (l.settings->>'commissioner_roster_id')::int as commissioner_roster_id
+       FROM leagues l
+       LEFT JOIN rosters r ON r.league_id = l.id AND r.user_id = $2
+       WHERE l.id = $1`,
+      [id, userId]
+    );
+
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    return League.fromDatabase(result.rows[0]);
+  }
+
+  /**
+   * Update commissioner roster ID with explicit client (for transaction support)
+   */
+  async updateCommissionerRosterIdWithClient(
+    client: PoolClient,
+    leagueId: number,
+    rosterId: number
+  ): Promise<void> {
+    await client.query(
+      `UPDATE leagues
+       SET settings = jsonb_set(COALESCE(settings, '{}'::jsonb), '{commissioner_roster_id}', to_jsonb($1::integer))
+       WHERE id = $2`,
+      [rosterId, leagueId]
+    );
+  }
+
   async update(id: number, updates: Partial<League>): Promise<League> {
     const setClauses: string[] = [];
     const values: any[] = [];
