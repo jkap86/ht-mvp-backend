@@ -129,6 +129,7 @@ describe('Waiver Processing', () => {
       findByRosterAndPlayer: jest.fn().mockResolvedValue(true),
       getPlayerCount: jest.fn().mockResolvedValue(10),
       getPlayerIdsByRoster: jest.fn().mockResolvedValue([]),
+      getOwnedPlayerIdsByLeague: jest.fn().mockResolvedValue(new Set<number>()),
     } as unknown as jest.Mocked<RosterPlayersRepository>;
 
     mockTransactionsRepo = {
@@ -474,6 +475,7 @@ describe('Round-based Processing', () => {
       findByRosterAndPlayer: jest.fn().mockResolvedValue(true),
       getPlayerCount: jest.fn().mockResolvedValue(10),
       getPlayerIdsByRoster: jest.fn().mockResolvedValue([]),
+      getOwnedPlayerIdsByLeague: jest.fn().mockResolvedValue(new Set<number>()),
     } as unknown as jest.Mocked<RosterPlayersRepository>;
 
     mockTransactionsRepo = {
@@ -807,6 +809,7 @@ describe('Stale Claim Handling (Hardening)', () => {
       findByRosterAndPlayer: jest.fn().mockResolvedValue(true),
       getPlayerCount: jest.fn().mockResolvedValue(10),
       getPlayerIdsByRoster: jest.fn().mockResolvedValue([]),
+      getOwnedPlayerIdsByLeague: jest.fn().mockResolvedValue(new Set<number>()),
     } as unknown as jest.Mocked<RosterPlayersRepository>;
 
     mockTransactionsRepo = {
@@ -1128,6 +1131,261 @@ describe('Stale Claim Handling (Hardening)', () => {
     expect(claim2Update?.reason).toContain('already owned');
 
     expect(result.successful).toBe(1);
+  });
+});
+
+describe('Full League Ownership Preload', () => {
+  let mockPool: jest.Mocked<Pool> & { query: jest.Mock };
+  let mockClient: jest.Mocked<PoolClient> & { query: jest.Mock };
+  let mockClaimsRepo: jest.Mocked<WaiverClaimsRepository>;
+  let mockPriorityRepo: jest.Mocked<WaiverPriorityRepository>;
+  let mockFaabRepo: jest.Mocked<FaabBudgetRepository>;
+  let mockWaiverWireRepo: jest.Mocked<WaiverWireRepository>;
+  let mockRosterPlayersRepo: jest.Mocked<RosterPlayersRepository>;
+  let mockTransactionsRepo: jest.Mocked<RosterTransactionsRepository>;
+  let mockLeagueRepo: jest.Mocked<LeagueRepository>;
+  let mockRosterRepo: jest.Mocked<RosterRepository>;
+  let mockRosterMutationService: jest.Mocked<RosterMutationService>;
+
+  const createMockClaim = (
+    id: number,
+    rosterId: number,
+    playerId: number,
+    currentPriority: number | null,
+    bidAmount = 0,
+    claimOrder = 1
+  ): WaiverClaimWithCurrentPriority => ({
+    id,
+    leagueId: 1,
+    rosterId,
+    playerId,
+    dropPlayerId: null,
+    bidAmount,
+    priorityAtClaim: currentPriority,
+    claimOrder,
+    currentPriority,
+    status: 'pending' as WaiverClaimStatus,
+    season: 2024,
+    week: 1,
+    processedAt: null,
+    failureReason: null,
+    createdAt: new Date('2024-01-01T00:00:00Z'),
+    updatedAt: new Date('2024-01-01T00:00:00Z'),
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+
+    const mockQuery = jest.fn().mockResolvedValue({ rows: [] });
+    mockClient = {
+      query: mockQuery,
+      release: jest.fn(),
+    } as unknown as jest.Mocked<PoolClient> & { query: jest.Mock };
+
+    mockPool = {
+      connect: jest.fn().mockResolvedValue(mockClient),
+      query: jest.fn().mockResolvedValue({ rows: [] }),
+    } as unknown as jest.Mocked<Pool> & { query: jest.Mock };
+
+    mockClaimsRepo = {
+      getPendingByLeagueWithCurrentPriority: jest.fn(),
+      updateStatus: jest.fn(),
+      findByIdWithDetails: jest.fn(),
+    } as unknown as jest.Mocked<WaiverClaimsRepository>;
+
+    mockPriorityRepo = {
+      rotatePriority: jest.fn(),
+      getByLeague: jest.fn().mockResolvedValue([]),
+    } as unknown as jest.Mocked<WaiverPriorityRepository>;
+
+    mockFaabRepo = {
+      getByRoster: jest.fn(),
+      deductBudget: jest.fn(),
+      getByLeague: jest.fn().mockResolvedValue([]),
+    } as unknown as jest.Mocked<FaabBudgetRepository>;
+
+    mockWaiverWireRepo = {
+      removePlayer: jest.fn(),
+      addPlayer: jest.fn(),
+    } as unknown as jest.Mocked<WaiverWireRepository>;
+
+    mockRosterPlayersRepo = {
+      findOwner: jest.fn().mockResolvedValue(null),
+      findByRosterAndPlayer: jest.fn().mockResolvedValue(true),
+      getPlayerCount: jest.fn().mockResolvedValue(10),
+      getPlayerIdsByRoster: jest.fn().mockResolvedValue([]),
+      getOwnedPlayerIdsByLeague: jest.fn().mockResolvedValue(new Set<number>()),
+    } as unknown as jest.Mocked<RosterPlayersRepository>;
+
+    mockTransactionsRepo = {
+      create: jest.fn(),
+    } as unknown as jest.Mocked<RosterTransactionsRepository>;
+
+    mockLeagueRepo = {
+      findById: jest.fn(),
+    } as unknown as jest.Mocked<LeagueRepository>;
+
+    mockRosterRepo = {
+      findById: jest.fn().mockResolvedValue({ id: 1, userId: 'user1' }),
+    } as unknown as jest.Mocked<RosterRepository>;
+
+    mockRosterMutationService = {
+      addPlayerToRoster: jest.fn(),
+      removePlayerFromRoster: jest.fn(),
+    } as unknown as jest.Mocked<RosterMutationService>;
+  });
+
+  it('should reject claim for player owned by roster with no claims (no executeClaim needed)', async () => {
+    // Setup:
+    // - Roster A (has claims): claims Player X
+    // - Roster C (NO claims): already owns Player X
+    //
+    // Expected:
+    // - Player X ownership detected via preloaded league ownership
+    // - Claim marked invalid with "Player already owned" BEFORE executeClaim
+    // - addPlayerToRoster should NOT be called (no ConflictException needed)
+
+    const mockLeague = {
+      id: 1,
+      season: '2024',
+      currentWeek: 1,
+      settings: {
+        waiver_type: 'standard',
+        waiver_day: 2,
+        waiver_hour: 3,
+        roster_size: 15,
+        current_week: 1,
+      },
+    };
+
+    mockLeagueRepo.findById.mockResolvedValue(mockLeague as any);
+
+    const claims: WaiverClaimWithCurrentPriority[] = [
+      createMockClaim(1, 101, 1001, 1, 0, 1), // Roster A claims Player X
+    ];
+
+    mockClaimsRepo.getPendingByLeagueWithCurrentPriority.mockResolvedValue(claims);
+
+    // Mock: Player X (1001) is owned by Roster C (103) which has NO claims
+    // getPlayerIdsByRoster for Roster A returns empty (A has no players)
+    mockRosterPlayersRepo.getPlayerIdsByRoster.mockResolvedValue([]);
+
+    // NEW: Mock getOwnedPlayerIdsByLeague to return Player X as owned
+    mockRosterPlayersRepo.getOwnedPlayerIdsByLeague.mockResolvedValue(
+      new Set([1001]) // Player X is owned somewhere in the league
+    );
+
+    const statusUpdates: Array<{ id: number; status: string; reason?: string }> = [];
+    mockClaimsRepo.updateStatus.mockImplementation(async (id, status, reason) => {
+      statusUpdates.push({ id, status, reason });
+      return { ...claims.find((c) => c.id === id)!, status } as WaiverClaim;
+    });
+
+    const ctx: ProcessWaiversContext = {
+      db: mockPool,
+      claimsRepo: mockClaimsRepo,
+      priorityRepo: mockPriorityRepo,
+      faabRepo: mockFaabRepo,
+      waiverWireRepo: mockWaiverWireRepo,
+      rosterPlayersRepo: mockRosterPlayersRepo,
+      transactionsRepo: mockTransactionsRepo,
+      leagueRepo: mockLeagueRepo,
+      rosterRepo: mockRosterRepo,
+      rosterMutationService: mockRosterMutationService,
+    };
+
+    const result = await processLeagueClaims(ctx, 1);
+
+    // Claim should be invalid
+    expect(result.processed).toBe(1);
+    expect(result.successful).toBe(0);
+
+    const claim1Update = statusUpdates.find((u) => u.id === 1);
+    expect(claim1Update?.status).toBe('invalid');
+    expect(claim1Update?.reason).toContain('already owned');
+
+    // KEY ASSERTION: addPlayerToRoster should NOT have been called
+    // because we detected ownership via preload, not via ConflictException
+    expect(mockRosterMutationService.addPlayerToRoster).not.toHaveBeenCalled();
+  });
+
+  it('should update ownedPlayerIds when claim with drop succeeds', async () => {
+    // Setup:
+    // - Roster A claims Player X and drops Player Y
+    // - Player Y is currently owned by Roster A
+    // - Roster B claims Player Y in the next round
+    //
+    // Expected:
+    // - Roster A's claim succeeds, Y removed from ownedPlayerIds
+    // - Roster B's claim for Y should succeed (Y is now available)
+
+    const mockLeague = {
+      id: 1,
+      season: '2024',
+      currentWeek: 1,
+      settings: {
+        waiver_type: 'standard',
+        waiver_day: 2,
+        waiver_hour: 3,
+        roster_size: 15,
+        current_week: 1,
+      },
+    };
+
+    mockLeagueRepo.findById.mockResolvedValue(mockLeague as any);
+
+    const claims: WaiverClaimWithCurrentPriority[] = [
+      { ...createMockClaim(1, 101, 1001, 1, 0, 1), dropPlayerId: 1002 }, // A: claim X, drop Y
+      createMockClaim(2, 102, 1002, 2, 0, 1), // B: claim Y (dropped by A)
+    ];
+
+    mockClaimsRepo.getPendingByLeagueWithCurrentPriority.mockResolvedValue(claims);
+
+    // Initially: Roster A owns Player Y (1002)
+    mockRosterPlayersRepo.getPlayerIdsByRoster.mockImplementation(async (rosterId) => {
+      if (rosterId === 101) return [1002]; // A owns Y
+      return [];
+    });
+
+    // League-wide ownership: Y is owned
+    mockRosterPlayersRepo.getOwnedPlayerIdsByLeague.mockResolvedValue(
+      new Set([1002]) // Y is owned at start
+    );
+
+    // findByRosterAndPlayer returns true for A's drop of Y
+    mockRosterPlayersRepo.findByRosterAndPlayer.mockResolvedValue({ rosterId: 101, playerId: 1002 } as any);
+
+    const statusUpdates: Array<{ id: number; status: string; reason?: string }> = [];
+    mockClaimsRepo.updateStatus.mockImplementation(async (id, status, reason) => {
+      statusUpdates.push({ id, status, reason });
+      return { ...claims.find((c) => c.id === id)!, status } as WaiverClaim;
+    });
+
+    mockRosterMutationService.addPlayerToRoster.mockResolvedValue({ rosterId: 101, playerId: 1001 } as any);
+    mockRosterMutationService.removePlayerFromRoster.mockResolvedValue(undefined);
+
+    const ctx: ProcessWaiversContext = {
+      db: mockPool,
+      claimsRepo: mockClaimsRepo,
+      priorityRepo: mockPriorityRepo,
+      faabRepo: mockFaabRepo,
+      waiverWireRepo: mockWaiverWireRepo,
+      rosterPlayersRepo: mockRosterPlayersRepo,
+      transactionsRepo: mockTransactionsRepo,
+      leagueRepo: mockLeagueRepo,
+      rosterRepo: mockRosterRepo,
+      rosterMutationService: mockRosterMutationService,
+    };
+
+    const result = await processLeagueClaims(ctx, 1);
+
+    // Both claims should be processed
+    expect(result.processed).toBe(2);
+    // Both should succeed: A gets X (drops Y), B gets Y
+    expect(result.successful).toBe(2);
+
+    expect(statusUpdates.find((u) => u.id === 1)?.status).toBe('successful');
+    expect(statusUpdates.find((u) => u.id === 2)?.status).toBe('successful');
   });
 });
 

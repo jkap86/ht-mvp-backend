@@ -210,6 +210,23 @@ export class RosterPlayersRepository {
     );
     return result.rows.map((row) => row.player_id);
   }
+
+  /**
+   * Get all owned player IDs in a league (for waiver processing preload).
+   * Returns complete league-wide ownership to avoid ConflictException churn
+   * when claims target players owned by rosters that have no claims.
+   */
+  async getOwnedPlayerIdsByLeague(leagueId: number, client?: PoolClient): Promise<Set<number>> {
+    const db = client || this.db;
+    const result = await db.query(
+      `SELECT rp.player_id
+       FROM roster_players rp
+       JOIN rosters r ON r.id = rp.roster_id
+       WHERE r.league_id = $1`,
+      [leagueId]
+    );
+    return new Set(result.rows.map((row) => row.player_id));
+  }
 }
 
 export class RosterTransactionsRepository {

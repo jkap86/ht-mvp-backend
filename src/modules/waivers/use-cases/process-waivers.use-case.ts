@@ -101,13 +101,16 @@ export async function processLeagueClaims(
         return { processed: 0, successful: 0 };
       }
 
-      // Initialize roster processing states and global ownership tracking
-      const { rosterStates, globallyClaimedPlayerIds } = await initializeRosterStates(
+      // Load COMPLETE league ownership (all rosters, not just those with claims)
+      // This prevents ConflictException churn when claims target players owned by rosters without claims
+      const ownedPlayerIds = await ctx.rosterPlayersRepo.getOwnedPlayerIdsByLeague(leagueId, client);
+
+      // Initialize roster processing states for rosters that have claims
+      const rosterStates = await initializeRosterStates(
         ctx,
         allClaims,
         settings.waiverType,
         season,
-        leagueId,
         client
       );
 
@@ -166,7 +169,7 @@ export async function processLeagueClaims(
             if (state.processedClaimIds.has(claim.id)) continue;
 
             // Check if player was already claimed in an earlier round (global ownership)
-            if (globallyClaimedPlayerIds.has(claim.playerId)) {
+            if (ownedPlayerIds.has(claim.playerId)) {
               await ctx.claimsRepo.updateStatus(claim.id, 'invalid', 'Player already owned', client);
               state.processedClaimIds.add(claim.id);
               processedCount++;
@@ -202,7 +205,10 @@ export async function processLeagueClaims(
               processedCount++;
 
               // Update global ownership tracking
-              globallyClaimedPlayerIds.add(claim.playerId);
+              ownedPlayerIds.add(claim.playerId);
+              if (claim.dropPlayerId) {
+                ownedPlayerIds.delete(claim.dropPlayerId);
+              }
 
               // Update in-memory state for this roster's future claims
               updateRosterStateAfterWin(state, claim, settings.waiverType, rosterStates, maxPriority);
@@ -246,10 +252,10 @@ export async function processLeagueClaims(
                 state.processedClaimIds.add(claim.id);
                 const claimCopy = { ...claim };
                 pendingEvents.push(() => emitClaimFailed(ctx, claimCopy, 'Player already owned'));
-                // NOTE: Do NOT add to globallyClaimedPlayerIds here - let the next candidate try.
+                // NOTE: Do NOT add to ownedPlayerIds here - let the next candidate try.
                 // Each candidate might have different ownership context (e.g., the player might
                 // be on a roster that the next candidate could still acquire from).
-                // Only add to globallyClaimedPlayerIds on SUCCESS (line above).
+                // Only add to ownedPlayerIds on SUCCESS (line above).
                 continue;
               }
               throw error; // Re-throw other errors
@@ -314,24 +320,17 @@ export async function processLeagueClaims(
 /**
  * Initialize in-memory roster states for processing.
  * Loads current priority, budget, and roster composition for each roster with claims.
- * Also returns a global set of all owned player IDs across all rosters.
+ * Note: Global ownership is now loaded separately via getOwnedPlayerIdsByLeague().
  */
 async function initializeRosterStates(
   ctx: ProcessWaiversContext,
   claims: WaiverClaimWithCurrentPriority[],
   waiverType: WaiverType,
   season: number,
-  leagueId: number,
   client: PoolClient
-): Promise<{
-  rosterStates: Map<number, RosterProcessingState>;
-  globallyClaimedPlayerIds: Set<number>;
-}> {
+): Promise<Map<number, RosterProcessingState>> {
   const states = new Map<number, RosterProcessingState>();
   const rosterIds = [...new Set(claims.map((c) => c.rosterId))];
-
-  // Track all owned players globally (across all rosters with claims)
-  const globallyClaimedPlayerIds = new Set<number>();
 
   for (const rosterId of rosterIds) {
     // Get current priority from the first claim for this roster (all have same currentPriority)
@@ -345,26 +344,21 @@ async function initializeRosterStates(
       remainingBudget = budget?.remainingBudget ?? 0;
     }
 
-    // Get current roster composition
+    // Get current roster composition for this roster
     const playerIds = await ctx.rosterPlayersRepo.getPlayerIdsByRoster(rosterId, client);
-    const ownedPlayerIds = new Set(playerIds);
-
-    // Add to global tracking
-    for (const playerId of playerIds) {
-      globallyClaimedPlayerIds.add(playerId);
-    }
+    const rosterOwnedPlayerIds = new Set(playerIds);
 
     states.set(rosterId, {
       rosterId,
       currentPriority,
       remainingBudget,
       currentRosterSize: playerIds.length,
-      ownedPlayerIds,
+      ownedPlayerIds: rosterOwnedPlayerIds,
       processedClaimIds: new Set(),
     });
   }
 
-  return { rosterStates: states, globallyClaimedPlayerIds };
+  return states;
 }
 
 /**
