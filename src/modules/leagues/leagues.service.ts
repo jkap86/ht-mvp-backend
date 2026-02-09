@@ -97,6 +97,13 @@ export class LeagueService {
     return updatedLeague!.toResponse();
   }
 
+  /**
+   * Check if a user is the commissioner of a league
+   */
+  async isCommissioner(leagueId: number, userId: string): Promise<boolean> {
+    return this.leagueRepo.isCommissioner(leagueId, userId);
+  }
+
   async updateLeague(
     leagueId: number,
     userId: string,

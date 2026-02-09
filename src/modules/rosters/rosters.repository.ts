@@ -127,14 +127,12 @@ export class RosterPlayersRepository {
     leagueMode?: string
   ): Promise<any[]> {
     const params: any[] = [leagueId, limit, offset];
+
+    // Use LEFT JOIN ... WHERE IS NULL instead of NOT IN for better performance
+    // This avoids a full table scan on the subquery
     let whereClause = `
       WHERE p.active = true
-        AND p.id NOT IN (
-          SELECT rp.player_id
-          FROM roster_players rp
-          JOIN rosters r ON rp.roster_id = r.id
-          WHERE r.league_id = $1
-        )
+        AND rp.player_id IS NULL
     `;
 
     // Filter out college players for non-devy leagues
@@ -155,6 +153,12 @@ export class RosterPlayersRepository {
     const result = await this.db.query(
       `SELECT p.*
        FROM players p
+       LEFT JOIN (
+         SELECT rp.player_id
+         FROM roster_players rp
+         JOIN rosters r ON rp.roster_id = r.id
+         WHERE r.league_id = $1
+       ) rp ON p.id = rp.player_id
        ${whereClause}
        ORDER BY p.position, p.full_name
        LIMIT $2 OFFSET $3`,

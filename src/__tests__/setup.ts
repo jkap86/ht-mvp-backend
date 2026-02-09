@@ -1,5 +1,10 @@
 import { container } from '../container';
 
+// Mock uuid module to avoid ESM issues in Jest
+jest.mock('uuid', () => ({
+  v4: jest.fn().mockReturnValue('00000000-0000-0000-0000-000000000000'),
+}));
+
 // Clear all cached instances before each test
 beforeEach(() => {
   container.clearInstances();

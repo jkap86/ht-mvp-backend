@@ -140,6 +140,71 @@ export class DatabaseException extends AppException {
   }
 }
 
+/**
+ * Thrown when an external API call fails (e.g., Sleeper, CFBD, ESPN).
+ * Wraps the original error and provides context about the API and operation.
+ */
+export class ExternalApiException extends AppException {
+  public readonly originalError?: Error;
+  public readonly apiName: string;
+  public readonly operation: string;
+  public readonly statusCode: number;
+
+  constructor(
+    apiName: string,
+    operation: string,
+    message: string,
+    statusCode: number = 502,
+    originalError?: Error
+  ) {
+    super(`[${apiName}] ${operation}: ${message}`, statusCode, ErrorCode.INTERNAL_ERROR);
+    this.apiName = apiName;
+    this.operation = operation;
+    this.originalError = originalError;
+    this.statusCode = statusCode;
+  }
+
+  /**
+   * Creates an ExternalApiException from a caught error.
+   */
+  static fromError(
+    apiName: string,
+    operation: string,
+    error: unknown,
+    statusCode: number = 502
+  ): ExternalApiException {
+    const originalError = error instanceof Error ? error : new Error(String(error));
+    const message = originalError.message || 'Unknown error';
+    return new ExternalApiException(apiName, operation, message, statusCode, originalError);
+  }
+
+  /**
+   * Creates an ExternalApiException for timeout errors.
+   */
+  static timeout(apiName: string, operation: string): ExternalApiException {
+    return new ExternalApiException(
+      apiName,
+      operation,
+      'Request timed out',
+      504,
+      new Error('Timeout')
+    );
+  }
+
+  /**
+   * Creates an ExternalApiException for rate limit errors.
+   */
+  static rateLimited(apiName: string, operation: string): ExternalApiException {
+    return new ExternalApiException(
+      apiName,
+      operation,
+      'Rate limit exceeded',
+      429,
+      new Error('Rate limited')
+    );
+  }
+}
+
 // Domain-specific exception factory functions for common scenarios
 export const DraftErrors = {
   notFound: (draftId: number) =>

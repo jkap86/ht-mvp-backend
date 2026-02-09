@@ -14,4 +14,8 @@ module.exports = {
   ],
   coverageDirectory: 'coverage',
   verbose: true,
+  // Transform ESM modules like uuid to CommonJS for Jest
+  transformIgnorePatterns: [
+    'node_modules/(?!(uuid)/)',
+  ],
 };

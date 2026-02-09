@@ -149,12 +149,59 @@ const mockRosterPlayer: any = {
   addedAt: new Date(),
 };
 
-// Mock pool client
-const createMockPoolClient = (): jest.Mocked<PoolClient> =>
-  ({
-    query: jest.fn().mockResolvedValue({ rows: [] }),
+// Mock pool client with batch query support
+const createMockPoolClient = (): jest.Mocked<PoolClient> => {
+  const mockQuery = jest.fn().mockImplementation((query: string, params?: unknown[]) => {
+    // Default: return empty rows
+    return Promise.resolve({ rows: [] });
+  });
+
+  return {
+    query: mockQuery,
     release: jest.fn(),
-  }) as unknown as jest.Mocked<PoolClient>;
+  } as unknown as jest.Mocked<PoolClient>;
+};
+
+/**
+ * Configure the mock pool client to handle batch roster player validation queries.
+ * This simulates the batchValidateRosterPlayers function returning that players are owned.
+ */
+function setupBatchValidationMock(
+  mockClient: jest.Mocked<PoolClient>,
+  ownedPlayers: { rosterId: number; playerIds: number[] }[]
+): void {
+  (mockClient.query as jest.Mock).mockImplementation((query: string, params?: unknown[]) => {
+    // Handle batch roster player validation query
+    if (
+      typeof query === 'string' &&
+      query.includes('SELECT player_id FROM roster_players') &&
+      query.includes('AND player_id = ANY')
+    ) {
+      const rosterId = params?.[0] as number;
+      const playerIds = params?.[1] as number[];
+
+      // Find which players this roster owns
+      const ownedConfig = ownedPlayers.find((o) => o.rosterId === rosterId);
+      if (ownedConfig) {
+        const foundPlayers = playerIds.filter((id) => ownedConfig.playerIds.includes(id));
+        return Promise.resolve({
+          rows: foundPlayers.map((id) => ({ player_id: id })),
+        });
+      }
+      return Promise.resolve({ rows: [] });
+    }
+
+    // Handle player details query
+    if (typeof query === 'string' && query.includes('SELECT full_name')) {
+      return Promise.resolve({
+        rows: [{ full_name: 'Test Player', position: 'QB', team: 'TST' }],
+      });
+    }
+
+    // Default: return empty rows
+    return Promise.resolve({ rows: [] });
+  });
+}
 
 // Mock pool
 const createMockPool = (mockClient: jest.Mocked<PoolClient>): jest.Mocked<Pool> =>
@@ -372,8 +419,13 @@ describe('TradesService', () => {
       mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster);
       mockRosterRepo.findByLeagueAndRosterId.mockResolvedValue(mockRoster2);
       mockLeagueRepo.findById.mockResolvedValue(mockLeague);
-      mockRosterPlayersRepo.findByRosterAndPlayer.mockResolvedValue(mockRosterPlayer);
-      mockTradesRepo.findPendingByPlayer.mockResolvedValue([mockTrade]);
+      // Setup batch validation to return that proposer owns player 100 and recipient owns player 200
+      setupBatchValidationMock(mockPoolClient, [
+        { rosterId: 1, playerIds: [100] },
+        { rosterId: 2, playerIds: [200] },
+      ]);
+      // findPendingPlayerIds returns a Set of player IDs that are in pending trades
+      mockTradesRepo.findPendingPlayerIds = jest.fn().mockResolvedValue(new Set([100]));
 
       await expect(tradesService.proposeTrade(1, 'user-123', proposeRequest)).rejects.toThrow(
         ConflictException
@@ -387,19 +439,23 @@ describe('TradesService', () => {
       mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster);
       mockRosterRepo.findByLeagueAndRosterId.mockResolvedValue(mockRoster2);
       mockLeagueRepo.findById.mockResolvedValue(mockLeague);
-      mockRosterPlayersRepo.findByRosterAndPlayer.mockResolvedValue(mockRosterPlayer);
-      mockTradesRepo.findPendingByPlayer.mockResolvedValue([]);
+      // Setup batch validation to return that proposer owns player 100 and recipient owns player 200
+      setupBatchValidationMock(mockPoolClient, [
+        { rosterId: 1, playerIds: [100] },
+        { rosterId: 2, playerIds: [200] },
+      ]);
+      // No players in pending trades
+      mockTradesRepo.findPendingPlayerIds = jest.fn().mockResolvedValue(new Set());
       mockRosterPlayersRepo.getPlayerCount.mockResolvedValue(10);
       mockTradesRepo.create.mockResolvedValue(mockTrade);
-      mockPoolClient.query.mockImplementation((query: string) => {
-        if (query.includes('SELECT full_name')) {
-          return Promise.resolve({
-            rows: [{ full_name: 'Test Player', position: 'QB', team: 'TST' }],
-          });
-        }
-        return Promise.resolve({ rows: [] });
-      });
       mockTradesRepo.findByIdWithDetails.mockResolvedValue(mockTradeWithDetails);
+      // Mock player repository to return player details
+      mockPlayerRepo.findByIdsWithDetails.mockResolvedValue(
+        new Map([
+          [100, { fullName: 'Offered Player', position: 'QB', team: 'TST' }],
+          [200, { fullName: 'Requested Player', position: 'RB', team: 'OPP' }],
+        ])
+      );
 
       const result = await tradesService.proposeTrade(1, 'user-123', proposeRequest);
 
@@ -441,7 +497,8 @@ describe('TradesService', () => {
       mockRosterRepo.findById.mockResolvedValue(mockRoster2);
       mockLeagueRepo.findById.mockResolvedValue(mockLeague);
       mockTradeItemsRepo.findByTrade.mockResolvedValue([mockTradeItem]);
-      mockRosterPlayersRepo.findByRosterAndPlayer.mockResolvedValue(mockRosterPlayer);
+      // Setup batch validation mock - player 100 owned by roster 1
+      setupBatchValidationMock(mockPoolClient, [{ rosterId: 1, playerIds: [100] }]);
       mockTradesRepo.updateStatus.mockResolvedValue({ ...mockTrade, status: 'completed' });
       mockTradesRepo.findByIdWithDetails.mockResolvedValue({
         ...mockTradeWithDetails,
@@ -466,7 +523,8 @@ describe('TradesService', () => {
       mockRosterRepo.findById.mockResolvedValue(mockRoster2);
       mockLeagueRepo.findById.mockResolvedValue(leagueWithReview);
       mockTradeItemsRepo.findByTrade.mockResolvedValue([mockTradeItem]);
-      mockRosterPlayersRepo.findByRosterAndPlayer.mockResolvedValue(mockRosterPlayer);
+      // Setup batch validation mock - player 100 owned by roster 1
+      setupBatchValidationMock(mockPoolClient, [{ rosterId: 1, playerIds: [100] }]);
       mockTradesRepo.setReviewPeriod.mockResolvedValue({
         ...mockTrade,
         status: 'in_review',
@@ -719,7 +777,8 @@ describe('TradesService', () => {
       mockTradeVotesRepo.countVotes.mockResolvedValue({ approve: 2, veto: 1 });
       mockLeagueRepo.findById.mockResolvedValue(mockLeague);
       mockTradeItemsRepo.findByTrade.mockResolvedValue([mockTradeItem]);
-      mockRosterPlayersRepo.findByRosterAndPlayer.mockResolvedValue(mockRosterPlayer);
+      // Setup batch validation mock - player 100 owned by roster 1
+      setupBatchValidationMock(mockPoolClient, [{ rosterId: 1, playerIds: [100] }]);
       mockTransactionsRepo.create.mockResolvedValue({ id: 1 } as any);
       mockTradesRepo.updateStatus.mockResolvedValue({ ...reviewCompleteTrade, status: 'completed' });
 

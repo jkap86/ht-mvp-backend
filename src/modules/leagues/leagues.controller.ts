@@ -200,12 +200,13 @@ export class LeagueController {
       const leagueId = requireLeagueId(req);
 
       // Even in development, require commissioner access to prevent abuse
-      if (!this.rosterService) {
-        throw new ValidationException('Roster service not available');
-      }
-      const isCommissioner = await this.rosterService.isCommissioner(leagueId, userId);
+      const isCommissioner = await this.leagueService.isCommissioner(leagueId, userId);
       if (!isCommissioner) {
         throw new ForbiddenException('Only the commissioner can add users');
+      }
+
+      if (!this.rosterService) {
+        throw new ValidationException('Roster service not available');
       }
 
       const { usernames } = req.body;
