@@ -3,7 +3,7 @@ import { Server, Socket } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';
 import { verifyToken } from '../utils/jwt';
 import { env, logger } from '../config/env.config';
-import { getRedisClient } from '../config/redis.config';
+import { getRedisClient, isRedisAvailable } from '../config/redis.config';
 import { container, KEYS } from '../container';
 import { LeagueRepository } from '../modules/leagues/leagues.repository';
 import { DraftRepository } from '../modules/drafts/drafts.repository';
@@ -12,6 +12,10 @@ import {
   socketRateLimitMiddleware,
   trackUserConnections,
 } from '../middleware/socket-rate-limit.middleware';
+
+// Membership cache configuration
+const MEMBERSHIP_CACHE_TTL_SECONDS = 120; // 2 minutes
+const MEMBERSHIP_CACHE_PREFIX = 'socket_membership:';
 
 interface AuthenticatedSocket extends Socket {
   userId?: string;
@@ -22,6 +26,77 @@ export class SocketService {
   private io: Server;
   // Note: Removed userSockets map in favor of user rooms for horizontal scaling support.
   // Each user socket now joins a room named `user:{userId}` which works with Redis adapter.
+
+  // In-memory membership cache fallback (used when Redis unavailable)
+  private membershipCache = new Map<string, { isMember: boolean; expiresAt: number }>();
+
+  /**
+   * Check if a user is a member of a league with caching.
+   * Uses Redis when available, falls back to in-memory cache.
+   */
+  private async checkMembershipCached(leagueId: number, userId: string): Promise<boolean> {
+    const cacheKey = `${leagueId}:${userId}`;
+
+    if (isRedisAvailable()) {
+      try {
+        const redis = getRedisClient();
+        const redisKey = `${MEMBERSHIP_CACHE_PREFIX}${cacheKey}`;
+        const cached = await redis.get(redisKey);
+        if (cached !== null) {
+          return cached === '1';
+        }
+        // Cache miss - query DB
+        const leagueRepo = container.resolve<LeagueRepository>(KEYS.LEAGUE_REPO);
+        const isMember = await leagueRepo.isUserMember(leagueId, userId);
+        // Cache the result
+        await redis.setex(redisKey, MEMBERSHIP_CACHE_TTL_SECONDS, isMember ? '1' : '0');
+        return isMember;
+      } catch (error) {
+        logger.error('Redis membership cache error, falling back to DB', { error });
+        // Fall through to direct DB query
+      }
+    } else {
+      // In-memory cache fallback
+      const cached = this.membershipCache.get(cacheKey);
+      if (cached && cached.expiresAt > Date.now()) {
+        return cached.isMember;
+      }
+    }
+
+    // Direct DB query (fallback or no Redis)
+    const leagueRepo = container.resolve<LeagueRepository>(KEYS.LEAGUE_REPO);
+    const isMember = await leagueRepo.isUserMember(leagueId, userId);
+
+    // Store in in-memory cache if Redis not available
+    if (!isRedisAvailable()) {
+      this.membershipCache.set(cacheKey, {
+        isMember,
+        expiresAt: Date.now() + MEMBERSHIP_CACHE_TTL_SECONDS * 1000,
+      });
+    }
+
+    return isMember;
+  }
+
+  /**
+   * Invalidate membership cache for a user in a league.
+   * Call this when a user joins/leaves/is kicked from a league.
+   */
+  async invalidateMembershipCache(leagueId: number, userId: string): Promise<void> {
+    const cacheKey = `${leagueId}:${userId}`;
+
+    if (isRedisAvailable()) {
+      try {
+        const redis = getRedisClient();
+        await redis.del(`${MEMBERSHIP_CACHE_PREFIX}${cacheKey}`);
+      } catch (error) {
+        logger.error('Failed to invalidate Redis membership cache', { error, leagueId, userId });
+      }
+    }
+
+    // Also clear from in-memory cache
+    this.membershipCache.delete(cacheKey);
+  }
 
   constructor(httpServer: HttpServer) {
     this.io = new Server(httpServer, {
@@ -119,8 +194,8 @@ export class SocketService {
         }
 
         try {
-          const leagueRepo = container.resolve<LeagueRepository>(KEYS.LEAGUE_REPO);
-          const isMember = await leagueRepo.isUserMember(leagueId, socket.userId);
+          // Use cached membership check to reduce DB load
+          const isMember = await this.checkMembershipCached(leagueId, socket.userId);
 
           if (!isMember) {
             socket.emit(SOCKET_EVENTS.APP.ERROR, { message: 'Not a member of this league' });
@@ -165,7 +240,6 @@ export class SocketService {
 
         try {
           const draftRepo = container.resolve<DraftRepository>(KEYS.DRAFT_REPO);
-          const leagueRepo = container.resolve<LeagueRepository>(KEYS.LEAGUE_REPO);
 
           // Get draft to find its league
           const draft = await draftRepo.findById(draftId);
@@ -174,8 +248,8 @@ export class SocketService {
             return;
           }
 
-          // Check if user is member of the draft's league
-          const isMember = await leagueRepo.isUserMember(draft.leagueId, socket.userId);
+          // Check if user is member of the draft's league (cached)
+          const isMember = await this.checkMembershipCached(draft.leagueId, socket.userId);
           if (!isMember) {
             socket.emit(SOCKET_EVENTS.APP.ERROR, { message: 'Not a member of this league' });
             logger.warn(`User ${socket.userId} denied access to draft ${draftId}`);

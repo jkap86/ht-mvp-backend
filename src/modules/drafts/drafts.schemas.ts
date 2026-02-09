@@ -94,9 +94,11 @@ export const addToQueueSchema = z.object({
 export const reorderQueueSchema = z.object({
   player_ids: z
     .array(z.number().int().positive('Each player ID must be a positive integer'))
+    .max(500, 'Queue cannot exceed 500 entries')
     .optional(),
   queue_entry_ids: z
     .array(z.number().int().positive('Each entry ID must be a positive integer'))
+    .max(500, 'Queue cannot exceed 500 entries')
     .optional(),
 }).refine(
   (data) => Array.isArray(data.player_ids) || Array.isArray(data.queue_entry_ids),

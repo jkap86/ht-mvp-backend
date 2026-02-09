@@ -95,28 +95,28 @@ router.get('/:leagueId/dashboard', apiReadLimiter, leagueController.getDashboard
 router.post('/', draftModifyLimiter, validateRequest(createLeagueSchema, 'body'), leagueController.createLeague);
 
 // POST /api/leagues/:id/join - Join league (for public leagues or internal use)
-router.post('/:id/join', leagueController.joinPublicLeague);
+router.post('/:id/join', draftModifyLimiter, leagueController.joinPublicLeague);
 
 // PUT /api/leagues/:id
-router.put('/:id', validateRequest(updateLeagueSchema, 'body'), leagueController.updateLeague);
+router.put('/:id', draftModifyLimiter, validateRequest(updateLeagueSchema, 'body'), leagueController.updateLeague);
 
 // DELETE /api/leagues/:id
-router.delete('/:id', leagueController.deleteLeague);
+router.delete('/:id', draftModifyLimiter, leagueController.deleteLeague);
 
 // POST /api/leagues/:id/reset - Reset league for new season (commissioner only)
-router.post('/:id/reset', leagueController.resetLeague);
+router.post('/:id/reset', draftModifyLimiter, leagueController.resetLeague);
 
 // POST /api/leagues/:id/season-controls - Update season status/week (commissioner only)
-router.post('/:id/season-controls', leagueController.updateSeasonControls);
+router.post('/:id/season-controls', draftModifyLimiter, leagueController.updateSeasonControls);
 
 // GET /api/leagues/:id/members
 router.get('/:id/members', apiReadLimiter, leagueController.getMembers);
 
 // DELETE /api/leagues/:id/members/:rosterId - Kick member from league (commissioner only)
-router.delete('/:id/members/:rosterId', leagueController.kickMember);
+router.delete('/:id/members/:rosterId', draftModifyLimiter, leagueController.kickMember);
 
 // POST /api/leagues/:id/members/:rosterId/reinstate - Reinstate benched member (commissioner only)
-router.post('/:id/members/:rosterId/reinstate', leagueController.reinstateMember);
+router.post('/:id/members/:rosterId/reinstate', draftModifyLimiter, leagueController.reinstateMember);
 
 // POST /api/leagues/:id/dev/add-users - Dev endpoint to add multiple users to league
 if (process.env.NODE_ENV === 'development') {
@@ -163,18 +163,18 @@ router.get('/:leagueId/free-agents', apiReadLimiter, rostersController.getFreeAg
 router.get('/:leagueId/transactions', apiReadLimiter, rostersController.getTransactions);
 
 // Lineups lock - POST /api/leagues/:leagueId/lineups/lock
-router.post('/:leagueId/lineups/lock', rostersController.lockLineups);
+router.post('/:leagueId/lineups/lock', draftModifyLimiter, rostersController.lockLineups);
 
 // Standings - GET /api/leagues/:leagueId/standings
 router.get('/:leagueId/standings', apiReadLimiter, matchupsController.getStandings);
 
 // Schedule generation - POST /api/leagues/:leagueId/schedule/generate
-router.post('/:leagueId/schedule/generate', matchupsController.generateSchedule);
+router.post('/:leagueId/schedule/generate', draftModifyLimiter, matchupsController.generateSchedule);
 
 // Scoring rules - GET /api/leagues/:leagueId/scoring/rules
 router.get('/:leagueId/scoring/rules', apiReadLimiter, matchupsController.getScoringRules);
 
 // Score calculation - POST /api/leagues/:leagueId/scoring/calculate
-router.post('/:leagueId/scoring/calculate', matchupsController.calculateScores);
+router.post('/:leagueId/scoring/calculate', draftModifyLimiter, matchupsController.calculateScores);
 
 export default router;

@@ -96,7 +96,7 @@ router.patch(
 );
 
 // DELETE /api/leagues/:leagueId/drafts/:draftId
-router.delete('/:draftId', draftController.deleteDraft);
+router.delete('/:draftId', draftModifyLimiter, draftController.deleteDraft);
 
 // GET /api/leagues/:leagueId/drafts/:draftId/order
 router.get('/:draftId/order', apiReadLimiter, draftController.getDraftOrder);
@@ -181,7 +181,7 @@ router.delete('/:draftId/queue/:playerId', queueLimiter, queueController.removeF
 router.delete('/:draftId/queue/pick-asset/:pickAssetId', queueLimiter, queueController.removePickAssetFromQueue);
 
 // PATCH /api/leagues/:leagueId/drafts/:draftId/autodraft
-router.patch('/:draftId/autodraft', draftController.toggleAutodraft);
+router.patch('/:draftId/autodraft', draftModifyLimiter, draftController.toggleAutodraft);
 
 // Derby routes (draft order selection phase)
 // POST /api/leagues/:leagueId/drafts/:draftId/derby/start

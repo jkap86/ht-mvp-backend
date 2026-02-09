@@ -46,3 +46,11 @@ export async function checkRedisHealth(): Promise<boolean> {
     return false;
   }
 }
+
+/**
+ * Check if Redis is configured and available.
+ * This is a synchronous check based on configuration, not connectivity.
+ */
+export function isRedisAvailable(): boolean {
+  return !!process.env.REDIS_HOST;
+}

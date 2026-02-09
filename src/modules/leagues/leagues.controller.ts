@@ -3,7 +3,7 @@ import { AuthRequest } from '../../middleware/auth.middleware';
 import { LeagueService } from './leagues.service';
 import { RosterService } from './roster.service';
 import { DashboardService } from './dashboard.service';
-import { ValidationException } from '../../utils/exceptions';
+import { ValidationException, ForbiddenException } from '../../utils/exceptions';
 import { requireUserId, requireLeagueId } from '../../utils/controller-helpers';
 import { deleteLeagueSchema, seasonControlsSchema } from './leagues.schemas';
 
@@ -196,16 +196,23 @@ export class LeagueController {
 
   devAddUsers = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
+      const userId = requireUserId(req);
       const leagueId = requireLeagueId(req);
+
+      // Even in development, require commissioner access to prevent abuse
+      if (!this.rosterService) {
+        throw new ValidationException('Roster service not available');
+      }
+      const isCommissioner = await this.rosterService.isCommissioner(leagueId, userId);
+      if (!isCommissioner) {
+        throw new ForbiddenException('Only the commissioner can add users');
+      }
 
       const { usernames } = req.body;
       if (!Array.isArray(usernames) || usernames.length === 0) {
         throw new ValidationException('usernames must be a non-empty array');
       }
 
-      if (!this.rosterService) {
-        throw new ValidationException('Roster service not available');
-      }
       const results = await this.rosterService.devBulkAddUsers(leagueId, usernames);
       res.status(200).json({ results });
     } catch (error) {

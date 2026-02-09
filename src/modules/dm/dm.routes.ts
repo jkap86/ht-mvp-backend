@@ -2,8 +2,10 @@ import { Router } from 'express';
 import { DmController } from './dm.controller';
 import { DmService } from './dm.service';
 import { authMiddleware } from '../../middleware/auth.middleware';
+import { validateRequest } from '../../middleware/validation.middleware';
 import { dmMessageLimiter, dmReadLimiter } from '../../middleware/rate-limit.middleware';
 import { container, KEYS } from '../../container';
+import { sendDmSchema, getDmMessagesQuerySchema } from './dm.schemas';
 
 // Resolve dependencies from container
 const dmService = container.resolve<DmService>(KEYS.DM_SERVICE);
@@ -24,10 +26,10 @@ router.get('/unread-count', dmReadLimiter, dmController.getUnreadCount);
 router.post('/user/:otherUserId', dmReadLimiter, dmController.getOrCreateConversation);
 
 // GET /api/dm/:conversationId/messages - Get messages for a conversation
-router.get('/:conversationId/messages', dmReadLimiter, dmController.getMessages);
+router.get('/:conversationId/messages', dmReadLimiter, validateRequest(getDmMessagesQuerySchema, 'query'), dmController.getMessages);
 
 // POST /api/dm/:conversationId/messages - Send a message (stricter rate limit)
-router.post('/:conversationId/messages', dmMessageLimiter, dmController.sendMessage);
+router.post('/:conversationId/messages', dmMessageLimiter, validateRequest(sendDmSchema), dmController.sendMessage);
 
 // PUT /api/dm/:conversationId/read - Mark conversation as read
 router.put('/:conversationId/read', dmReadLimiter, dmController.markAsRead);

@@ -3,7 +3,7 @@ import { MatchupsController } from './matchups.controller';
 import { MatchupService } from './matchups.service';
 import { ScoringService } from '../scoring/scoring.service';
 import { MedianService } from './median.service';
-import { apiReadLimiter } from '../../middleware/rate-limit.middleware';
+import { apiReadLimiter, draftModifyLimiter } from '../../middleware/rate-limit.middleware';
 import { container, KEYS } from '../../container';
 
 // Resolve dependencies from container
@@ -32,10 +32,10 @@ router.get('/:matchupId', apiReadLimiter, matchupsController.getMatchup);
 router.get('/:matchupId/detail', apiReadLimiter, matchupsController.getMatchupWithLineups);
 
 // POST /api/leagues/:leagueId/matchups/finalize
-router.post('/finalize', matchupsController.finalizeMatchups);
+router.post('/finalize', draftModifyLimiter, matchupsController.finalizeMatchups);
 
 // POST /api/leagues/:leagueId/matchups/median/recalculate
-router.post('/median/recalculate', matchupsController.recalculateMedian);
+router.post('/median/recalculate', draftModifyLimiter, matchupsController.recalculateMedian);
 
 // GET /api/leagues/:leagueId/standings
 // (Mounted separately on leagues router)

@@ -16,15 +16,19 @@ export const proposeTradeSchema = z
       .positive('Recipient roster ID must be a positive integer'),
     offering_player_ids: z
       .array(z.number().int().positive('Each offering player ID must be a positive integer'))
+      .max(50, 'Cannot offer more than 50 players in a single trade')
       .default([]),
     requesting_player_ids: z
       .array(z.number().int().positive('Each requesting player ID must be a positive integer'))
+      .max(50, 'Cannot request more than 50 players in a single trade')
       .default([]),
     offering_pick_asset_ids: z
       .array(z.number().int().positive('Each offering pick asset ID must be a positive integer'))
+      .max(20, 'Cannot offer more than 20 draft picks in a single trade')
       .default([]),
     requesting_pick_asset_ids: z
       .array(z.number().int().positive('Each requesting pick asset ID must be a positive integer'))
+      .max(20, 'Cannot request more than 20 draft picks in a single trade')
       .default([]),
     message: z.string().max(500, 'Message cannot exceed 500 characters').optional(),
     notify_league_chat: z.boolean().default(true),
@@ -47,15 +51,19 @@ export const counterTradeSchema = z
   .object({
     offering_player_ids: z
       .array(z.number().int().positive('Each offering player ID must be a positive integer'))
+      .max(50, 'Cannot offer more than 50 players in a single trade')
       .default([]),
     requesting_player_ids: z
       .array(z.number().int().positive('Each requesting player ID must be a positive integer'))
+      .max(50, 'Cannot request more than 50 players in a single trade')
       .default([]),
     offering_pick_asset_ids: z
       .array(z.number().int().positive('Each offering pick asset ID must be a positive integer'))
+      .max(20, 'Cannot offer more than 20 draft picks in a single trade')
       .default([]),
     requesting_pick_asset_ids: z
       .array(z.number().int().positive('Each requesting pick asset ID must be a positive integer'))
+      .max(20, 'Cannot request more than 20 draft picks in a single trade')
       .default([]),
     message: z.string().max(500, 'Message cannot exceed 500 characters').optional(),
     notify_dm: z.boolean().default(true),

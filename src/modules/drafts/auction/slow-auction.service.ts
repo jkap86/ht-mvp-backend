@@ -590,7 +590,17 @@ export class SlowAuctionService {
       const rosterSlots = league.leagueSettings?.rosterSlots ?? 15;
       const settings = this.getSettings(draft);
 
-      // Acquire draft-level lock first (per lock ordering: DRAFT before ROSTER)
+      // Collect all unique roster IDs from proxy bids for lock acquisition
+      const allRosterIds = [...new Set(proxyBids.map((pb) => pb.roster_id))].sort((a, b) => a - b);
+
+      // Acquire locks in correct priority order: ROSTER (priority 2) before DRAFT (priority 7)
+      // Lock all participating rosters first (sorted by ID to prevent deadlocks between concurrent settlements)
+      for (const rosterId of allRosterIds) {
+        await client.query('SELECT pg_advisory_xact_lock($1)', [
+          getLockId(SharedLockDomain.ROSTER, rosterId),
+        ]);
+      }
+      // Then acquire draft-level lock
       await client.query('SELECT pg_advisory_xact_lock($1)', [getLockId(LockDomain.DRAFT, lot.draftId)]);
 
       // Try each bidder in order until one can afford
@@ -609,10 +619,7 @@ export class SlowAuctionService {
           price = Math.min(candidateMaxBid, nextHighestBid + settings.minIncrement);
         }
 
-        // Lock candidate's roster (after DRAFT lock per ordering)
-        await client.query('SELECT pg_advisory_xact_lock($1)', [
-          getLockId(SharedLockDomain.ROSTER, candidateRosterId),
-        ]);
+        // Roster already locked above - proceed with budget validation
 
         // Validate budget and slots
         const budgetData = await getRosterBudgetDataWithClient(client, lot.draftId, candidateRosterId);

@@ -21,9 +21,17 @@ export class CacheService {
 
   async delPattern(pattern: string): Promise<void> {
     const redis = getRedisClient();
-    const keys = await redis.keys(this.prefix + pattern);
-    if (keys.length > 0) {
-      await redis.del(...keys);
+    // Use SCAN instead of KEYS to avoid blocking Redis on large keyspaces
+    let cursor = '0';
+    const allKeys: string[] = [];
+    do {
+      const [nextCursor, batch] = await redis.scan(cursor, 'MATCH', this.prefix + pattern, 'COUNT', 100);
+      cursor = nextCursor;
+      allKeys.push(...batch);
+    } while (cursor !== '0');
+
+    if (allKeys.length > 0) {
+      await redis.del(...allKeys);
     }
   }
 }
