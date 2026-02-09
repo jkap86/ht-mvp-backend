@@ -17,7 +17,7 @@ import {
   faabBudgetToResponse,
   resolveLeagueCurrentWeek,
 } from '../waivers.model';
-import { NotFoundException } from '../../../utils/exceptions';
+import { NotFoundException, ConflictException } from '../../../utils/exceptions';
 import { runWithLock, LockDomain } from '../../../shared/transaction-runner';
 import { addToWaiverWire, WaiverInfoContext } from './waiver-info.use-case';
 import { EventListenerService } from '../../chat/event-listener.service';
@@ -34,8 +34,8 @@ interface RosterProcessingState {
   currentRosterSize: number;
   /** Set of player IDs currently on roster (updated after adds/drops) */
   ownedPlayerIds: Set<number>;
-  /** Set of claim orders already processed for this roster */
-  processedClaimOrders: Set<number>;
+  /** Set of claim IDs already processed for this roster */
+  processedClaimIds: Set<number>;
 }
 
 export interface ProcessWaiversContext extends WaiverInfoContext {
@@ -101,8 +101,8 @@ export async function processLeagueClaims(
         return { processed: 0, successful: 0 };
       }
 
-      // Initialize roster processing states
-      const rosterStates = await initializeRosterStates(
+      // Initialize roster processing states and global ownership tracking
+      const { rosterStates, globallyClaimedPlayerIds } = await initializeRosterStates(
         ctx,
         allClaims,
         settings.waiverType,
@@ -161,6 +161,16 @@ export async function processLeagueClaims(
             const state = rosterStates.get(claim.rosterId);
             if (!state) continue;
 
+            // Check if player was already claimed in an earlier round (global ownership)
+            if (globallyClaimedPlayerIds.has(claim.playerId)) {
+              await ctx.claimsRepo.updateStatus(claim.id, 'invalid', 'Player already owned', client);
+              state.processedClaimIds.add(claim.id);
+              processedCount++;
+              const claimCopy = { ...claim };
+              pendingEvents.push(() => emitClaimFailed(ctx, claimCopy, 'Player already owned'));
+              continue;
+            }
+
             const validation = validateClaimWithState(
               claim,
               state,
@@ -174,7 +184,7 @@ export async function processLeagueClaims(
             } else {
               // Mark invalid and continue to next candidate
               await ctx.claimsRepo.updateStatus(claim.id, 'invalid', validation.reason, client);
-              state.processedClaimOrders.add(claim.claimOrder);
+              state.processedClaimIds.add(claim.id);
               processedCount++;
               const claimCopy = { ...claim };
               const reason = validation.reason || 'Invalid claim';
@@ -188,44 +198,64 @@ export async function processLeagueClaims(
             if (!state) continue;
 
             // Skip already processed (invalid) claims
-            if (state.processedClaimOrders.has(claim.claimOrder)) continue;
+            if (state.processedClaimIds.has(claim.id)) continue;
 
             if (winner && claim.id === winner.id) {
-              // Execute the winning claim
-              await executeClaim(ctx, claim, settings.waiverType, season, client);
-              await ctx.claimsRepo.updateStatus(claim.id, 'successful', undefined, client);
-              successfulCount++;
-              processedCount++;
+              // Execute the winning claim with try/catch for ownership conflicts
+              try {
+                await executeClaim(ctx, claim, settings.waiverType, season, client);
+                await ctx.claimsRepo.updateStatus(claim.id, 'successful', undefined, client);
+                successfulCount++;
+                processedCount++;
 
-              // Update in-memory state for this roster's future claims
-              updateRosterStateAfterWin(state, claim, settings.waiverType, rosterStates, maxPriority);
+                // Update global ownership tracking
+                globallyClaimedPlayerIds.add(claim.playerId);
 
-              state.processedClaimOrders.add(claim.claimOrder);
+                // Update in-memory state for this roster's future claims
+                updateRosterStateAfterWin(state, claim, settings.waiverType, rosterStates, maxPriority);
 
-              // Queue success emit
-              const claimCopy = { ...claim };
-              pendingEvents.push(() => emitClaimSuccessful(ctx, claimCopy));
+                state.processedClaimIds.add(claim.id);
 
-              // Remove player from waiver wire
-              await ctx.waiverWireRepo.removePlayer(leagueId, playerId, client);
+                // Queue success emit
+                const claimCopy = { ...claim };
+                pendingEvents.push(() => emitClaimSuccessful(ctx, claimCopy));
 
-              // Invalidate pending trades
-              if (ctx.tradesRepo) {
-                const invalidatedTrades = await invalidateTradesForPlayer(ctx, leagueId, playerId, client);
-                for (const trade of invalidatedTrades) {
-                  pendingEvents.push(() => emitTradeInvalidated(trade.leagueId, trade.id));
-                }
-                if (claim.dropPlayerId) {
-                  const droppedPlayerTrades = await invalidateTradesForPlayer(
-                    ctx,
-                    leagueId,
-                    claim.dropPlayerId,
-                    client
-                  );
-                  for (const trade of droppedPlayerTrades) {
+                // Remove player from waiver wire
+                await ctx.waiverWireRepo.removePlayer(leagueId, playerId, client);
+
+                // Invalidate pending trades
+                if (ctx.tradesRepo) {
+                  const invalidatedTrades = await invalidateTradesForPlayer(ctx, leagueId, playerId, client);
+                  for (const trade of invalidatedTrades) {
                     pendingEvents.push(() => emitTradeInvalidated(trade.leagueId, trade.id));
                   }
+                  if (claim.dropPlayerId) {
+                    const droppedPlayerTrades = await invalidateTradesForPlayer(
+                      ctx,
+                      leagueId,
+                      claim.dropPlayerId,
+                      client
+                    );
+                    for (const trade of droppedPlayerTrades) {
+                      pendingEvents.push(() => emitTradeInvalidated(trade.leagueId, trade.id));
+                    }
+                  }
                 }
+              } catch (error) {
+                // Handle ownership conflict from addPlayerToRoster
+                if (error instanceof ConflictException && error.message.includes('already on a roster')) {
+                  await ctx.claimsRepo.updateStatus(claim.id, 'invalid', 'Player already owned', client);
+                  processedCount++;
+                  state.processedClaimIds.add(claim.id);
+                  const claimCopy = { ...claim };
+                  pendingEvents.push(() => emitClaimFailed(ctx, claimCopy, 'Player already owned'));
+                  // Player is now known to be owned globally
+                  globallyClaimedPlayerIds.add(claim.playerId);
+                  // Continue to next claim in sorted list - no winner for this player
+                  winner = null;
+                  continue;
+                }
+                throw error; // Re-throw other errors
               }
             } else {
               // Loser - mark as failed
@@ -233,7 +263,7 @@ export async function processLeagueClaims(
               await ctx.claimsRepo.updateStatus(claim.id, 'failed', reason, client);
               processedCount++;
 
-              state.processedClaimOrders.add(claim.claimOrder);
+              state.processedClaimIds.add(claim.id);
 
               const claimCopy = { ...claim };
               pendingEvents.push(() => emitClaimFailed(ctx, claimCopy, reason));
@@ -280,6 +310,7 @@ export async function processLeagueClaims(
 /**
  * Initialize in-memory roster states for processing.
  * Loads current priority, budget, and roster composition for each roster with claims.
+ * Also returns a global set of all owned player IDs across all rosters.
  */
 async function initializeRosterStates(
   ctx: ProcessWaiversContext,
@@ -288,9 +319,15 @@ async function initializeRosterStates(
   season: number,
   leagueId: number,
   client: PoolClient
-): Promise<Map<number, RosterProcessingState>> {
+): Promise<{
+  rosterStates: Map<number, RosterProcessingState>;
+  globallyClaimedPlayerIds: Set<number>;
+}> {
   const states = new Map<number, RosterProcessingState>();
   const rosterIds = [...new Set(claims.map((c) => c.rosterId))];
+
+  // Track all owned players globally (across all rosters with claims)
+  const globallyClaimedPlayerIds = new Set<number>();
 
   for (const rosterId of rosterIds) {
     // Get current priority from the first claim for this roster (all have same currentPriority)
@@ -308,17 +345,22 @@ async function initializeRosterStates(
     const playerIds = await ctx.rosterPlayersRepo.getPlayerIdsByRoster(rosterId, client);
     const ownedPlayerIds = new Set(playerIds);
 
+    // Add to global tracking
+    for (const playerId of playerIds) {
+      globallyClaimedPlayerIds.add(playerId);
+    }
+
     states.set(rosterId, {
       rosterId,
       currentPriority,
       remainingBudget,
       currentRosterSize: playerIds.length,
       ownedPlayerIds,
-      processedClaimOrders: new Set(),
+      processedClaimIds: new Set(),
     });
   }
 
-  return states;
+  return { rosterStates: states, globallyClaimedPlayerIds };
 }
 
 /**
@@ -332,7 +374,7 @@ function hasUnprocessedClaims(
     const state = rosterStates.get(rosterId);
     if (!state) continue;
 
-    const hasUnprocessed = claims.some((c) => !state.processedClaimOrders.has(c.claimOrder));
+    const hasUnprocessed = claims.some((c) => !state.processedClaimIds.has(c.id));
     if (hasUnprocessed) return true;
   }
   return false;
@@ -340,6 +382,8 @@ function hasUnprocessedClaims(
 
 /**
  * Extract the next unprocessed claim from each roster for this round.
+ * Claims are already sorted by claim_order from the query, so we just find
+ * the first one that hasn't been processed yet.
  */
 function extractRoundClaims(
   claimsByRoster: Map<number, WaiverClaimWithCurrentPriority[]>,
@@ -351,8 +395,8 @@ function extractRoundClaims(
     const state = rosterStates.get(rosterId);
     if (!state) continue;
 
-    // Find the next claim_order that hasn't been processed
-    const nextClaim = claims.find((c) => !state.processedClaimOrders.has(c.claimOrder));
+    // Find the next claim that hasn't been processed (by ID)
+    const nextClaim = claims.find((c) => !state.processedClaimIds.has(c.id));
     if (nextClaim) {
       roundClaims.push(nextClaim);
     }
@@ -505,7 +549,8 @@ async function executeClaim(
     await addToWaiverWire(ctx, claim.leagueId, claim.dropPlayerId, claim.rosterId, client);
   }
 
-  // Add player to roster (skipOwnershipCheck since we validated in canExecuteClaim)
+  // Add player to roster - ownership is validated in-memory before this call,
+  // but we also let the DB validate to catch any race conditions.
   // Roster size check IS enforced - this is important!
   await mutationService.addPlayerToRoster(
     {
@@ -514,7 +559,7 @@ async function executeClaim(
       leagueId: claim.leagueId,
       acquiredType: 'waiver',
     },
-    { skipOwnershipCheck: true }, // Already validated in canExecuteClaim
+    {}, // Let DB validate ownership - caller handles ConflictException
     client
   );
 

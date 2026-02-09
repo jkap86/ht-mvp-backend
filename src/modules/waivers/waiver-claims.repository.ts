@@ -78,12 +78,25 @@ export class WaiverClaimsRepository {
   ): Promise<WaiverClaim[]> {
     const conn = client || this.db;
 
-    // Build VALUES clause with typed casts for PostgreSQL
-    const values = claimIds.map((id, index) => `(${id}::INTEGER, ${index + 1}::INTEGER)`).join(',');
+    if (claimIds.length === 0) {
+      return [];
+    }
+
+    // Build parameterized VALUES clause: ($2, $3), ($4, $5), ...
+    // This avoids string interpolation for security
+    const valuesParts: string[] = [];
+    const params: number[] = [rosterId]; // $1 is rosterId
+
+    claimIds.forEach((id, index) => {
+      const idParam = params.length + 1;      // $2, $4, $6, ...
+      const orderParam = params.length + 2;   // $3, $5, $7, ...
+      valuesParts.push(`($${idParam}::INTEGER, $${orderParam}::INTEGER)`);
+      params.push(id, index + 1);
+    });
 
     const result = await conn.query(
       `WITH new_orders(id, new_order) AS (
-         VALUES ${values}
+         VALUES ${valuesParts.join(',')}
        )
        UPDATE waiver_claims wc
        SET claim_order = no.new_order, updated_at = NOW()
@@ -92,7 +105,7 @@ export class WaiverClaimsRepository {
          AND wc.roster_id = $1
          AND wc.status = 'pending'
        RETURNING wc.*`,
-      [rosterId]
+      params
     );
 
     return result.rows.map(waiverClaimFromDatabase);
