@@ -76,7 +76,9 @@ export async function acceptTrade(
       }
       // If already accepted, return current state (idempotent retry)
       if (currentTrade.status === 'accepted') {
-        return { trade: currentTrade, league, pickTradedEvents: [] };
+        const details = await ctx.tradesRepo.findByIdWithDetails(tradeId, roster.id);
+        if (!details) throw new Error('Failed to get trade details');
+        return details;
       }
       // If in another state, cannot accept
       if (currentTrade.status !== 'pending') {
