@@ -16,7 +16,7 @@ export class NotificationController {
    */
   getPreferences = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const userId = req.user!.id;
+      const userId = req.user!.userId;
       const prefs = await this.notificationService.getNotificationPreferences(userId);
       res.status(200).json(prefs);
     } catch (error) {
@@ -30,7 +30,7 @@ export class NotificationController {
    */
   updatePreferences = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const userId = req.user!.id;
+      const userId = req.user!.userId;
       const updates = req.body;
 
       const prefs = await this.notificationService.updateNotificationPreferences(userId, updates);
@@ -46,7 +46,7 @@ export class NotificationController {
    */
   registerDevice = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const userId = req.user!.id;
+      const userId = req.user!.userId;
       const { token, device_type, device_name } = req.body;
 
       if (!token || !device_type) {
@@ -95,7 +95,7 @@ export class NotificationController {
    */
   sendTestNotification = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
-      const userId = req.user!.id;
+      const userId = req.user!.userId;
 
       const result = await this.notificationService.sendPushNotification(userId, {
         title: 'Test Notification',

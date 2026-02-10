@@ -15,7 +15,7 @@ export class ActivityController {
    */
   getLeagueActivity = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const leagueId = parseInt(req.params.leagueId);
+      const leagueId = parseInt(Array.isArray(req.params.leagueId) ? req.params.leagueId[0] : req.params.leagueId);
       const type = (req.query.type as ActivityType | 'all') || 'all';
       const limit = parseInt(req.query.limit as string) || 50;
       const offset = parseInt(req.query.offset as string) || 0;
@@ -44,8 +44,8 @@ export class ActivityController {
    */
   getWeekActivity = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const leagueId = parseInt(req.params.leagueId);
-      const week = parseInt(req.params.week);
+      const leagueId = parseInt(Array.isArray(req.params.leagueId) ? req.params.leagueId[0] : req.params.leagueId);
+      const week = parseInt(Array.isArray(req.params.week) ? req.params.week[0] : req.params.week);
       const type = (req.query.type as ActivityType | 'all') || 'all';
       const limit = parseInt(req.query.limit as string) || 50;
 
@@ -71,7 +71,7 @@ export class ActivityController {
    */
   getRosterActivity = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const rosterId = parseInt(req.params.rosterId);
+      const rosterId = parseInt(Array.isArray(req.params.rosterId) ? req.params.rosterId[0] : req.params.rosterId);
       const limit = parseInt(req.query.limit as string) || 50;
       const offset = parseInt(req.query.offset as string) || 0;
 
