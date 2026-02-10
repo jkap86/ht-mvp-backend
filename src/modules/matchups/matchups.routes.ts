@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { MatchupsController } from './matchups.controller';
 import { MatchupService } from './matchups.service';
 import { ScoringService } from '../scoring/scoring.service';
+import { LeagueService } from '../leagues/leagues.service';
 import { MedianService } from './median.service';
 import { apiReadLimiter, draftModifyLimiter } from '../../middleware/rate-limit.middleware';
 import { container, KEYS } from '../../container';
@@ -9,10 +10,12 @@ import { container, KEYS } from '../../container';
 // Resolve dependencies from container
 const matchupService = container.resolve<MatchupService>(KEYS.MATCHUP_SERVICE);
 const scoringService = container.resolve<ScoringService>(KEYS.SCORING_SERVICE);
+const leagueService = container.resolve<LeagueService>(KEYS.LEAGUE_SERVICE);
 const medianService = container.resolve<MedianService>(KEYS.MEDIAN_SERVICE);
 const matchupsController = new MatchupsController(
   matchupService,
   scoringService,
+  leagueService,
   undefined, // scheduleGeneratorService
   undefined, // standingsService
   medianService

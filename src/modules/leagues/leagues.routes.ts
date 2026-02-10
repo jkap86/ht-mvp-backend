@@ -58,6 +58,7 @@ const rostersController = new RostersController(rosterService, lineupService);
 const matchupsController = new MatchupsController(
   matchupService,
   scoringService,
+  leagueService,
   scheduleGeneratorService,
   standingsService
 );
