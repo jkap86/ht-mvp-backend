@@ -68,8 +68,8 @@ export async function voteTrade(
       if (!lockedTrade) {
         throw new NotFoundException('Trade not found');
       }
-      // If trade was already vetoed or approved, return current counts (idempotent)
-      if (lockedTrade.status === 'vetoed' || lockedTrade.status === 'approved') {
+      // If trade was already vetoed or completed, return current counts (idempotent)
+      if (lockedTrade.status === 'vetoed' || lockedTrade.status === 'completed') {
         const counts = await ctx.tradeVotesRepo.countVotes(tradeId, client);
         return counts;
       }
