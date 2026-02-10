@@ -61,7 +61,8 @@ export async function acceptTrade(
   if (!league) throw new NotFoundException('League not found');
 
   // Variables to collect data for event emission after transaction
-  let updatedTrade!: Trade;
+  // updatedTrade is only set when we actually change state (not on idempotent retry)
+  let updatedTrade: Trade | undefined;
   let pickTradedEvents: PickTradedEvent[] = [];
 
   const tradeWithDetails = await runWithLock(
@@ -213,24 +214,26 @@ export async function acceptTrade(
     }
   );
 
-  // Emit domain events AFTER transaction commits
-  const eventBus = tryGetEventBus();
-  if (eventBus) {
-    emitTradeAcceptedEvent(eventBus, trade.leagueId, trade.id, updatedTrade);
-    emitPickTradedEvents(eventBus, pickTradedEvents);
-  }
+  // Emit domain events AFTER transaction commits (skip on idempotent retry)
+  if (updatedTrade) {
+    const eventBus = tryGetEventBus();
+    if (eventBus) {
+      emitTradeAcceptedEvent(eventBus, trade.leagueId, trade.id, updatedTrade);
+      emitPickTradedEvents(eventBus, pickTradedEvents);
+    }
 
-  // Emit system message to league chat
-  if (ctx.eventListenerService) {
-    const isCompleted = updatedTrade.status === 'completed';
-    ctx.eventListenerService
-      .handleTradeAccepted(trade.leagueId, trade.id, isCompleted, trade.notifyLeagueChat)
-      .catch((err) => logger.warn('Failed to emit system message', {
-        type: 'trade_accepted',
-        leagueId: trade.leagueId,
-        tradeId: trade.id,
-        error: err.message
-      }));
+    // Emit system message to league chat
+    if (ctx.eventListenerService) {
+      const isCompleted = updatedTrade.status === 'completed';
+      ctx.eventListenerService
+        .handleTradeAccepted(trade.leagueId, trade.id, isCompleted, trade.notifyLeagueChat)
+        .catch((err) => logger.warn('Failed to emit system message', {
+          type: 'trade_accepted',
+          leagueId: trade.leagueId,
+          tradeId: trade.id,
+          error: err.message
+        }));
+    }
   }
 
   return tradeWithDetails;

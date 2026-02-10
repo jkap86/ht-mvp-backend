@@ -81,8 +81,8 @@ export async function submitClaim(
         }
       }
 
-      // Check if player is already owned
-      const playerOwner = await ctx.rosterPlayersRepo.findOwner(leagueId, request.playerId, client);
+      // Check if player is already owned (season-scoped)
+      const playerOwner = await ctx.rosterPlayersRepo.findOwner(leagueId, request.playerId, client, league.activeLeagueSeasonId);
       if (playerOwner) {
         throw new ValidationException('Player is already on a roster');
       }

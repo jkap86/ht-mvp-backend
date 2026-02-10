@@ -14,14 +14,15 @@ import { RosterMapper } from '../../shared/mappers';
 export class RosterRepository {
   constructor(private readonly db: Pool) {}
 
-  async findByLeagueId(leagueId: number): Promise<Roster[]> {
+  async findByLeagueId(leagueId: number, leagueSeasonId?: number): Promise<Roster[]> {
+    const filter = leagueSeasonId ? 'r.league_season_id = $1' : 'r.league_id = $1';
     const result = await this.db.query(
       `SELECT r.*, u.username
        FROM rosters r
        LEFT JOIN users u ON r.user_id = u.id
-       WHERE r.league_id = $1
+       WHERE ${filter}
        ORDER BY r.is_benched ASC, r.roster_id ASC`,
-      [leagueId]
+      [leagueSeasonId || leagueId]
     );
 
     return RosterMapper.fromRows(result.rows);
@@ -80,11 +81,15 @@ export class RosterRepository {
   async findByLeagueAndUser(
     leagueId: number,
     userId: string,
-    client?: PoolClient
+    client?: PoolClient,
+    leagueSeasonId?: number
   ): Promise<Roster | null> {
     const db = client || this.db;
-    const result = await db.query('SELECT * FROM rosters WHERE league_id = $1 AND user_id = $2', [
-      leagueId,
+    const filter = leagueSeasonId
+      ? 'league_season_id = $1 AND user_id = $2'
+      : 'league_id = $1 AND user_id = $2';
+    const result = await db.query(`SELECT * FROM rosters WHERE ${filter}`, [
+      leagueSeasonId || leagueId,
       userId,
     ]);
 

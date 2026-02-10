@@ -33,10 +33,11 @@ export class DraftCoreRepository {
   /**
    * Find all drafts for a league.
    */
-  async findByLeagueId(leagueId: number): Promise<Draft[]> {
+  async findByLeagueId(leagueId: number, leagueSeasonId?: number): Promise<Draft[]> {
+    const filter = leagueSeasonId ? 'league_season_id = $1' : 'league_id = $1';
     const result = await this.db.query(
-      'SELECT * FROM drafts WHERE league_id = $1 ORDER BY CASE WHEN scheduled_start IS NULL THEN 1 ELSE 0 END, scheduled_start ASC NULLS LAST, created_at DESC',
-      [leagueId]
+      `SELECT * FROM drafts WHERE ${filter} ORDER BY CASE WHEN scheduled_start IS NULL THEN 1 ELSE 0 END, scheduled_start ASC NULLS LAST, created_at DESC`,
+      [leagueSeasonId || leagueId]
     );
     return result.rows.map(draftFromDatabase);
   }

@@ -113,7 +113,7 @@ export class RosterService {
       // Enforce waivers: cannot add a player who is currently on the waiver wire
       const waiverSettings = parseWaiverSettings(league.settings);
       if (waiverSettings.waiverType !== 'none' && this.waiverWireRepo) {
-        const isOnWaivers = await this.waiverWireRepo.isOnWaivers(leagueId, playerId, client);
+        const isOnWaivers = await this.waiverWireRepo.isOnWaivers(leagueId, playerId, client, league.activeLeagueSeasonId);
         if (isOnWaivers) {
           throw new ValidationException('Player is on waivers. Submit a waiver claim instead.');
         }
@@ -140,7 +140,8 @@ export class RosterService {
         parseInt(league.season, 10),
         league.currentWeek,
         undefined,
-        client
+        client,
+        league.activeLeagueSeasonId
       );
 
       return rosterPlayer;
@@ -191,7 +192,8 @@ export class RosterService {
         parseInt(league.season, 10),
         league.currentWeek,
         undefined,
-        client
+        client,
+        league.activeLeagueSeasonId
       );
 
       // Add to waiver wire if league has waivers enabled
@@ -232,7 +234,7 @@ export class RosterService {
       // Enforce waivers: cannot add a player who is currently on the waiver wire
       const waiverSettings = parseWaiverSettings(league.settings);
       if (waiverSettings.waiverType !== 'none' && this.waiverWireRepo) {
-        const isOnWaivers = await this.waiverWireRepo.isOnWaivers(leagueId, addPlayerId, client);
+        const isOnWaivers = await this.waiverWireRepo.isOnWaivers(leagueId, addPlayerId, client, league.activeLeagueSeasonId);
         if (isOnWaivers) {
           throw new ValidationException('Player is on waivers. Submit a waiver claim instead.');
         }
@@ -259,7 +261,8 @@ export class RosterService {
         parseInt(league.season, 10),
         league.currentWeek,
         undefined,
-        client
+        client,
+        league.activeLeagueSeasonId
       );
 
       await this.transactionsRepo.create(
@@ -270,7 +273,8 @@ export class RosterService {
         parseInt(league.season, 10),
         league.currentWeek,
         dropTx.id,
-        client
+        client,
+        league.activeLeagueSeasonId
       );
 
       // Add dropped player to waiver wire if league has waivers enabled
@@ -301,7 +305,7 @@ export class RosterService {
     const league = await this.leagueRepo.findById(leagueId);
     const leagueMode = league?.mode || 'redraft';
 
-    return this.rosterPlayersRepo.getFreeAgents(leagueId, position, search, limit, offset, leagueMode);
+    return this.rosterPlayersRepo.getFreeAgents(leagueId, position, search, limit, offset, leagueMode, league?.activeLeagueSeasonId);
   }
 
   /**
@@ -314,12 +318,15 @@ export class RosterService {
     offset: number = 0
   ): Promise<RosterTransaction[]> {
     // Validate league membership
-    const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
+    const [isMember, league] = await Promise.all([
+      this.leagueRepo.isUserMember(leagueId, userId),
+      this.leagueRepo.findById(leagueId),
+    ]);
     if (!isMember) {
       throw new ForbiddenException('You are not a member of this league');
     }
 
-    return this.transactionsRepo.getByLeague(leagueId, limit, offset);
+    return this.transactionsRepo.getByLeague(leagueId, limit, offset, league?.activeLeagueSeasonId);
   }
 
   /**

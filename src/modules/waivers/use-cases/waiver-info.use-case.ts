@@ -73,7 +73,8 @@ export async function getWaiverWirePlayers(
   ctx: WaiverInfoContext,
   leagueId: number
 ): Promise<WaiverWirePlayerWithDetails[]> {
-  return ctx.waiverWireRepo.getByLeague(leagueId);
+  const league = await ctx.leagueRepo.findById(leagueId);
+  return ctx.waiverWireRepo.getByLeague(leagueId, league?.activeLeagueSeasonId);
 }
 
 /**
@@ -162,7 +163,7 @@ export async function requiresWaiverClaim(
   if (settings.waiverType === 'none') return false;
 
   // If player is on waiver wire, always require claim
-  const isOnWaivers = await ctx.waiverWireRepo.isOnWaivers(leagueId, playerId);
+  const isOnWaivers = await ctx.waiverWireRepo.isOnWaivers(leagueId, playerId, undefined, league?.activeLeagueSeasonId);
   if (isOnWaivers) return true;
 
   // In some leagues, all free agents require waivers - for now, only waiver wire players require claims

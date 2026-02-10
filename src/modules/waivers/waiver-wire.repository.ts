@@ -40,8 +40,15 @@ export class WaiverWireRepository {
   /**
    * Remove player from waiver wire
    */
-  async removePlayer(leagueId: number, playerId: number, client?: PoolClient): Promise<boolean> {
+  async removePlayer(leagueId: number, playerId: number, client?: PoolClient, leagueSeasonId?: number): Promise<boolean> {
     const conn = client || this.db;
+    if (leagueSeasonId) {
+      const result = await conn.query(
+        'DELETE FROM waiver_wire WHERE league_season_id = $1 AND player_id = $2',
+        [leagueSeasonId, playerId]
+      );
+      return (result.rowCount ?? 0) > 0;
+    }
     const result = await conn.query(
       'DELETE FROM waiver_wire WHERE league_id = $1 AND player_id = $2',
       [leagueId, playerId]
@@ -50,10 +57,18 @@ export class WaiverWireRepository {
   }
 
   /**
-   * Check if player is on waiver wire
+   * Check if player is on waiver wire (current season)
    */
-  async isOnWaivers(leagueId: number, playerId: number, client?: PoolClient): Promise<boolean> {
+  async isOnWaivers(leagueId: number, playerId: number, client?: PoolClient, leagueSeasonId?: number): Promise<boolean> {
     const conn = client || this.db;
+    if (leagueSeasonId) {
+      const result = await conn.query(
+        `SELECT 1 FROM waiver_wire
+         WHERE league_season_id = $1 AND player_id = $2 AND waiver_expires_at > NOW()`,
+        [leagueSeasonId, playerId]
+      );
+      return result.rows.length > 0;
+    }
     const result = await conn.query(
       `SELECT 1 FROM waiver_wire
        WHERE league_id = $1 AND player_id = $2 AND waiver_expires_at > NOW()`,
@@ -68,9 +83,17 @@ export class WaiverWireRepository {
   async getPlayerExpiration(
     leagueId: number,
     playerId: number,
-    client?: PoolClient
+    client?: PoolClient,
+    leagueSeasonId?: number
   ): Promise<Date | null> {
     const conn = client || this.db;
+    if (leagueSeasonId) {
+      const result = await conn.query(
+        'SELECT waiver_expires_at FROM waiver_wire WHERE league_season_id = $1 AND player_id = $2',
+        [leagueSeasonId, playerId]
+      );
+      return result.rows.length > 0 ? result.rows[0].waiver_expires_at : null;
+    }
     const result = await conn.query(
       'SELECT waiver_expires_at FROM waiver_wire WHERE league_id = $1 AND player_id = $2',
       [leagueId, playerId]
@@ -79,9 +102,10 @@ export class WaiverWireRepository {
   }
 
   /**
-   * Get all players on waiver wire for a league
+   * Get all players on waiver wire for a league (current season)
    */
-  async getByLeague(leagueId: number): Promise<WaiverWirePlayerWithDetails[]> {
+  async getByLeague(leagueId: number, leagueSeasonId?: number): Promise<WaiverWirePlayerWithDetails[]> {
+    const filter = leagueSeasonId ? 'ww.league_season_id = $1' : 'ww.league_id = $1';
     const result = await this.db.query(
       `SELECT ww.*,
         p.full_name as player_name,
@@ -91,9 +115,9 @@ export class WaiverWireRepository {
       FROM waiver_wire ww
       JOIN players p ON p.id = ww.player_id
       LEFT JOIN rosters r ON r.id = ww.dropped_by_roster_id
-      WHERE ww.league_id = $1 AND ww.waiver_expires_at > NOW()
+      WHERE ${filter} AND ww.waiver_expires_at > NOW()
       ORDER BY ww.waiver_expires_at ASC`,
-      [leagueId]
+      [leagueSeasonId || leagueId]
     );
 
     return result.rows.map((row) => ({

@@ -32,15 +32,16 @@ export class TradesRepository {
     client?: PoolClient,
     notifyLeagueChat?: boolean,
     notifyDm?: boolean,
-    leagueChatMode?: LeagueChatMode
+    leagueChatMode?: LeagueChatMode,
+    leagueSeasonId?: number
   ): Promise<Trade> {
     const conn = client || this.db;
     const result = await conn.query(
       `INSERT INTO trades (
         league_id, proposer_roster_id, recipient_roster_id,
         expires_at, season, week, message, parent_trade_id,
-        notify_league_chat, notify_dm, league_chat_mode
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        notify_league_chat, notify_dm, league_chat_mode, league_season_id
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       RETURNING *`,
       [
         leagueId,
@@ -54,6 +55,7 @@ export class TradesRepository {
         notifyLeagueChat ?? true,
         notifyDm ?? true,
         leagueChatMode ?? 'summary',
+        leagueSeasonId || null,
       ]
     );
     return tradeFromDatabase(result.rows[0]);
@@ -128,15 +130,25 @@ export class TradesRepository {
 
   /**
    * Find trades for a league with optional status filter
+   * @param leagueSeasonId - If provided, scopes to a specific league season
    */
   async findByLeague(
     leagueId: number,
     statuses?: TradeStatus[],
     limit = 50,
-    offset = 0
+    offset = 0,
+    leagueSeasonId?: number
   ): Promise<Trade[]> {
-    let query = 'SELECT * FROM trades WHERE league_id = $1';
-    const params: any[] = [leagueId];
+    let query: string;
+    const params: any[] = [];
+
+    if (leagueSeasonId) {
+      query = 'SELECT * FROM trades WHERE league_season_id = $1';
+      params.push(leagueSeasonId);
+    } else {
+      query = 'SELECT * FROM trades WHERE league_id = $1';
+      params.push(leagueId);
+    }
 
     if (statuses && statuses.length > 0) {
       query += ` AND status = ANY($${params.length + 1})`;
@@ -160,9 +172,13 @@ export class TradesRepository {
     userRosterId: number | undefined,
     statuses?: TradeStatus[],
     limit = 50,
-    offset = 0
+    offset = 0,
+    leagueSeasonId?: number
   ): Promise<TradeWithDetails[]> {
     // Build query for trades with team/user info
+    const seasonFilter = leagueSeasonId
+      ? 't.league_season_id = $1'
+      : 't.league_id = $1';
     let query = `SELECT t.*,
         pr.settings->>'team_name' as proposer_team_name,
         pu.username as proposer_username,
@@ -173,8 +189,8 @@ export class TradesRepository {
       LEFT JOIN users pu ON pu.id = pr.user_id
       JOIN rosters rr ON rr.id = t.recipient_roster_id
       LEFT JOIN users ru ON ru.id = rr.user_id
-      WHERE t.league_id = $1`;
-    const params: any[] = [leagueId];
+      WHERE ${seasonFilter}`;
+    const params: any[] = [leagueSeasonId || leagueId];
 
     if (statuses && statuses.length > 0) {
       query += ` AND t.status = ANY($${params.length + 1})`;

@@ -24,7 +24,10 @@ export async function getTradesForLeague(
   const isMember = await ctx.leagueRepo.isUserMember(leagueId, userId);
   if (!isMember) throw new ForbiddenException('Not a league member');
 
-  const roster = await ctx.rosterRepo.findByLeagueAndUser(leagueId, userId);
+  const [roster, league] = await Promise.all([
+    ctx.rosterRepo.findByLeagueAndUser(leagueId, userId),
+    ctx.leagueRepo.findById(leagueId),
+  ]);
 
   // Use batch fetch method to avoid N+1 queries
   return ctx.tradesRepo.findByLeagueWithDetails(
@@ -32,7 +35,8 @@ export async function getTradesForLeague(
     roster?.id,
     statuses as any[],
     limit,
-    offset
+    offset,
+    league?.activeLeagueSeasonId
   );
 }
 

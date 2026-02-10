@@ -54,10 +54,22 @@ export class RosterPlayersRepository {
   }
 
   /**
-   * Check if a player is on any roster in a league
+   * Check if a player is on any roster in a league (current season)
    */
-  async findOwner(leagueId: number, playerId: number, client?: PoolClient): Promise<number | null> {
+  async findOwner(leagueId: number, playerId: number, client?: PoolClient, leagueSeasonId?: number): Promise<number | null> {
     const db = client || this.db;
+    if (leagueSeasonId) {
+      const result = await db.query(
+        `SELECT rp.roster_id
+         FROM roster_players rp
+         JOIN rosters r ON rp.roster_id = r.id
+         WHERE r.league_season_id = $1 AND rp.player_id = $2`,
+        [leagueSeasonId, playerId]
+      );
+      if (result.rows.length === 0) return null;
+      return result.rows[0].roster_id;
+    }
+    // Fallback: legacy league_id-only scoping
     const result = await db.query(
       `SELECT rp.roster_id
        FROM roster_players rp
@@ -116,7 +128,7 @@ export class RosterPlayersRepository {
   }
 
   /**
-   * Get all free agents in a league (players not on any roster)
+   * Get all free agents in a league (players not on any roster in current season)
    */
   async getFreeAgents(
     leagueId: number,
@@ -124,9 +136,11 @@ export class RosterPlayersRepository {
     search?: string,
     limit: number = 50,
     offset: number = 0,
-    leagueMode?: string
+    leagueMode?: string,
+    leagueSeasonId?: number
   ): Promise<any[]> {
-    const params: any[] = [leagueId, limit, offset];
+    const params: any[] = [leagueSeasonId || leagueId, limit, offset];
+    const rosterFilter = leagueSeasonId ? 'r.league_season_id = $1' : 'r.league_id = $1';
 
     // Use LEFT JOIN ... WHERE IS NULL instead of NOT IN for better performance
     // This avoids a full table scan on the subquery
@@ -157,7 +171,7 @@ export class RosterPlayersRepository {
          SELECT rp.player_id
          FROM roster_players rp
          JOIN rosters r ON rp.roster_id = r.id
-         WHERE r.league_id = $1
+         WHERE ${rosterFilter}
        ) rp ON p.id = rp.player_id
        ${whereClause}
        ORDER BY p.position, p.full_name
@@ -220,8 +234,18 @@ export class RosterPlayersRepository {
    * Returns complete league-wide ownership to avoid ConflictException churn
    * when claims target players owned by rosters that have no claims.
    */
-  async getOwnedPlayerIdsByLeague(leagueId: number, client?: PoolClient): Promise<Set<number>> {
+  async getOwnedPlayerIdsByLeague(leagueId: number, client?: PoolClient, leagueSeasonId?: number): Promise<Set<number>> {
     const db = client || this.db;
+    if (leagueSeasonId) {
+      const result = await db.query(
+        `SELECT rp.player_id
+         FROM roster_players rp
+         JOIN rosters r ON r.id = rp.roster_id
+         WHERE r.league_season_id = $1`,
+        [leagueSeasonId]
+      );
+      return new Set(result.rows.map((row) => row.player_id));
+    }
     const result = await db.query(
       `SELECT rp.player_id
        FROM roster_players rp
@@ -237,13 +261,27 @@ export class RosterTransactionsRepository {
   constructor(private readonly db: Pool) {}
 
   /**
-   * Get transactions for a league
+   * Get transactions for a league (season-scoped when leagueSeasonId provided)
    */
   async getByLeague(
     leagueId: number,
     limit: number = 50,
-    offset: number = 0
+    offset: number = 0,
+    leagueSeasonId?: number
   ): Promise<RosterTransaction[]> {
+    if (leagueSeasonId) {
+      const result = await this.db.query(
+        `SELECT rt.*, p.full_name as player_name, r.settings->>'team_name' as team_name
+         FROM roster_transactions rt
+         JOIN players p ON rt.player_id = p.id
+         JOIN rosters r ON rt.roster_id = r.id
+         WHERE rt.league_season_id = $1
+         ORDER BY rt.created_at DESC
+         LIMIT $2 OFFSET $3`,
+        [leagueSeasonId, limit, offset]
+      );
+      return result.rows.map(rosterTransactionFromDatabase);
+    }
     const result = await this.db.query(
       `SELECT rt.*, p.full_name as player_name, r.settings->>'team_name' as team_name
        FROM roster_transactions rt
@@ -290,9 +328,19 @@ export class RosterTransactionsRepository {
     season: number,
     week: number,
     relatedTransactionId?: number,
-    client?: PoolClient
+    client?: PoolClient,
+    leagueSeasonId?: number
   ): Promise<RosterTransaction> {
     const db = client || this.db;
+    if (leagueSeasonId) {
+      const result = await db.query(
+        `INSERT INTO roster_transactions (league_id, roster_id, player_id, transaction_type, season, week, related_transaction_id, league_season_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING *`,
+        [leagueId, rosterId, playerId, transactionType, season, week, relatedTransactionId || null, leagueSeasonId]
+      );
+      return rosterTransactionFromDatabase(result.rows[0]);
+    }
     const result = await db.query(
       `INSERT INTO roster_transactions (league_id, roster_id, player_id, transaction_type, season, week, related_transaction_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7)

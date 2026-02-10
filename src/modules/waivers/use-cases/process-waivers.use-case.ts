@@ -147,7 +147,7 @@ export async function processLeagueClaims(
 
       // Load COMPLETE league ownership (all rosters, not just those with claims)
       // This prevents ConflictException churn when claims target players owned by rosters without claims
-      const ownedPlayerIds = await ctx.rosterPlayersRepo.getOwnedPlayerIdsByLeague(leagueId, client);
+      const ownedPlayerIds = await ctx.rosterPlayersRepo.getOwnedPlayerIdsByLeague(leagueId, client, league.activeLeagueSeasonId);
 
       // Initialize roster processing states for rosters that have claims
       const rosterStates = await initializeRosterStates(
@@ -264,7 +264,7 @@ export async function processLeagueClaims(
               pendingEvents.push(() => emitClaimSuccessful(ctx, claimCopy));
 
               // Remove player from waiver wire
-              await ctx.waiverWireRepo.removePlayer(leagueId, playerId, client);
+              await ctx.waiverWireRepo.removePlayer(leagueId, playerId, client, league.activeLeagueSeasonId);
 
               // Invalidate pending trades
               if (ctx.tradesRepo) {

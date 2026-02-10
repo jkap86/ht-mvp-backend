@@ -281,7 +281,8 @@ async function proposeTradeCore(
     client,
     effectiveNotifyLeagueChat,
     request.notifyDm,
-    effectiveLeagueChatMode
+    effectiveLeagueChatMode,
+    league.activeLeagueSeasonId
   );
 
   // Create trade items for players

@@ -38,7 +38,8 @@ export class League {
     public readonly leagueSettings: LeagueSettings = {},
     public readonly currentWeek: number = 1,
     public readonly seasonStatus: SeasonStatus = 'pre_season',
-    public readonly isPublic: boolean = false
+    public readonly isPublic: boolean = false,
+    public readonly activeLeagueSeasonId?: number
   ) {}
 
   static fromDatabase(row: any): League {
@@ -58,7 +59,8 @@ export class League {
       row.league_settings || {},
       row.current_week || 1,
       row.season_status || 'pre_season',
-      row.is_public || false
+      row.is_public || false,
+      row.active_league_season_id || undefined
     );
   }
 
