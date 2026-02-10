@@ -55,7 +55,8 @@ export class PlayoffService {
       enableThirdPlaceGame?: boolean;
       consolationType?: ConsolationType;
       consolationTeams?: number;
-    }
+    },
+    idempotencyKey?: string
   ): Promise<PlayoffBracketView> {
     // Validate commissioner
     const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
@@ -116,9 +117,23 @@ export class PlayoffService {
       );
     }
 
-    // Check for existing bracket - block all regeneration
+    // Check for existing bracket
     const existingBracket = await this.playoffRepo.findByLeagueSeason(leagueId, season);
     if (existingBracket) {
+      // Idempotency: if bracket already exists, check if we have a cached result
+      if (idempotencyKey) {
+        const existing = await this.db.query(
+          `SELECT result FROM playoff_operations
+           WHERE idempotency_key = $1 AND user_id = $2 AND operation_type = 'generate'
+           AND expires_at > NOW()`,
+          [idempotencyKey, userId]
+        );
+        if (existing.rows.length > 0) {
+          return existing.rows[0].result;
+        }
+      }
+
+      // No cached result, throw error
       throw new ConflictException(
         'Cannot generate playoffs: bracket already exists for this season. ' +
         'Delete existing bracket before regenerating.'
@@ -274,7 +289,19 @@ export class PlayoffService {
     logger.info(`Generated ${config.playoffTeams}-team playoff bracket for league ${leagueId}`);
 
     // Return full bracket view
-    return this.buildBracketView(bracketId);
+    const bracketView = await this.buildBracketView(bracketId);
+
+    // Store result for idempotency
+    if (idempotencyKey) {
+      await this.db.query(
+        `INSERT INTO playoff_operations (idempotency_key, bracket_id, league_id, user_id, operation_type, result)
+         VALUES ($1, $2, $3, $4, 'generate', $5)
+         ON CONFLICT (idempotency_key, user_id, operation_type) DO NOTHING`,
+        [idempotencyKey, bracketId, leagueId, userId, JSON.stringify(bracketView)]
+      );
+    }
+
+    return bracketView;
   }
 
   /**
@@ -308,8 +335,22 @@ export class PlayoffService {
   async advanceWinners(
     leagueId: number,
     week: number,
-    userId: string
+    userId: string,
+    idempotencyKey?: string
   ): Promise<PlayoffBracketView> {
+    // Idempotency check: return existing result if same key was already used
+    if (idempotencyKey) {
+      const existing = await this.db.query(
+        `SELECT result FROM playoff_operations
+         WHERE idempotency_key = $1 AND user_id = $2 AND operation_type = 'advance'
+         AND expires_at > NOW()`,
+        [idempotencyKey, userId]
+      );
+      if (existing.rows.length > 0) {
+        return existing.rows[0].result;
+      }
+    }
+
     // Validate commissioner
     const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
     if (!isCommissioner) {
@@ -394,7 +435,19 @@ export class PlayoffService {
     // Emit event AFTER transaction
     this.emitWinnersAdvanced(leagueId, week);
 
-    return this.buildBracketView(bracket.id);
+    const bracketView = await this.buildBracketView(bracket.id);
+
+    // Store result for idempotency
+    if (idempotencyKey) {
+      await this.db.query(
+        `INSERT INTO playoff_operations (idempotency_key, bracket_id, league_id, user_id, operation_type, result)
+         VALUES ($1, $2, $3, $4, 'advance', $5)
+         ON CONFLICT (idempotency_key, user_id, operation_type) DO NOTHING`,
+        [idempotencyKey, bracket.id, leagueId, userId, JSON.stringify(bracketView)]
+      );
+    }
+
+    return bracketView;
   }
 
   /**

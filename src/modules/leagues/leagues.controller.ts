@@ -42,6 +42,7 @@ export class LeagueController {
   createLeague = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const userId = requireUserId(req);
+      const idempotencyKey = req.headers['x-idempotency-key'] as string | undefined;
 
       const {
         name,
@@ -67,7 +68,8 @@ export class LeagueController {
           leagueSettings: league_settings,
           draftStructure: draft_structure,
         },
-        userId
+        userId,
+        idempotencyKey
       );
 
       res.status(201).json(league);
@@ -97,12 +99,12 @@ export class LeagueController {
       const leagueId = requireLeagueId(req);
 
       const updates: any = {};
-      if (req.body.name) updates.name = req.body.name;
-      if (req.body.mode) updates.mode = req.body.mode;
-      if (req.body.settings) updates.settings = req.body.settings;
-      if (req.body.league_settings) updates.leagueSettings = req.body.league_settings;
-      if (req.body.scoring_settings) updates.scoringSettings = req.body.scoring_settings;
-      if (req.body.status) updates.status = req.body.status;
+      if (req.body.name !== undefined) updates.name = req.body.name;
+      if (req.body.mode !== undefined) updates.mode = req.body.mode;
+      if (req.body.settings !== undefined) updates.settings = req.body.settings;
+      if (req.body.league_settings !== undefined) updates.leagueSettings = req.body.league_settings;
+      if (req.body.scoring_settings !== undefined) updates.scoringSettings = req.body.scoring_settings;
+      if (req.body.status !== undefined) updates.status = req.body.status;
       if (req.body.is_public !== undefined) updates.isPublic = req.body.is_public;
       if (req.body.total_rosters !== undefined) updates.totalRosters = req.body.total_rosters;
 
@@ -250,6 +252,7 @@ export class LeagueController {
     try {
       const userId = requireUserId(req);
       const leagueId = requireLeagueId(req);
+      const idempotencyKey = req.headers['x-idempotency-key'] as string | undefined;
 
       const { new_season, keep_members, clear_chat, confirmation_name } = req.body;
 
@@ -265,7 +268,8 @@ export class LeagueController {
           keepMembers: keep_members ?? false,
           clearChat: clear_chat ?? true,
           confirmationName: confirmation_name,
-        }
+        },
+        idempotencyKey
       );
 
       res.status(200).json(league);

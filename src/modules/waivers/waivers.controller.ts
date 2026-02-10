@@ -25,12 +25,18 @@ export class WaiversController {
       const leagueId = requireLeagueId(req);
       const userId = requireUserId(req);
       const { player_id, drop_player_id, bid_amount } = req.body;
+      const idempotencyKey = req.headers['x-idempotency-key'] as string | undefined;
 
-      const claim = await this.waiversService.submitClaim(leagueId, userId, {
-        playerId: player_id,
-        dropPlayerId: drop_player_id || null,
-        bidAmount: bid_amount || 0,
-      });
+      const claim = await this.waiversService.submitClaim(
+        leagueId,
+        userId,
+        {
+          playerId: player_id,
+          dropPlayerId: drop_player_id || null,
+          bidAmount: bid_amount || 0,
+        },
+        idempotencyKey
+      );
 
       res.status(201).json(waiverClaimToResponse(claim));
     } catch (error) {

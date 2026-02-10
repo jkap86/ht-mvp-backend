@@ -32,16 +32,17 @@ export class WaiverClaimsRepository {
     season: number,
     week: number,
     claimOrder: number,
-    client?: PoolClient
+    client?: PoolClient,
+    idempotencyKey?: string
   ): Promise<WaiverClaim> {
     const conn = client || this.db;
     const result = await conn.query(
       `INSERT INTO waiver_claims (
         league_id, roster_id, player_id, drop_player_id,
-        bid_amount, priority_at_claim, season, week, claim_order
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        bid_amount, priority_at_claim, season, week, claim_order, idempotency_key
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING *`,
-      [leagueId, rosterId, playerId, dropPlayerId, bidAmount, priorityAtClaim, season, week, claimOrder]
+      [leagueId, rosterId, playerId, dropPlayerId, bidAmount, priorityAtClaim, season, week, claimOrder, idempotencyKey || null]
     );
     return waiverClaimFromDatabase(result.rows[0]);
   }

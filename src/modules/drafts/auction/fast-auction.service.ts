@@ -51,6 +51,16 @@ export interface FastAuctionState {
   budgets: Array<{ rosterId: number; spent: number; remaining: number }>;
 }
 
+/**
+ * LOCK CONTRACT:
+ * - nominate() locks DRAFT(draftId) — serializes nominations
+ * - setMaxBid() locks AUCTION(lotId) — serializes bids per lot
+ * - advanceNominator() locks DRAFT(draftId) — serializes draft state transitions
+ *
+ * No method holds both DRAFT and AUCTION locks simultaneously.
+ * If that ever becomes necessary, acquire AUCTION first (priority 5)
+ * then DRAFT (priority 7), per lock ordering rules in shared/locks.ts.
+ */
 export class FastAuctionService {
   // Throttle map for outbid notifications: key = `${userId}:${lotId}`, value = lastSentTimestamp
   private outbidThrottle = new Map<string, number>();
@@ -133,7 +143,7 @@ export class FastAuctionService {
    * - Only one active lot allowed at a time
    * Uses advisory lock to prevent race conditions with concurrent nominations
    */
-  async nominate(draftId: number, userId: string, playerId: number): Promise<NominationResult> {
+  async nominate(draftId: number, userId: string, playerId: number, idempotencyKey?: string): Promise<NominationResult> {
     // Get draft and validate
     const draft = await this.draftRepo.findById(draftId);
     if (!draft) {
@@ -166,6 +176,20 @@ export class FastAuctionService {
       LockDomain.DRAFT,
       draftId,
       async (client) => {
+        // Idempotency check: return existing lot if same key was already used
+        if (idempotencyKey) {
+          const existing = await client.query(
+            `SELECT id FROM auction_lots WHERE draft_id = $1 AND nominator_roster_id = $2 AND idempotency_key = $3`,
+            [draftId, roster.id, idempotencyKey]
+          );
+          if (existing.rows.length > 0) {
+            const lotResult = await client.query('SELECT * FROM auction_lots WHERE id = $1', [existing.rows[0].id]);
+            if (lotResult.rows.length > 0) {
+              return { lot: auctionLotFromDatabase(lotResult.rows[0]), playerName: '' };
+            }
+          }
+        }
+
         // Check no active lot exists (inside lock)
         const hasActive = await this.lotRepo.hasActiveLotWithClient(client, draftId);
         if (hasActive) {
@@ -234,7 +258,9 @@ export class FastAuctionService {
           playerId,
           roster.id,
           bidDeadline,
-          settings.minBid
+          settings.minBid,
+          undefined,
+          idempotencyKey
         );
 
         // Fast auction: Nominator becomes the leader at startingBid
@@ -271,7 +297,8 @@ export class FastAuctionService {
     draftId: number,
     userId: string,
     lotId: number,
-    maxBid: number
+    maxBid: number,
+    idempotencyKey?: string
   ): Promise<SetMaxBidResult> {
     // Get draft and validate fast auction mode
     const draft = await this.draftRepo.findById(draftId);
@@ -297,6 +324,18 @@ export class FastAuctionService {
       LockDomain.AUCTION,
       lotId,
       async (client) => {
+        // Idempotency check: return existing result if same key was already used
+        if (idempotencyKey) {
+          const existing = await client.query(
+            `SELECT id FROM auction_bid_history WHERE lot_id = $1 AND roster_id = $2 AND idempotency_key = $3`,
+            [lotId, roster.id, idempotencyKey]
+          );
+          if (existing.rows.length > 0) {
+            const currentLotResult = await client.query('SELECT * FROM auction_lots WHERE id = $1', [lotId]);
+            const currentLot = auctionLotFromDatabase(currentLotResult.rows[0]);
+            return { finalLot: currentLot, outbidNotifications: [], playerId: currentLot.playerId };
+          }
+        }
 
         // Get lot with lock
         const lotResult = await client.query('SELECT * FROM auction_lots WHERE id = $1 FOR UPDATE', [
@@ -369,6 +408,15 @@ export class FastAuctionService {
            DO UPDATE SET max_bid = EXCLUDED.max_bid, updated_at = CURRENT_TIMESTAMP`,
           [lotId, roster.id, maxBid]
         );
+
+        // Record bid in history (with idempotency key for replay detection)
+        if (idempotencyKey) {
+          await client.query(
+            `INSERT INTO auction_bid_history (lot_id, roster_id, bid_amount, is_proxy, idempotency_key)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [lotId, roster.id, maxBid, true, idempotencyKey]
+          );
+        }
 
         // Resolve price using shared utility
         const result = await resolvePriceWithClient(client, lot, settings);

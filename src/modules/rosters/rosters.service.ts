@@ -11,6 +11,7 @@ import {
   ForbiddenException,
   ValidationException,
 } from '../../utils/exceptions';
+import { getMaxRosterSize } from '../../shared/roster-defaults';
 
 export class RosterService {
   constructor(
@@ -336,7 +337,7 @@ export class RosterService {
     if (!league) return true;
 
     const rosterSize = await this.rosterPlayersRepo.getPlayerCount(rosterId);
-    const maxRosterSize = league.settings?.roster_size || 15;
+    const maxRosterSize = getMaxRosterSize(league.settings);
 
     return rosterSize >= maxRosterSize;
   }

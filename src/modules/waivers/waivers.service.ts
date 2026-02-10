@@ -68,7 +68,8 @@ export class WaiversService {
   async submitClaim(
     leagueId: number,
     userId: string,
-    request: SubmitClaimRequest
+    request: SubmitClaimRequest,
+    idempotencyKey?: string
   ): Promise<WaiverClaimWithDetails> {
     return submitClaimUseCase(
       {
@@ -82,7 +83,8 @@ export class WaiversService {
       },
       leagueId,
       userId,
-      request
+      request,
+      idempotencyKey
     );
   }
 

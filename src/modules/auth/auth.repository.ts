@@ -5,7 +5,7 @@ export class UserRepository {
   constructor(private readonly db: Pool) {}
 
   async findByUsername(username: string): Promise<User | null> {
-    const result = await this.db.query('SELECT * FROM users WHERE username = $1', [username]);
+    const result = await this.db.query('SELECT * FROM users WHERE LOWER(username) = LOWER($1)', [username]);
 
     if (result.rows.length === 0) {
       return null;
@@ -36,7 +36,7 @@ export class UserRepository {
   }
 
   async emailExists(email: string): Promise<boolean> {
-    const result = await this.db.query('SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)', [
+    const result = await this.db.query('SELECT EXISTS(SELECT 1 FROM users WHERE LOWER(email) = LOWER($1))', [
       email,
     ]);
 
@@ -44,7 +44,7 @@ export class UserRepository {
   }
 
   async usernameExists(username: string): Promise<boolean> {
-    const result = await this.db.query('SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)', [
+    const result = await this.db.query('SELECT EXISTS(SELECT 1 FROM users WHERE LOWER(username) = LOWER($1))', [
       username,
     ]);
 

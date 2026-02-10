@@ -22,6 +22,10 @@ import { startSlowAuctionJob, stopSlowAuctionJob } from './jobs/slow-auction.job
 import { startTradeExpirationJob, stopTradeExpirationJob } from './jobs/trade-expiration.job';
 import { startWaiverProcessingJob, stopWaiverProcessingJob } from './jobs/waiver-processing.job';
 import { startStatsSyncJob, stopStatsSyncJob } from './jobs/stats-sync.job';
+import { startIdempotencyCleanupJob, stopIdempotencyCleanupJob } from './jobs/idempotency-cleanup.job';
+import { idempotencyMiddleware } from './middleware/idempotency.middleware';
+import { Pool } from 'pg';
+import { container, KEYS } from './container';
 
 const app = express();
 
@@ -51,7 +55,7 @@ const corsOptions: cors.CorsOptions = {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-idempotency-key'],
 };
 
 // Middleware
@@ -68,6 +72,7 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '50kb' })); // Limit payload size to prevent DoS
 app.use(requestIdMiddleware); // Add request ID for distributed tracing
 app.use(requestTimingMiddleware);
+app.use(idempotencyMiddleware(container.resolve<Pool>(KEYS.POOL)));
 
 // Routes
 app.use('/api', routes);
@@ -96,6 +101,7 @@ server.listen(PORT, '0.0.0.0', () => {
     startWaiverProcessingJob();
     startPlayerSyncJob(true); // Sync players from Sleeper on startup, then every 12h
     startStatsSyncJob(true); // Sync stats from Sleeper on startup, then dynamically
+    startIdempotencyCleanupJob();
   } else {
     logger.info('Background jobs disabled', { reason: 'RUN_JOBS=false' });
   }
@@ -113,6 +119,7 @@ const gracefulShutdown = () => {
   stopWaiverProcessingJob();
   stopPlayerSyncJob();
   stopStatsSyncJob();
+  stopIdempotencyCleanupJob();
 
   server.close(async () => {
     logger.info('HTTP server closed');

@@ -49,7 +49,20 @@ export class DraftOrderService {
     return this.draftRepo.getDraftOrder(draftId);
   }
 
-  async randomizeDraftOrder(leagueId: number, draftId: number, userId: string): Promise<any[]> {
+  async randomizeDraftOrder(leagueId: number, draftId: number, userId: string, idempotencyKey?: string): Promise<any[]> {
+    // Idempotency check: return existing result if same key was already used
+    if (idempotencyKey) {
+      const existing = await this.db.query(
+        `SELECT result FROM draft_operations
+         WHERE idempotency_key = $1 AND user_id = $2 AND operation_type = 'randomize'
+         AND expires_at > NOW()`,
+        [idempotencyKey, userId]
+      );
+      if (existing.rows.length > 0) {
+        return existing.rows[0].result;
+      }
+    }
+
     const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
     if (!isCommissioner) {
       throw new ForbiddenException('Only the commissioner can randomize draft order');
@@ -112,6 +125,16 @@ export class DraftOrderService {
       },
     });
 
+    // Store result for idempotency
+    if (idempotencyKey) {
+      await this.db.query(
+        `INSERT INTO draft_operations (idempotency_key, draft_id, user_id, operation_type, result)
+         VALUES ($1, $2, $3, 'randomize', $4)
+         ON CONFLICT (idempotency_key, user_id, operation_type) DO NOTHING`,
+        [idempotencyKey, draftId, userId, JSON.stringify(finalOrder)]
+      );
+    }
+
     return finalOrder;
   }
 
@@ -119,7 +142,20 @@ export class DraftOrderService {
    * Confirm the draft order without randomizing.
    * Commissioner can use this to confirm a manually arranged order.
    */
-  async confirmDraftOrder(leagueId: number, draftId: number, userId: string): Promise<any[]> {
+  async confirmDraftOrder(leagueId: number, draftId: number, userId: string, idempotencyKey?: string): Promise<any[]> {
+    // Idempotency check: return existing result if same key was already used
+    if (idempotencyKey) {
+      const existing = await this.db.query(
+        `SELECT result FROM draft_operations
+         WHERE idempotency_key = $1 AND user_id = $2 AND operation_type = 'confirm'
+         AND expires_at > NOW()`,
+        [idempotencyKey, userId]
+      );
+      if (existing.rows.length > 0) {
+        return existing.rows[0].result;
+      }
+    }
+
     const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
     if (!isCommissioner) {
       throw new ForbiddenException('Only the commissioner can confirm draft order');
@@ -131,7 +167,9 @@ export class DraftOrderService {
     }
 
     if (draft.orderConfirmed) {
-      throw new ValidationException('Draft order is already confirmed');
+      // Already confirmed - this is idempotent, return current order
+      const draftOrder = await this.draftRepo.getDraftOrder(draftId);
+      return draftOrder;
     }
 
     // Verify draft order exists and is valid
@@ -158,6 +196,16 @@ export class DraftOrderService {
         draft_order: draftOrder,
       },
     });
+
+    // Store result for idempotency
+    if (idempotencyKey) {
+      await this.db.query(
+        `INSERT INTO draft_operations (idempotency_key, draft_id, user_id, operation_type, result)
+         VALUES ($1, $2, $3, 'confirm', $4)
+         ON CONFLICT (idempotency_key, user_id, operation_type) DO NOTHING`,
+        [idempotencyKey, draftId, userId, JSON.stringify(draftOrder)]
+      );
+    }
 
     return draftOrder;
   }

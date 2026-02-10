@@ -232,7 +232,7 @@ export class SlowAuctionService {
 
   // NOMINATE: Create a new lot for a player
   // Uses transaction with roster + draft locks to prevent race conditions on limit checks
-  async nominate(draftId: number, rosterId: number, playerId: number): Promise<NominationResult> {
+  async nominate(draftId: number, rosterId: number, playerId: number, idempotencyKey?: string): Promise<NominationResult> {
     // 1. Basic validation (can stay outside transaction - read-only, fast-fail)
     const draft = await this.draftRepo.findById(draftId);
     if (!draft) throw new NotFoundException('Draft not found');
@@ -271,6 +271,20 @@ export class SlowAuctionService {
           { domain: LockDomain.DRAFT, id: draftId },
         ],
         async (client) => {
+          // Idempotency check: return existing lot if same key was already used
+          if (idempotencyKey) {
+            const existingByKey = await client.query(
+              `SELECT id FROM auction_lots WHERE draft_id = $1 AND nominator_roster_id = $2 AND idempotency_key = $3`,
+              [draftId, rosterId, idempotencyKey]
+            );
+            if (existingByKey.rows.length > 0) {
+              const lotResult = await client.query('SELECT * FROM auction_lots WHERE id = $1', [existingByKey.rows[0].id]);
+              if (lotResult.rows.length > 0) {
+                return { lot: auctionLotFromDatabase(lotResult.rows[0]), message: 'Player nominated successfully' };
+              }
+            }
+          }
+
           // 4. Check roster has remaining slots (re-check under lock)
           const budgetData = await getRosterBudgetDataWithClient(client, draftId, rosterId);
           if (budgetData.wonCount >= rosterSlots) {
@@ -324,7 +338,9 @@ export class SlowAuctionService {
             playerId,
             rosterId,
             bidDeadline,
-            settings.minBid
+            settings.minBid,
+            undefined,
+            idempotencyKey
           );
 
           return { lot, message: 'Player nominated successfully' };
@@ -344,12 +360,43 @@ export class SlowAuctionService {
     draftId: number,
     lotId: number,
     rosterId: number,
-    maxBid: number
+    maxBid: number,
+    idempotencyKey?: string
   ): Promise<SetMaxBidResult> {
     return runInTransaction(this.pool, async (client) => {
       // 0. Acquire roster-level lock to prevent cross-lot race conditions
       // Use modern LockDomain for consistency with fast auction
       await client.query('SELECT pg_advisory_xact_lock($1)', [getLockId(SharedLockDomain.ROSTER, rosterId)]);
+
+      // Idempotency check: return existing result if same key was already used
+      if (idempotencyKey) {
+        const existing = await client.query(
+          `SELECT id FROM auction_bid_history WHERE lot_id = $1 AND roster_id = $2 AND idempotency_key = $3`,
+          [lotId, rosterId, idempotencyKey]
+        );
+        if (existing.rows.length > 0) {
+          const currentLotResult = await client.query('SELECT * FROM auction_lots WHERE id = $1', [lotId]);
+          const currentLot = auctionLotFromDatabase(currentLotResult.rows[0]);
+          const proxyBidResult = await client.query(
+            'SELECT * FROM auction_proxy_bids WHERE lot_id = $1 AND roster_id = $2',
+            [lotId, rosterId]
+          );
+          const proxyBid: AuctionProxyBid = {
+            id: proxyBidResult.rows[0].id,
+            lotId: proxyBidResult.rows[0].lot_id,
+            rosterId: proxyBidResult.rows[0].roster_id,
+            maxBid: proxyBidResult.rows[0].max_bid,
+            createdAt: proxyBidResult.rows[0].created_at,
+            updatedAt: proxyBidResult.rows[0].updated_at,
+          };
+          return {
+            proxyBid,
+            lot: currentLot,
+            outbidNotifications: [],
+            message: 'Max bid set successfully',
+          };
+        }
+      }
 
       // 1. Lock the lot row and validate it exists and is active
       const lotResult = await client.query('SELECT * FROM auction_lots WHERE id = $1 FOR UPDATE', [
@@ -372,7 +419,7 @@ export class SlowAuctionService {
       if (!draft) {
         throw new NotFoundException('Draft not found');
       }
-      const league = await this.leagueRepo.findById(draft.leagueId);
+      const league = await this.leagueRepo.findById(draft.leagueId, client);
       if (!league) {
         throw new NotFoundException('League not found');
       }
@@ -442,9 +489,9 @@ export class SlowAuctionService {
       // 5b. Always record bid history on every proxy submission
       // This ensures users see their bid activity even if it doesn't change the visible price
       await client.query(
-        `INSERT INTO auction_bid_history (lot_id, roster_id, bid_amount, is_proxy)
-         VALUES ($1, $2, $3, $4)`,
-        [lotId, rosterId, maxBid, true]
+        `INSERT INTO auction_bid_history (lot_id, roster_id, bid_amount, is_proxy, idempotency_key)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [lotId, rosterId, maxBid, true, idempotencyKey ?? null]
       );
 
       // 6. Resolve price within transaction (don't pass deadline - we'll handle timer reset)
@@ -581,7 +628,7 @@ export class SlowAuctionService {
       if (!draft) {
         throw new NotFoundException('Draft not found');
       }
-      const league = await this.leagueRepo.findById(draft.leagueId);
+      const league = await this.leagueRepo.findById(draft.leagueId, client);
       if (!league) {
         throw new NotFoundException('League not found');
       }

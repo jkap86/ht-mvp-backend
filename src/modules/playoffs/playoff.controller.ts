@@ -24,6 +24,7 @@ export class PlayoffController {
     try {
       const userId = requireUserId(req);
       const leagueId = requireLeagueId(req);
+      const idempotencyKey = req.headers['x-idempotency-key'] as string | undefined;
 
       const {
         playoff_teams,
@@ -69,14 +70,19 @@ export class PlayoffController {
         }
       }
 
-      const bracketView = await this.playoffService.generatePlayoffBracket(leagueId, userId, {
-        playoffTeams,
-        startWeek,
-        weeksByRound,
-        enableThirdPlaceGame: enable_third_place_game === true,
-        consolationType: consolation_type ?? 'NONE',
-        consolationTeams: consolationTeamsNum,
-      });
+      const bracketView = await this.playoffService.generatePlayoffBracket(
+        leagueId,
+        userId,
+        {
+          playoffTeams,
+          startWeek,
+          weeksByRound,
+          enableThirdPlaceGame: enable_third_place_game === true,
+          consolationType: consolation_type ?? 'NONE',
+          consolationTeams: consolationTeamsNum,
+        },
+        idempotencyKey
+      );
 
       res.status(201).json(playoffBracketViewToResponse(bracketView));
     } catch (error) {
@@ -127,6 +133,7 @@ export class PlayoffController {
     try {
       const userId = requireUserId(req);
       const leagueId = requireLeagueId(req);
+      const idempotencyKey = req.headers['x-idempotency-key'] as string | undefined;
 
       const { week } = req.body;
 
@@ -139,7 +146,12 @@ export class PlayoffController {
         throw new ValidationException('week must be a number');
       }
 
-      const bracketView = await this.playoffService.advanceWinners(leagueId, weekNum, userId);
+      const bracketView = await this.playoffService.advanceWinners(
+        leagueId,
+        weekNum,
+        userId,
+        idempotencyKey
+      );
 
       res.status(200).json(playoffBracketViewToResponse(bracketView));
     } catch (error) {

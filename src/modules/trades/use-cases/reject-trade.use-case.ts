@@ -43,9 +43,17 @@ export async function rejectTrade(
   await runWithLock(ctx.db, LockDomain.TRADE, trade.leagueId, async (client) => {
     // Re-verify status after acquiring lock (another transaction may have changed it)
     const currentTrade = await ctx.tradesRepo.findById(tradeId, client);
-    if (!currentTrade || currentTrade.status !== 'pending') {
+    if (!currentTrade) {
+      throw new NotFoundException('Trade not found');
+    }
+    // If already rejected, silently succeed (idempotent retry)
+    if (currentTrade.status === 'rejected') {
+      return; // Exit early, status is already correct
+    }
+    // If in another state, cannot reject
+    if (currentTrade.status !== 'pending') {
       throw new ValidationException(
-        `Cannot reject trade with status: ${currentTrade?.status || 'unknown'}`
+        `Cannot reject trade with status: ${currentTrade.status}`
       );
     }
 

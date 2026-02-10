@@ -3,6 +3,7 @@ import { RosterPlayersRepository } from './rosters.repository';
 import { LeagueRepository } from '../leagues/leagues.repository';
 import { RosterPlayer, AcquiredType } from './rosters.model';
 import { ValidationException, ConflictException, NotFoundException } from '../../utils/exceptions';
+import { getMaxRosterSize } from '../../shared/roster-defaults';
 
 /**
  * Options for skipping validation checks.
@@ -91,13 +92,13 @@ export class RosterMutationService {
 
     // Check roster size unless skipped (e.g., two-pass trades)
     if (!options.skipRosterSizeCheck) {
-      const league = await this.leagueRepo.findById(leagueId);
+      const league = await this.leagueRepo.findById(leagueId, client);
       if (!league) {
         throw new NotFoundException('League not found');
       }
 
       const rosterSize = await this.rosterPlayersRepo.getPlayerCount(rosterId, client);
-      const maxRosterSize = league.settings?.roster_size || 15;
+      const maxRosterSize = getMaxRosterSize(league.settings);
 
       if (rosterSize >= maxRosterSize) {
         throw new ValidationException(`Roster is full (${maxRosterSize} players max)`);
@@ -200,12 +201,12 @@ export class RosterMutationService {
   async bulkAddPlayers(params: BulkAddParams, client?: PoolClient): Promise<RosterPlayer[]> {
     const { leagueId, additions } = params;
 
-    const league = await this.leagueRepo.findById(leagueId);
+    const league = await this.leagueRepo.findById(leagueId, client);
     if (!league) {
       throw new NotFoundException('League not found');
     }
 
-    const maxRosterSize = league.settings?.roster_size || 15;
+    const maxRosterSize = getMaxRosterSize(league.settings);
     const results: RosterPlayer[] = [];
 
     for (const { rosterId, playerId, acquiredType } of additions) {

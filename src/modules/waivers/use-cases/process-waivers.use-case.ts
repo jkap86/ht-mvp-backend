@@ -12,6 +12,7 @@ import { RosterMutationService } from '../../rosters/roster-mutation.service';
 import { TradesRepository } from '../../trades/trades.repository';
 import { EventTypes, tryGetEventBus } from '../../../shared/events';
 import { container, KEYS } from '../../../container';
+import { getMaxRosterSize } from '../../../shared/roster-defaults';
 import {
   WaiverClaim,
   WaiverType,
@@ -84,7 +85,7 @@ export async function processLeagueClaims(
     return { processed: 0, successful: 0 };
   }
 
-  const maxRosterSize = league.settings?.roster_size || 15;
+  const maxRosterSize = getMaxRosterSize(league.settings);
 
   // Collect events to emit AFTER commit to prevent UI desync on rollback
   const pendingEvents: Array<() => void | Promise<void>> = [];

@@ -24,7 +24,8 @@ import {
   ValidationException,
   BadRequestException,
 } from '../../utils/exceptions';
-import { runInTransaction } from '../../shared/transaction-runner';
+import { runInTransaction, runWithLocks } from '../../shared/transaction-runner';
+import { LockDomain } from '../../shared/locks';
 
 /**
  * Core matchup service handling CRUD operations, detail fetching, and scoring updates.
@@ -335,8 +336,11 @@ export class MatchupService {
     const useLeagueMedian = league.leagueSettings?.useLeagueMedian === true;
     const isPlayoffWeek = matchups.some((m) => m.isPlayoff);
 
-    // Update matchup scores and finalize
-    await runInTransaction(this.db, async (client) => {
+    // Extract all roster IDs and acquire LINEUP locks to prevent concurrent edits
+    const rosterIds = matchups.flatMap((m) => [m.roster1Id, m.roster2Id]);
+
+    // Update matchup scores and finalize with LINEUP locks
+    await runWithLocks(this.db, LockDomain.LINEUP, rosterIds, async (client) => {
       for (const matchup of matchups) {
         const lineup1 = lineupMap.get(matchup.roster1Id);
         const lineup2 = lineupMap.get(matchup.roster2Id);

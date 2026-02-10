@@ -212,6 +212,12 @@ export class MatchupsController {
         throw new ValidationException('Week must be a positive integer');
       }
 
+      // Only commissioners can manually trigger score calculation
+      const isCommissioner = await this.leagueService.isCommissioner(leagueId, userId);
+      if (!isCommissioner) {
+        throw new ForbiddenException('Only commissioners can manually calculate scores');
+      }
+
       await this.scoringService.calculateWeeklyScores(leagueId, weekNum, userId);
       res.json({ success: true, message: `Scores calculated for week ${weekNum}` });
     } catch (error) {

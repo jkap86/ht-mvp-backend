@@ -334,12 +334,12 @@ export class DraftService {
     return this.orderService.getDraftOrder(leagueId, draftId, userId);
   }
 
-  async randomizeDraftOrder(leagueId: number, draftId: number, userId: string): Promise<any[]> {
-    return this.orderService.randomizeDraftOrder(leagueId, draftId, userId);
+  async randomizeDraftOrder(leagueId: number, draftId: number, userId: string, idempotencyKey?: string): Promise<any[]> {
+    return this.orderService.randomizeDraftOrder(leagueId, draftId, userId, idempotencyKey);
   }
 
-  async confirmDraftOrder(leagueId: number, draftId: number, userId: string): Promise<any[]> {
-    return this.orderService.confirmDraftOrder(leagueId, draftId, userId);
+  async confirmDraftOrder(leagueId: number, draftId: number, userId: string, idempotencyKey?: string): Promise<any[]> {
+    return this.orderService.confirmDraftOrder(leagueId, draftId, userId, idempotencyKey);
   }
 
   async setOrderFromPickOwnership(
@@ -351,8 +351,8 @@ export class DraftService {
   }
 
   // Delegate to state service
-  async startDraft(draftId: number, userId: string): Promise<any> {
-    return this.stateService.startDraft(draftId, userId);
+  async startDraft(draftId: number, userId: string, idempotencyKey?: string): Promise<any> {
+    return this.stateService.startDraft(draftId, userId, idempotencyKey);
   }
 
   async pauseDraft(draftId: number, userId: string): Promise<any> {

@@ -71,9 +71,17 @@ export async function acceptTrade(
     async (client) => {
       // Re-verify status after acquiring lock (another transaction may have changed it)
       const currentTrade = await ctx.tradesRepo.findById(tradeId, client);
-      if (!currentTrade || currentTrade.status !== 'pending') {
+      if (!currentTrade) {
+        throw new NotFoundException('Trade not found');
+      }
+      // If already accepted, return current state (idempotent retry)
+      if (currentTrade.status === 'accepted') {
+        return { trade: currentTrade, league, pickTradedEvents: [] };
+      }
+      // If in another state, cannot accept
+      if (currentTrade.status !== 'pending') {
         throw new ValidationException(
-          `Cannot accept trade with status: ${currentTrade?.status || 'unknown'}`
+          `Cannot accept trade with status: ${currentTrade.status}`
         );
       }
 

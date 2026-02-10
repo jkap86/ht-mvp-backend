@@ -18,6 +18,7 @@ import {
   ConflictException,
 } from '../../../utils/exceptions';
 import { runWithLock, LockDomain } from '../../../shared/transaction-runner';
+import { getMaxRosterSize } from '../../../shared/roster-defaults';
 import { batchValidateRosterPlayers } from '../../../shared/batch-queries';
 import { League } from '../../leagues/leagues.model';
 import { Roster } from '../../leagues/leagues.model';
@@ -381,7 +382,7 @@ async function validateRosterSizes(
 ): Promise<void> {
   const netChangeProposer = request.requestingPlayerIds.length - request.offeringPlayerIds.length;
   const netChangeRecipient = request.offeringPlayerIds.length - request.requestingPlayerIds.length;
-  const maxRosterSize = league.settings?.roster_size || 15;
+  const maxRosterSize = getMaxRosterSize(league.settings);
 
   if (netChangeProposer > 0) {
     const proposerSize = await ctx.rosterPlayersRepo.getPlayerCount(proposerRosterId, client);

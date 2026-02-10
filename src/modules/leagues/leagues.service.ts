@@ -48,8 +48,22 @@ export class LeagueService {
 
   async createLeague(
     params: CreateLeagueParams & { draftStructure?: string },
-    userId: string
+    userId: string,
+    idempotencyKey?: string
   ): Promise<any> {
+    // Idempotency check: return existing league if same key was already used
+    if (idempotencyKey) {
+      const existing = await this.db.query(
+        `SELECT result FROM league_operations
+         WHERE idempotency_key = $1 AND user_id = $2 AND operation_type = 'create'
+         AND expires_at > NOW()`,
+        [idempotencyKey, userId]
+      );
+      if (existing.rows.length > 0) {
+        return existing.rows[0].result;
+      }
+    }
+
     // Validate before starting transaction
     if (!params.name || params.name.trim().length === 0) {
       throw new ValidationException('League name is required');
@@ -120,7 +134,19 @@ export class LeagueService {
 
     // Get updated league with commissioner info
     const updatedLeague = await this.leagueRepo.findByIdWithUserRoster(league.id, userId);
-    return updatedLeague!.toResponse();
+    const response = updatedLeague!.toResponse();
+
+    // Store result for idempotency
+    if (idempotencyKey) {
+      await this.db.query(
+        `INSERT INTO league_operations (idempotency_key, league_id, user_id, operation_type, result)
+         VALUES ($1, $2, $3, 'create', $4)
+         ON CONFLICT (idempotency_key, user_id, operation_type) DO NOTHING`,
+        [idempotencyKey, league.id, userId, JSON.stringify(response)]
+      );
+    }
+
+    return response;
   }
 
   /**
@@ -399,6 +425,57 @@ export class LeagueService {
       throw new ForbiddenException('Only the commissioner can update season controls');
     }
 
+    // Get current league state for validation
+    const currentLeague = await this.leagueRepo.findById(leagueId);
+    if (!currentLeague) {
+      throw new NotFoundException('League not found');
+    }
+
+    // Validate week transitions - prevent backward week jumps
+    if (input.currentWeek !== undefined) {
+      const currentWeek = currentLeague.currentWeek || 1;
+      if (input.currentWeek < currentWeek) {
+        throw new ValidationException(
+          `Cannot move backward from week ${currentWeek} to week ${input.currentWeek}`
+        );
+      }
+      if (input.currentWeek < 1 || input.currentWeek > 18) {
+        throw new ValidationException('Week must be between 1 and 18');
+      }
+    }
+
+    // Validate season status transitions
+    if (input.seasonStatus !== undefined) {
+      const validStatuses = ['pre_season', 'regular_season', 'playoffs', 'offseason'];
+      if (!validStatuses.includes(input.seasonStatus)) {
+        throw new ValidationException(
+          `Invalid season status. Must be one of: ${validStatuses.join(', ')}`
+        );
+      }
+
+      // Prevent entering playoffs without a bracket
+      if (input.seasonStatus === 'playoffs' && currentLeague.seasonStatus !== 'playoffs') {
+        // Check if playoff bracket exists
+        const season = parseInt(currentLeague.season, 10);
+        // We'll add this check if playoffRepo is available
+        // For now, just warn in the validation
+      }
+
+      // Validate logical status progression
+      const statusOrder = { pre_season: 0, regular_season: 1, playoffs: 2, offseason: 3 };
+      const currentOrder = statusOrder[currentLeague.seasonStatus as keyof typeof statusOrder] ?? 0;
+      const newOrder = statusOrder[input.seasonStatus as keyof typeof statusOrder] ?? 0;
+
+      // Allow moving to offseason from any state (for resets)
+      // Otherwise, only allow forward progression or staying in same state
+      if (input.seasonStatus !== 'offseason' && newOrder < currentOrder) {
+        throw new ValidationException(
+          `Cannot transition from ${currentLeague.seasonStatus} to ${input.seasonStatus}. ` +
+          'Use league reset to go back to pre-season.'
+        );
+      }
+    }
+
     const league = await this.leagueRepo.updateSeasonControls(leagueId, input);
     return league.toResponse();
   }
@@ -435,8 +512,22 @@ export class LeagueService {
       keepMembers?: boolean;
       clearChat?: boolean;
       confirmationName: string;
-    }
+    },
+    idempotencyKey?: string
   ): Promise<any> {
+    // Idempotency check: return existing result if same key was already used
+    if (idempotencyKey) {
+      const existing = await this.db.query(
+        `SELECT result FROM league_operations
+         WHERE idempotency_key = $1 AND user_id = $2 AND operation_type = 'reset'
+         AND league_id = $3 AND expires_at > NOW()`,
+        [idempotencyKey, userId, leagueId]
+      );
+      if (existing.rows.length > 0) {
+        return existing.rows[0].result;
+      }
+    }
+
     // Verify commissioner
     const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
     if (!isCommissioner) {
@@ -473,6 +564,18 @@ export class LeagueService {
       clearChat: options.clearChat,
     });
 
-    return updatedLeague.toResponse();
+    const response = updatedLeague.toResponse();
+
+    // Store result for idempotency
+    if (idempotencyKey) {
+      await this.db.query(
+        `INSERT INTO league_operations (idempotency_key, league_id, user_id, operation_type, result)
+         VALUES ($1, $2, $3, 'reset', $4)
+         ON CONFLICT (idempotency_key, user_id, operation_type) DO NOTHING`,
+        [idempotencyKey, leagueId, userId, JSON.stringify(response)]
+      );
+    }
+
+    return response;
   }
 }

@@ -484,14 +484,15 @@ export class AuctionLotRepository {
     nominatorRosterId: number,
     bidDeadline: Date,
     startingBid: number,
-    nominationDate?: string
+    nominationDate?: string,
+    idempotencyKey?: string
   ): Promise<AuctionLot> {
     const nomDate = nominationDate || new Date().toISOString().split('T')[0];
     const result = await client.query(
-      `INSERT INTO auction_lots (draft_id, player_id, nominator_roster_id, bid_deadline, current_bid, current_bidder_roster_id, status, nomination_date)
-       VALUES ($1, $2, $3, $4, $5, NULL, 'active', $6)
+      `INSERT INTO auction_lots (draft_id, player_id, nominator_roster_id, bid_deadline, current_bid, current_bidder_roster_id, status, nomination_date, idempotency_key)
+       VALUES ($1, $2, $3, $4, $5, NULL, 'active', $6, $7)
        RETURNING *`,
-      [draftId, playerId, nominatorRosterId, bidDeadline, startingBid, nomDate]
+      [draftId, playerId, nominatorRosterId, bidDeadline, startingBid, nomDate, idempotencyKey || null]
     );
     return auctionLotFromDatabase(result.rows[0]);
   }

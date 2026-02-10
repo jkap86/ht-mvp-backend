@@ -38,8 +38,12 @@ export class AuthService {
   constructor(private readonly userRepository: UserRepository) {}
 
   async register(username: string, email: string, password: string): Promise<AuthResult> {
+    // Normalize email and username for consistent storage and uniqueness checks
+    const normalizedEmail = email.toLowerCase().trim();
+    const normalizedUsername = username.toLowerCase().trim();
+
     // Validate username format
-    if (!User.isValidUsername(username)) {
+    if (!User.isValidUsername(normalizedUsername)) {
       throw new ValidationException(
         'Username must be 3-20 characters and contain only letters, numbers, and underscores'
       );
@@ -52,14 +56,14 @@ export class AuthService {
       );
     }
 
-    // Check if username already exists
-    const usernameExists = await this.userRepository.usernameExists(username);
+    // Check if username already exists (using normalized form)
+    const usernameExists = await this.userRepository.usernameExists(normalizedUsername);
     if (usernameExists) {
       throw new ConflictException('Username already taken');
     }
 
-    // Check if email already exists
-    const emailExists = await this.userRepository.emailExists(email);
+    // Check if email already exists (using normalized form)
+    const emailExists = await this.userRepository.emailExists(normalizedEmail);
     if (emailExists) {
       throw new ConflictException('Email already in use');
     }
@@ -67,8 +71,8 @@ export class AuthService {
     // Hash password
     const passwordHash = await bcrypt.hash(password, 10);
 
-    // Create user
-    const user = await this.userRepository.create(username, email, passwordHash);
+    // Create user with normalized values
+    const user = await this.userRepository.create(normalizedUsername, normalizedEmail, passwordHash);
 
     // Generate tokens
     const accessToken = this.generateAccessToken(user);

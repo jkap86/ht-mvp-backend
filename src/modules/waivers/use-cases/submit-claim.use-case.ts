@@ -39,7 +39,8 @@ export async function submitClaim(
   ctx: SubmitClaimContext,
   leagueId: number,
   userId: string,
-  request: SubmitClaimRequest
+  request: SubmitClaimRequest,
+  idempotencyKey?: string
 ): Promise<WaiverClaimWithDetails> {
   // Validate user owns a roster in this league (fail fast outside transaction)
   const roster = await ctx.rosterRepo.findByLeagueAndUser(leagueId, userId);
@@ -65,6 +66,21 @@ export async function submitClaim(
     LockDomain.WAIVER,
     leagueId,
     async (client) => {
+      // Idempotency check: return existing claim if same key was already used
+      if (idempotencyKey) {
+        const existing = await client.query(
+          `SELECT id FROM waiver_claims
+           WHERE league_id = $1 AND roster_id = $2 AND idempotency_key = $3`,
+          [leagueId, roster.id, idempotencyKey]
+        );
+        if (existing.rows.length > 0) {
+          const existingClaim = await ctx.claimsRepo.findByIdWithDetails(existing.rows[0].id);
+          if (existingClaim) {
+            return existingClaim;
+          }
+        }
+      }
+
       // Check if player is already owned
       const playerOwner = await ctx.rosterPlayersRepo.findOwner(leagueId, request.playerId, client);
       if (playerOwner) {
@@ -138,7 +154,8 @@ export async function submitClaim(
         season,
         currentWeek,
         nextClaimOrder,
-        client
+        client,
+        idempotencyKey
       );
     }
   );

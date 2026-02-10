@@ -4,6 +4,7 @@ import { LeagueRepository } from '../leagues/leagues.repository';
 import { DraftPickAssetRepository } from '../drafts/draft-pick-asset.repository';
 import { AcquiredType } from './rosters.model';
 import { DraftPickAsset } from '../drafts/draft-pick-asset.model';
+import { getMaxRosterSize } from '../../shared/roster-defaults';
 
 /**
  * Validation result for roster transitions
@@ -128,7 +129,7 @@ export class RosterRulesService {
     const errors: ValidationError[] = [];
 
     // Get league rules
-    const league = await this.leagueRepo.findById(input.leagueId);
+    const league = await this.leagueRepo.findById(input.leagueId, client);
     if (!league) {
       errors.push({
         code: RosterRuleErrorCode.INVALID_LEAGUE,
@@ -138,7 +139,7 @@ export class RosterRulesService {
     }
 
     const rules: LeagueRules = {
-      maxRosterSize: league.settings?.roster_size || 15,
+      maxRosterSize: getMaxRosterSize(league.settings),
       minRosterSize: league.settings?.min_roster_size,
       positionalLimits: league.settings?.positional_limits,
     };
@@ -194,7 +195,7 @@ export class RosterRulesService {
     }
 
     // Get league rules
-    const league = await this.leagueRepo.findById(leagueId);
+    const league = await this.leagueRepo.findById(leagueId, client);
     if (!league) {
       errors.push({
         code: RosterRuleErrorCode.INVALID_LEAGUE,
@@ -204,7 +205,7 @@ export class RosterRulesService {
     }
 
     const rules: LeagueRules = {
-      maxRosterSize: league.settings?.roster_size || 15,
+      maxRosterSize: getMaxRosterSize(league.settings),
       minRosterSize: league.settings?.min_roster_size,
       positionalLimits: league.settings?.positional_limits,
     };

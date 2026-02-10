@@ -65,14 +65,25 @@ export async function voteTrade(
     async (client) => {
       // Re-verify trade status after acquiring lock
       const lockedTrade = await ctx.tradesRepo.findById(tradeId, client);
-      if (!lockedTrade || lockedTrade.status !== 'in_review') {
+      if (!lockedTrade) {
+        throw new NotFoundException('Trade not found');
+      }
+      // If trade was already vetoed or approved, return current counts (idempotent)
+      if (lockedTrade.status === 'vetoed' || lockedTrade.status === 'approved') {
+        const counts = await ctx.tradeVotesRepo.countVotes(tradeId, client);
+        return counts;
+      }
+      // If no longer in review, cannot vote
+      if (lockedTrade.status !== 'in_review') {
         throw new ValidationException('Trade is no longer in review period');
       }
 
       // Check if already voted (within transaction)
       const hasVoted = await ctx.tradeVotesRepo.hasVoted(tradeId, roster.id, client);
       if (hasVoted) {
-        throw new ConflictException('You have already voted on this trade');
+        // Already voted - return current counts (idempotent retry)
+        const counts = await ctx.tradeVotesRepo.countVotes(tradeId, client);
+        return counts;
       }
 
       // Create vote

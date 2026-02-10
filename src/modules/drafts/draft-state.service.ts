@@ -79,6 +79,7 @@ export interface NextPickState {
 
 export class DraftStateService {
   constructor(
+    private readonly db: Pool,
     private readonly draftRepo: DraftRepository,
     private readonly leagueRepo: LeagueRepository,
     private readonly engineFactory: DraftEngineFactory,
@@ -87,7 +88,19 @@ export class DraftStateService {
     private readonly pickAssetRepo?: DraftPickAssetRepository
   ) {}
 
-  async startDraft(draftId: number, userId: string): Promise<any> {
+  async startDraft(draftId: number, userId: string, idempotencyKey?: string): Promise<any> {
+    // Idempotency check: return existing result if same key was already used
+    if (idempotencyKey) {
+      const existing = await this.db.query(
+        `SELECT result FROM draft_operations
+         WHERE idempotency_key = $1 AND user_id = $2 AND operation_type = 'start'
+         AND expires_at > NOW()`,
+        [idempotencyKey, userId]
+      );
+      if (existing.rows.length > 0) {
+        return existing.rows[0].result;
+      }
+    }
     const draft = await this.draftRepo.findById(draftId);
     if (!draft) throw new NotFoundException('Draft not found');
 
@@ -97,7 +110,8 @@ export class DraftStateService {
     }
 
     if (draft.status !== 'not_started') {
-      throw new ValidationException('Draft has already started');
+      // Already started - this is idempotent, return current state
+      return draftToResponse(draft);
     }
 
     // Get first pick's roster
@@ -203,6 +217,16 @@ export class DraftStateService {
           nominationDeadline: pickDeadline?.toISOString(),
         },
       });
+    }
+
+    // Store result for idempotency
+    if (idempotencyKey) {
+      await this.db.query(
+        `INSERT INTO draft_operations (idempotency_key, draft_id, user_id, operation_type, result)
+         VALUES ($1, $2, $3, 'start', $4)
+         ON CONFLICT (idempotency_key, user_id, operation_type) DO NOTHING`,
+        [idempotencyKey, draftId, userId, JSON.stringify(response)]
+      );
     }
 
     return response;

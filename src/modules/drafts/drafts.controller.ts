@@ -139,8 +139,9 @@ export class DraftController {
       const userId = requireUserId(req);
       const leagueId = requireLeagueId(req);
       const draftId = requireDraftId(req);
+      const idempotencyKey = req.headers['x-idempotency-key'] as string | undefined;
 
-      const order = await this.draftService.randomizeDraftOrder(leagueId, draftId, userId);
+      const order = await this.draftService.randomizeDraftOrder(leagueId, draftId, userId, idempotencyKey);
       res.status(200).json(order);
     } catch (error) {
       next(error);
@@ -152,8 +153,9 @@ export class DraftController {
       const userId = requireUserId(req);
       const leagueId = requireLeagueId(req);
       const draftId = requireDraftId(req);
+      const idempotencyKey = req.headers['x-idempotency-key'] as string | undefined;
 
-      const order = await this.draftService.confirmDraftOrder(leagueId, draftId, userId);
+      const order = await this.draftService.confirmDraftOrder(leagueId, draftId, userId, idempotencyKey);
       res.status(200).json(order);
     } catch (error) {
       next(error);
@@ -177,8 +179,9 @@ export class DraftController {
     try {
       const userId = requireUserId(req);
       const draftId = requireDraftId(req);
+      const idempotencyKey = req.headers['x-idempotency-key'] as string | undefined;
 
-      const draft = await this.draftService.startDraft(draftId, userId);
+      const draft = await this.draftService.startDraft(draftId, userId, idempotencyKey);
       res.status(200).json(draft);
     } catch (error) {
       next(error);
