@@ -2,9 +2,24 @@ import { Request, Response, NextFunction } from 'express';
 import { PlayerService } from './players.service';
 import { AuthRequest } from '../../middleware/auth.middleware';
 import { requirePlayerId } from '../../utils/controller-helpers';
+import { NewsRepository } from './news.repository';
+import { StatsService } from './stats.service';
+import { playerNewsToResponse } from './news.model';
+import { Pool } from 'pg';
 
 export class PlayerController {
-  constructor(private readonly playerService: PlayerService) {}
+  private newsRepo?: NewsRepository;
+  private statsService?: StatsService;
+
+  constructor(
+    private readonly playerService: PlayerService,
+    private readonly pool?: Pool
+  ) {
+    if (pool) {
+      this.newsRepo = new NewsRepository(pool);
+      this.statsService = new StatsService(pool);
+    }
+  }
 
   getAllPlayers = async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -100,6 +115,171 @@ export class PlayerController {
         message: 'College player sync completed',
         ...result,
       });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  // ========== NEWS ENDPOINTS (Stream A: A1.5) ==========
+
+  /**
+   * GET /api/players/:playerId/news
+   * Get news for a specific player
+   */
+  getPlayerNews = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      if (!this.newsRepo) {
+        return res.status(503).json({ error: 'News service not initialized' });
+      }
+
+      const playerId = requirePlayerId(req);
+      const limit = parseInt(req.query.limit as string) || 10;
+
+      const news = await this.newsRepo.getNewsByPlayer(playerId, limit);
+      res.status(200).json(news.map(playerNewsToResponse));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  /**
+   * GET /api/players/news/latest
+   * Get latest news across all players (league-wide feed)
+   */
+  getLatestNews = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      if (!this.newsRepo) {
+        return res.status(503).json({ error: 'News service not initialized' });
+      }
+
+      const limit = parseInt(req.query.limit as string) || 50;
+      const offset = parseInt(req.query.offset as string) || 0;
+
+      const news = await this.newsRepo.getLatestNews(limit, offset);
+      res.status(200).json(news.map(playerNewsToResponse));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  /**
+   * GET /api/players/news/breaking
+   * Get breaking news (critical/high impact)
+   */
+  getBreakingNews = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      if (!this.newsRepo) {
+        return res.status(503).json({ error: 'News service not initialized' });
+      }
+
+      // Default to last 24 hours
+      const hoursBack = parseInt(req.query.hours as string) || 24;
+      const since = new Date(Date.now() - hoursBack * 60 * 60 * 1000);
+      const limit = parseInt(req.query.limit as string) || 20;
+
+      const news = await this.newsRepo.getBreakingNews(since, limit);
+      res.status(200).json(news.map(playerNewsToResponse));
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  // ========== STATS ENDPOINTS (Stream B: B1.1) ==========
+
+  /**
+   * GET /api/players/:playerId/stats/:season
+   * Get season stats for a player
+   */
+  getPlayerSeasonStats = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      if (!this.statsService) {
+        return res.status(503).json({ error: 'Stats service not initialized' });
+      }
+
+      const playerId = requirePlayerId(req);
+      const season = req.params.season;
+
+      const stats = await this.statsService.calculateSeasonTotals(playerId, season);
+      if (!stats) {
+        return res.status(404).json({ error: 'No stats found for this player/season' });
+      }
+
+      res.status(200).json(stats);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  /**
+   * GET /api/players/:playerId/gamelogs
+   * Get recent game logs for a player
+   */
+  getPlayerGameLogs = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      if (!this.statsService) {
+        return res.status(503).json({ error: 'Stats service not initialized' });
+      }
+
+      const playerId = requirePlayerId(req);
+      const season = (req.query.season as string) || '2024'; // Default to current season
+      const limit = parseInt(req.query.limit as string) || 10;
+
+      const gameLogs = await this.statsService.getGameLogs(playerId, season, limit);
+      res.status(200).json(gameLogs);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  /**
+   * GET /api/players/:playerId/projections
+   * Get weekly projection for a player
+   */
+  getPlayerProjection = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      if (!this.statsService) {
+        return res.status(503).json({ error: 'Stats service not initialized' });
+      }
+
+      const playerId = requirePlayerId(req);
+      const season = (req.query.season as string) || '2024';
+      const week = parseInt(req.query.week as string);
+
+      if (!week || week < 1 || week > 18) {
+        return res.status(400).json({ error: 'Invalid week parameter (1-18)' });
+      }
+
+      const projection = await this.statsService.getWeeklyProjection(playerId, season, week);
+      if (projection === null) {
+        return res.status(404).json({ error: 'No projection found for this player/week' });
+      }
+
+      res.status(200).json({ player_id: playerId, season, week, projected_pts_ppr: projection });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  /**
+   * GET /api/players/:playerId/trends
+   * Get performance trend for a player
+   */
+  getPlayerTrends = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      if (!this.statsService) {
+        return res.status(503).json({ error: 'Stats service not initialized' });
+      }
+
+      const playerId = requirePlayerId(req);
+      const season = (req.query.season as string) || '2024';
+      const weeks = parseInt(req.query.weeks as string) || 8;
+
+      const trend = await this.statsService.getStatTrends(playerId, season, weeks);
+      if (!trend) {
+        return res.status(404).json({ error: 'No trend data found for this player' });
+      }
+
+      res.status(200).json(trend);
     } catch (error) {
       next(error);
     }

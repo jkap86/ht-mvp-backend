@@ -5,6 +5,8 @@ import playerRoutes from '../modules/players/players.routes';
 import invitationRoutes from '../modules/invitations/invitations.routes';
 import dmRoutes from '../modules/dm/dm.routes';
 import { rosterPickAssetsRoutes } from '../modules/drafts/draft-pick-assets.routes';
+import notificationRoutes from '../modules/notifications/notification.routes';
+import activityRoutes from '../modules/leagues/activity.routes';
 import { pool, getPoolMetrics } from '../db/pool';
 import { metrics } from '../services/metrics.service';
 import { checkRedisHealth } from '../config/redis.config';
@@ -58,6 +60,12 @@ router.use('/invitations', invitationRoutes);
 
 // Direct message routes
 router.use('/dm', dmRoutes);
+
+// Notification routes (Stream C)
+router.use('/notifications', notificationRoutes);
+
+// Activity routes (Stream D) - Note: Also mounted under /leagues/:leagueId/activity
+router.use(activityRoutes);
 
 // Roster pick assets routes (top-level for roster-specific pick assets)
 router.use('/rosters/:rosterId/pick-assets', rosterPickAssetsRoutes);
