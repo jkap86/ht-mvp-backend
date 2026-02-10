@@ -1,4 +1,4 @@
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import { MatchupsRepository } from './matchups.repository';
 import { LineupsRepository } from '../lineups/lineups.repository';
 import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
@@ -340,7 +340,8 @@ export class MatchupService {
     const rosterIds = matchups.flatMap((m) => [m.roster1Id, m.roster2Id]);
 
     // Update matchup scores and finalize with LINEUP locks
-    await runWithLocks(this.db, LockDomain.LINEUP, rosterIds, async (client) => {
+    const locks = rosterIds.map(id => ({ domain: LockDomain.LINEUP, id }));
+    await runWithLocks(this.db, locks, async (client: PoolClient) => {
       for (const matchup of matchups) {
         const lineup1 = lineupMap.get(matchup.roster1Id);
         const lineup2 = lineupMap.get(matchup.roster2Id);

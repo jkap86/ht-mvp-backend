@@ -3,9 +3,9 @@
  * Endpoints for managing league seasons and keeper selections
  */
 
-import { Router, Request, Response } from 'express';
+import { Router, Response } from 'express';
 import { Pool } from 'pg';
-import { authenticateToken } from '../../middleware/auth';
+import { authMiddleware, AuthRequest } from '../../middleware/auth.middleware';
 import { LeagueSeasonRepository } from './league-season.repository';
 import { KeeperSelectionRepository } from './keeper-selection.repository';
 import { LeagueRepository } from './leagues.repository';
@@ -28,9 +28,9 @@ export function createSeasonRoutes(pool: Pool): Router {
    * GET /leagues/:leagueId/seasons
    * List all seasons for a league (history)
    */
-  router.get('/leagues/:leagueId/seasons', authenticateToken, async (req: Request, res: Response) => {
+  router.get('/leagues/:leagueId/seasons', authMiddleware, async (req: AuthRequest, res: Response) => {
     try {
-      const leagueId = parseInt(req.params.leagueId);
+      const leagueId = parseInt(req.params.leagueId as string);
       const seasons = await leagueSeasonRepo.findAllByLeague(leagueId);
 
       res.json({
@@ -56,9 +56,9 @@ export function createSeasonRoutes(pool: Pool): Router {
    * GET /leagues/:leagueId/seasons/active
    * Get the active (current) season for a league
    */
-  router.get('/leagues/:leagueId/seasons/active', authenticateToken, async (req: Request, res: Response) => {
+  router.get('/leagues/:leagueId/seasons/active', authMiddleware, async (req: AuthRequest, res: Response) => {
     try {
-      const leagueId = parseInt(req.params.leagueId);
+      const leagueId = parseInt(req.params.leagueId as string);
       const activeSeason = await leagueSeasonRepo.findActiveByLeague(leagueId);
 
       if (!activeSeason) {
@@ -88,9 +88,9 @@ export function createSeasonRoutes(pool: Pool): Router {
    * GET /leagues/:leagueId/seasons/:seasonId
    * Get a specific season by ID
    */
-  router.get('/leagues/:leagueId/seasons/:seasonId', authenticateToken, async (req: Request, res: Response) => {
+  router.get('/leagues/:leagueId/seasons/:seasonId', authMiddleware, async (req: AuthRequest, res: Response) => {
     try {
-      const seasonId = parseInt(req.params.seasonId);
+      const seasonId = parseInt(req.params.seasonId as string);
       const season = await leagueSeasonRepo.findById(seasonId);
 
       if (!season) {
@@ -120,15 +120,15 @@ export function createSeasonRoutes(pool: Pool): Router {
    * POST /leagues/:leagueId/seasons/rollover
    * Rollover to a new season (dynasty/keeper leagues)
    */
-  router.post('/leagues/:leagueId/seasons/rollover', authenticateToken, async (req: Request, res: Response) => {
+  router.post('/leagues/:leagueId/seasons/rollover', authMiddleware, async (req: AuthRequest, res: Response) => {
     try {
-      const leagueId = parseInt(req.params.leagueId);
+      const leagueId = parseInt(req.params.leagueId as string);
       const { keeperDeadline } = req.body;
 
       const result = await rolloverUseCase.execute({
         leagueId,
         keeperDeadline: keeperDeadline ? new Date(keeperDeadline) : undefined,
-        userId: req.user?.id
+        userId: req.user?.userId
       });
 
       res.json({
@@ -155,9 +155,9 @@ export function createSeasonRoutes(pool: Pool): Router {
    * GET /leagues/:leagueId/seasons/:seasonId/keepers
    * Get all keeper selections for a season
    */
-  router.get('/leagues/:leagueId/seasons/:seasonId/keepers', authenticateToken, async (req: Request, res: Response) => {
+  router.get('/leagues/:leagueId/seasons/:seasonId/keepers', authMiddleware, async (req: AuthRequest, res: Response) => {
     try {
-      const seasonId = parseInt(req.params.seasonId);
+      const seasonId = parseInt(req.params.seasonId as string);
       const keepersWithDetails = await keeperRepo.findByLeagueSeasonWithDetails(seasonId);
 
       res.json({
@@ -184,10 +184,10 @@ export function createSeasonRoutes(pool: Pool): Router {
    * GET /leagues/:leagueId/seasons/:seasonId/keepers/:rosterId
    * Get keeper selections for a specific roster
    */
-  router.get('/leagues/:leagueId/seasons/:seasonId/keepers/:rosterId', authenticateToken, async (req: Request, res: Response) => {
+  router.get('/leagues/:leagueId/seasons/:seasonId/keepers/:rosterId', authMiddleware, async (req: AuthRequest, res: Response) => {
     try {
-      const seasonId = parseInt(req.params.seasonId);
-      const rosterId = parseInt(req.params.rosterId);
+      const seasonId = parseInt(req.params.seasonId as string);
+      const rosterId = parseInt(req.params.rosterId as string);
 
       const keepers = await keeperRepo.findByRoster(rosterId, seasonId);
 
@@ -210,9 +210,9 @@ export function createSeasonRoutes(pool: Pool): Router {
    * POST /leagues/:leagueId/seasons/:seasonId/keepers
    * Submit keeper selections for a roster
    */
-  router.post('/leagues/:leagueId/seasons/:seasonId/keepers', authenticateToken, async (req: Request, res: Response) => {
+  router.post('/leagues/:leagueId/seasons/:seasonId/keepers', authMiddleware, async (req: AuthRequest, res: Response) => {
     try {
-      const seasonId = parseInt(req.params.seasonId);
+      const seasonId = parseInt(req.params.seasonId as string);
       const { rosterId, selections } = req.body;
 
       if (!rosterId) {
@@ -227,7 +227,7 @@ export function createSeasonRoutes(pool: Pool): Router {
         leagueSeasonId: seasonId,
         rosterId,
         selections,
-        userId: req.user?.id
+        userId: req.user?.userId
       });
 
       res.json({
@@ -249,9 +249,9 @@ export function createSeasonRoutes(pool: Pool): Router {
    * POST /leagues/:leagueId/seasons/:seasonId/keepers/apply
    * Apply keeper selections to rosters (commissioner only)
    */
-  router.post('/leagues/:leagueId/seasons/:seasonId/keepers/apply', authenticateToken, async (req: Request, res: Response) => {
+  router.post('/leagues/:leagueId/seasons/:seasonId/keepers/apply', authMiddleware, async (req: AuthRequest, res: Response) => {
     try {
-      const seasonId = parseInt(req.params.seasonId);
+      const seasonId = parseInt(req.params.seasonId as string);
 
       const result = await applyKeepersUseCase.execute(seasonId);
 

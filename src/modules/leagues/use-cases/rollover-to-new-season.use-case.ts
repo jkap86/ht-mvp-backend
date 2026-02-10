@@ -29,18 +29,10 @@ export class RolloverToNewSeasonUseCase {
   ) {}
 
   async execute(params: RolloverParams): Promise<RolloverResult> {
-    const client = await this.pool.connect();
-
-    let result: RolloverResult | null = null;
-
-    try {
-      await client.query('BEGIN');
-
-      // Use LEAGUE lock domain (100M offset)
-      await runWithLock(client, LockDomain.LEAGUE, params.leagueId, async () => {
-
-        // 1. Validate league exists and mode supports rollover
-        const league = await this.leagueRepo.findById(params.leagueId, client);
+    // Use LEAGUE lock domain (100M offset) - runWithLock manages transaction
+    return runWithLock(this.pool, LockDomain.LEAGUE, params.leagueId, async (client) => {
+      // 1. Validate league exists and mode supports rollover
+      const league = await this.leagueRepo.findById(params.leagueId, client);
         if (!league) {
           throw new Error('League not found');
         }
@@ -98,22 +90,11 @@ export class RolloverToNewSeasonUseCase {
         // 10. Migrate future draft pick assets to new season
         await this.migrateDraftPickAssets(client, params.leagueId, newSeason.id, newSeasonYear);
 
-        result = {
-          newSeason,
-          previousSeason: currentSeason
-        };
-      });
-
-      await client.query('COMMIT');
-
-      return result!;
-
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+      return {
+        newSeason,
+        previousSeason: currentSeason
+      };
+    });
   }
 
   /**

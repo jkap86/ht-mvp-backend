@@ -10,6 +10,9 @@ import {
   KeeperSelectionWithDetails
 } from './keeper-selection.model';
 
+// Re-export types for external use
+export type { CreateKeeperSelectionParams };
+
 export class KeeperSelectionRepository {
   constructor(private readonly pool: Pool) {}
 
