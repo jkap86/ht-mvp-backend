@@ -619,6 +619,7 @@ describe('LeagueService', () => {
 
     it('should update seasonStatus', async () => {
       mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockLeagueRepo.findById.mockResolvedValue(mockLeague);
       mockLeagueRepo.updateSeasonControls.mockResolvedValue(mockLeague);
 
       await leagueService.updateSeasonControls(1, 'user-123', {
@@ -632,6 +633,7 @@ describe('LeagueService', () => {
 
     it('should update currentWeek', async () => {
       mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockLeagueRepo.findById.mockResolvedValue(mockLeague);
       mockLeagueRepo.updateSeasonControls.mockResolvedValue(mockLeague);
 
       await leagueService.updateSeasonControls(1, 'user-123', { currentWeek: 5 });
@@ -643,6 +645,7 @@ describe('LeagueService', () => {
 
     it('should update both seasonStatus and currentWeek', async () => {
       mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockLeagueRepo.findById.mockResolvedValue(mockLeague);
       mockLeagueRepo.updateSeasonControls.mockResolvedValue(mockLeague);
 
       await leagueService.updateSeasonControls(1, 'user-123', {

@@ -81,9 +81,7 @@ export async function voteTrade(
       // Check if already voted (within transaction)
       const hasVoted = await ctx.tradeVotesRepo.hasVoted(tradeId, roster.id, client);
       if (hasVoted) {
-        // Already voted - return current counts (idempotent retry)
-        const counts = await ctx.tradeVotesRepo.countVotes(tradeId, client);
-        return counts;
+        throw new ConflictException('You have already voted on this trade');
       }
 
       // Create vote
