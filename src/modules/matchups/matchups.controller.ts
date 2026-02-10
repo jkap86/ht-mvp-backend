@@ -5,6 +5,7 @@ import { ScoringService } from '../scoring/scoring.service';
 import { ScheduleGeneratorService } from './schedule-generator.service';
 import { StandingsService } from './standings.service';
 import { MedianService } from './median.service';
+import { LeagueService } from '../leagues/leagues.service';
 import {
   matchupDetailsToResponse,
   matchupWithLineupsToResponse,
@@ -12,12 +13,13 @@ import {
 } from './matchups.model';
 import { requireUserId, requireLeagueId } from '../../utils/controller-helpers';
 import { parseIntParam } from '../../utils/params';
-import { ValidationException } from '../../utils/exceptions';
+import { ValidationException, ForbiddenException } from '../../utils/exceptions';
 
 export class MatchupsController {
   constructor(
     private readonly matchupService: MatchupService,
     private readonly scoringService: ScoringService,
+    private readonly leagueService: LeagueService,
     private readonly scheduleGeneratorService?: ScheduleGeneratorService,
     private readonly standingsService?: StandingsService,
     private readonly medianService?: MedianService
