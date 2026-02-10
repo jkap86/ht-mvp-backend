@@ -30,8 +30,9 @@ export class LeagueRepository {
     return League.fromDatabase(result.rows[0]);
   }
 
-  async findByIdWithUserRoster(id: number, userId: string): Promise<League | null> {
-    const result = await this.db.query(
+  async findByIdWithUserRoster(id: number, userId: string, client?: PoolClient): Promise<League | null> {
+    const db = client || this.db;
+    const result = await db.query(
       `SELECT l.*,
               r.roster_id as user_roster_id,
               (l.settings->>'commissioner_roster_id')::int as commissioner_roster_id

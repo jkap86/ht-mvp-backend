@@ -99,69 +99,17 @@ export class RosterService {
     return { rosterId: roster.rosterId };
   }
 
-  async joinLeague(leagueId: number, userId: string): Promise<{ message: string; roster: any; joinedAsBench?: boolean }> {
-    // Use transaction with advisory lock to prevent exceeding roster limits
-    // IMPORTANT: League is fetched INSIDE the lock to prevent stale reads
-    const { roster, joinedAsBench } = await runWithLock(
-      this.db,
-      LockDomain.LEAGUE,
-      leagueId,
-      async (client) => {
-        // Fetch league inside the lock with the transaction client for fresh data
-        const league = await this.leagueRepo.findById(leagueId, client);
-        if (!league) {
-          throw new NotFoundException('League not found');
-        }
-
-        // Check join eligibility (must be pre_draft with no drafts started)
-        const eligibility = await canJoinLeagueNow(client, league);
-        if (!eligibility.eligible) {
-          throw new ConflictException(eligibility.reason!);
-        }
-
-        // Check if already a member (inside transaction)
-        const existingRoster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId, client);
-        if (existingRoster) {
-          throw new ConflictException('You are already a member of this league');
-        }
-
-        let roster;
-        let joinedAsBench = false;
-
-        // Try to claim an empty roster first (for leagues with pre-created rosters from randomization)
-        const emptyRoster = await this.rosterRepo.findEmptyRoster(leagueId, client);
-        if (emptyRoster) {
-          // Claim the empty roster - preserves their randomized draft position
-          roster = await this.rosterRepo.assignUserToRoster(emptyRoster.id, userId, client);
-        } else {
-          // No empty roster available - check if league is full
-          const rosterCount = await this.rosterRepo.getRosterCount(leagueId, client);
-          if (rosterCount >= league.totalRosters) {
-            // League is at capacity - check if it's a paid league with unpaid members
-            const canJoinAsBench = await this.canJoinAsBenchWithClient(client, leagueId, rosterCount);
-
-            if (canJoinAsBench) {
-              // Create as benched roster - user can participate once someone pays or leaves
-              const nextRosterId = await this.rosterRepo.getNextRosterId(leagueId, client);
-              roster = await this.rosterRepo.create(leagueId, userId, nextRosterId, client);
-              await this.rosterRepo.benchMember(roster.id, client);
-              joinedAsBench = true;
-            } else {
-              throw new ConflictException('League is full');
-            }
-          } else {
-            // Create new roster (league doesn't have pre-created empty rosters)
-            const nextRosterId = await this.rosterRepo.getNextRosterId(leagueId, client);
-            roster = await this.rosterRepo.create(leagueId, userId, nextRosterId, client);
-          }
-        }
-
-        // Initialize waiver rows for late-joining roster
-        await this.ensureWaiverRowsForRoster(league, roster.id, client);
-
-        return { roster, joinedAsBench };
-      }
-    );
+  async joinLeague(leagueId: number, userId: string, client?: PoolClient): Promise<{ message: string; roster: any; joinedAsBench?: boolean }> {
+    // If client is provided, use it directly (caller already has lock)
+    // Otherwise, acquire lock and call internal method
+    const { roster, joinedAsBench } = client
+      ? await this.joinLeagueInternal(client, leagueId, userId)
+      : await runWithLock(
+          this.db,
+          LockDomain.LEAGUE,
+          leagueId,
+          (c) => this.joinLeagueInternal(c, leagueId, userId)
+        );
 
     // Post-commit operations: domain events and chat messages
     const teamName = `Team ${roster.rosterId}`;
@@ -237,6 +185,70 @@ export class RosterService {
       },
       joinedAsBench,
     };
+  }
+
+  /**
+   * Internal method that performs the actual join logic within a transaction.
+   * Used by joinLeague() with or without an explicit lock.
+   */
+  private async joinLeagueInternal(
+    client: PoolClient,
+    leagueId: number,
+    userId: string
+  ): Promise<{ roster: any; joinedAsBench: boolean }> {
+    // Fetch league inside the lock with the transaction client for fresh data
+    const league = await this.leagueRepo.findById(leagueId, client);
+    if (!league) {
+      throw new NotFoundException('League not found');
+    }
+
+    // Check join eligibility (must be pre_draft with no drafts started)
+    const eligibility = await canJoinLeagueNow(client, league);
+    if (!eligibility.eligible) {
+      throw new ConflictException(eligibility.reason!);
+    }
+
+    // Check if already a member (inside transaction)
+    const existingRoster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId, client);
+    if (existingRoster) {
+      throw new ConflictException('You are already a member of this league');
+    }
+
+    let roster;
+    let joinedAsBench = false;
+
+    // Try to claim an empty roster first (for leagues with pre-created rosters from randomization)
+    const emptyRoster = await this.rosterRepo.findEmptyRoster(leagueId, client);
+    if (emptyRoster) {
+      // Claim the empty roster - preserves their randomized draft position
+      roster = await this.rosterRepo.assignUserToRoster(emptyRoster.id, userId, client);
+    } else {
+      // No empty roster available - check if league is full
+      const rosterCount = await this.rosterRepo.getRosterCount(leagueId, client);
+      if (rosterCount >= league.totalRosters) {
+        // League is at capacity - check if it's a paid league with unpaid members
+        const canJoinAsBench = await this.canJoinAsBenchWithClient(client, leagueId, rosterCount);
+
+        if (canJoinAsBench) {
+          // Create as benched roster - user can participate once someone pays or leaves
+          const nextRosterId = await this.rosterRepo.getNextRosterId(leagueId, client);
+          roster = await this.rosterRepo.create(leagueId, userId, nextRosterId, client);
+          await this.rosterRepo.benchMember(roster.id, client);
+          joinedAsBench = true;
+        } else {
+          throw new ConflictException('League is full');
+        }
+      } else {
+        // Create new roster (league doesn't have pre-created empty rosters)
+        const nextRosterId = await this.rosterRepo.getNextRosterId(leagueId, client);
+        roster = await this.rosterRepo.create(leagueId, userId, nextRosterId, client);
+      }
+    }
+
+    // Initialize waiver rows for late-joining roster
+    await this.ensureWaiverRowsForRoster(league, roster.id, client);
+
+    return { roster, joinedAsBench };
   }
 
   /**
