@@ -15,6 +15,10 @@ export interface LeagueSettings {
   // Trade notification settings (commissioner caps)
   tradeProposalLeagueChatMax?: 'none' | 'summary' | 'details';
   tradeProposalLeagueChatDefault?: 'none' | 'summary' | 'details';
+  // Keeper settings (for dynasty/keeper leagues)
+  maxKeepers?: number;
+  keeperCostsEnabled?: boolean;
+  faabBudget?: number;
 }
 
 export class League {
