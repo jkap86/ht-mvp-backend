@@ -6,8 +6,10 @@ import { DraftService } from '../drafts/drafts.service';
 import { getDraftStructure } from '../drafts/draft-structure-presets';
 import { EventListenerService } from '../chat/event-listener.service';
 import { MatchupsRepository } from '../matchups/matchups.repository';
+import { LeagueOperationsRepository } from './league-operations.repository';
 import { NotFoundException, ForbiddenException, ValidationException } from '../../utils/exceptions';
-import { runInTransaction } from '../../shared/transaction-runner';
+import { runInTransaction, runWithLock } from '../../shared/transaction-runner';
+import { LockDomain } from '../../shared/locks';
 import { EventTypes, tryGetEventBus } from '../../shared/events';
 import { logger } from '../../config/logger.config';
 
@@ -484,24 +486,54 @@ export class LeagueService {
     return this.leagueRepo.findPublicLeagues(userId, limit, offset);
   }
 
-  async joinPublicLeague(leagueId: number, userId: string): Promise<any> {
-    // Find the league first
-    const league = await this.leagueRepo.findById(leagueId);
-    if (!league) {
-      throw new NotFoundException('League not found');
-    }
+  async joinPublicLeague(
+    leagueId: number,
+    userId: string,
+    idempotencyKey?: string
+  ): Promise<any> {
+    const operationsRepo = new LeagueOperationsRepository(this.db);
 
-    // Check if the league is public
-    if (!league.isPublic) {
-      throw new ForbiddenException('This league is private. You need an invitation to join.');
-    }
+    return await runWithLock(this.db, LockDomain.LEAGUE, leagueId, async (client) => {
+      // Check idempotency first (if key provided)
+      if (idempotencyKey) {
+        const existing = await operationsRepo.findByKey(leagueId, userId, idempotencyKey, client);
+        if (existing) {
+          return existing.responseData; // Already joined
+        }
+      }
 
-    // Join the league
-    await this.rosterService.joinLeague(league.id, userId);
+      // Find the league
+      const league = await this.leagueRepo.findById(leagueId, client);
+      if (!league) {
+        throw new NotFoundException('League not found');
+      }
 
-    // Return the league with user's roster info
-    const updatedLeague = await this.leagueRepo.findByIdWithUserRoster(league.id, userId);
-    return updatedLeague!.toResponse();
+      // Check if the league is public
+      if (!league.isPublic) {
+        throw new ForbiddenException('This league is private. You need an invitation to join.');
+      }
+
+      // Join the league
+      await this.rosterService.joinLeague(league.id, userId, client);
+
+      // Get updated league with roster info
+      const updatedLeague = await this.leagueRepo.findByIdWithUserRoster(league.id, userId, client);
+      const response = updatedLeague!.toResponse();
+
+      // Store operation if idempotency key provided
+      if (idempotencyKey) {
+        await operationsRepo.create(
+          leagueId,
+          userId,
+          'join_public_league',
+          idempotencyKey,
+          response,
+          client
+        );
+      }
+
+      return response;
+    });
   }
 
   async resetLeagueForNewSeason(

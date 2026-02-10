@@ -240,8 +240,9 @@ export class LeagueController {
     try {
       const userId = requireUserId(req);
       const leagueId = requireLeagueId(req);
+      const idempotencyKey = req.headers['x-idempotency-key'] as string | undefined;
 
-      const league = await this.leagueService.joinPublicLeague(leagueId, userId);
+      const league = await this.leagueService.joinPublicLeague(leagueId, userId, idempotencyKey);
       res.status(200).json(league);
     } catch (error) {
       next(error);

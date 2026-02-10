@@ -202,9 +202,12 @@ export class RostersController {
       const rosterId = this.requireRosterId(req);
       const userId = requireUserId(req);
       const { week, playerId, toSlot } = req.body;
-      if (typeof week !== 'number' || !Number.isInteger(week) || week < 1) {
-        throw new ValidationException('Week must be a positive integer');
+
+      // Validate week range (1-18)
+      if (typeof week !== 'number' || !Number.isInteger(week) || week < 1 || week > 18) {
+        throw new ValidationException('Week must be between 1 and 18');
       }
+
       if (typeof playerId !== 'number' || !Number.isInteger(playerId)) {
         throw new ValidationException('playerId must be an integer');
       }

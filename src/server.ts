@@ -23,7 +23,6 @@ import { startTradeExpirationJob, stopTradeExpirationJob } from './jobs/trade-ex
 import { startWaiverProcessingJob, stopWaiverProcessingJob } from './jobs/waiver-processing.job';
 import { startStatsSyncJob, stopStatsSyncJob } from './jobs/stats-sync.job';
 import { startIdempotencyCleanupJob, stopIdempotencyCleanupJob } from './jobs/idempotency-cleanup.job';
-import { idempotencyMiddleware } from './middleware/idempotency.middleware';
 import { Pool } from 'pg';
 import { container, KEYS } from './container';
 
@@ -72,7 +71,6 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '50kb' })); // Limit payload size to prevent DoS
 app.use(requestIdMiddleware); // Add request ID for distributed tracing
 app.use(requestTimingMiddleware);
-app.use(idempotencyMiddleware(container.resolve<Pool>(KEYS.POOL)));
 
 // Routes
 app.use('/api', routes);
