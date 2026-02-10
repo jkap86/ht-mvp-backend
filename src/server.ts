@@ -21,6 +21,7 @@ import { startPlayerSyncJob, stopPlayerSyncJob } from './jobs/player-sync.job';
 import { startSlowAuctionJob, stopSlowAuctionJob } from './jobs/slow-auction.job';
 import { startTradeExpirationJob, stopTradeExpirationJob } from './jobs/trade-expiration.job';
 import { startWaiverProcessingJob, stopWaiverProcessingJob } from './jobs/waiver-processing.job';
+import { startStatsSyncJob, stopStatsSyncJob } from './jobs/stats-sync.job';
 
 const app = express();
 
@@ -94,6 +95,7 @@ server.listen(PORT, '0.0.0.0', () => {
     startTradeExpirationJob();
     startWaiverProcessingJob();
     startPlayerSyncJob(true); // Sync players from Sleeper on startup, then every 12h
+    startStatsSyncJob(true); // Sync stats from Sleeper on startup, then dynamically
   } else {
     logger.info('Background jobs disabled', { reason: 'RUN_JOBS=false' });
   }
@@ -110,6 +112,7 @@ const gracefulShutdown = () => {
   stopTradeExpirationJob();
   stopWaiverProcessingJob();
   stopPlayerSyncJob();
+  stopStatsSyncJob();
 
   server.close(async () => {
     logger.info('HTTP server closed');
