@@ -1,7 +1,7 @@
 import { Pool } from 'pg';
 import { container, KEYS } from '../container';
 import { PlayerService } from '../modules/players/players.service';
-import { logger } from '../config/env.config';
+import { logger } from '../config/logger.config';
 import { getLockId, LockDomain } from '../shared/locks';
 
 let intervalId: NodeJS.Timeout | null = null;
@@ -35,10 +35,13 @@ export async function runPlayerSync(): Promise<void> {
     }
 
     try {
+      const tickStart = Date.now();
       logger.info('Starting player sync from Sleeper API...');
       const playerService = container.resolve<PlayerService>(KEYS.PLAYER_SERVICE);
       const result = await playerService.syncPlayersFromSleeper();
-      logger.info(`Player sync complete: ${result.synced} synced, ${result.total} total`);
+      logger.info(`Player sync complete: ${result.synced} synced, ${result.total} total`, {
+        durationMs: Date.now() - tickStart,
+      });
     } catch (error) {
       logger.error(`Player sync error: ${error}`);
     } finally {
@@ -72,10 +75,13 @@ export async function runCollegePlayerSync(): Promise<void> {
     }
 
     try {
+      const tickStart = Date.now();
       logger.info('Starting college player sync from CFBD API...');
       const playerService = container.resolve<PlayerService>(KEYS.PLAYER_SERVICE);
       const result = await playerService.syncCollegePlayersFromCFBD();
-      logger.info(`College player sync complete: ${result.synced} synced, ${result.total} total`);
+      logger.info(`College player sync complete: ${result.synced} synced, ${result.total} total`, {
+        durationMs: Date.now() - tickStart,
+      });
     } catch (error) {
       // Don't fail startup if CFBD sync fails (API key may not be configured)
       logger.warn(`College player sync skipped or failed: ${error}`);

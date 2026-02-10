@@ -4,7 +4,7 @@ import { AdvanceResult, PlayoffEngineContext } from './playoff-engine.interface'
 import { BracketType, SeriesAggregation, getWeekRangeForRound } from '../playoff.model';
 import { PlayoffRepository } from '../playoff.repository';
 import { EventTypes, tryGetEventBus } from '../../../shared/events';
-import { logger } from '../../../config/env.config';
+import { logger } from '../../../config/logger.config';
 
 /**
  * Single Elimination Engine

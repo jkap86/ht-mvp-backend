@@ -7,7 +7,7 @@ import { LeagueRepository } from '../modules/leagues/leagues.repository';
 import { BestballService } from '../modules/bestball/bestball.service';
 import { LeaderLock } from '../shared/leader-lock';
 import { tryGetEventBus, EventTypes } from '../shared/events';
-import { logger } from '../config/env.config';
+import { logger } from '../config/logger.config';
 import { isInGameWindow, getOptimalSyncInterval, SYNC_INTERVALS } from '../utils/game-window';
 
 let timeoutId: NodeJS.Timeout | null = null;
@@ -196,6 +196,7 @@ export async function runStatsSync(): Promise<void> {
  */
 async function executeStatsSync(): Promise<void> {
   isRunning = true;
+  const tickStart = Date.now();
   try {
     const inGameWindow = isInGameWindow();
     logger.info(`Starting stats sync from Sleeper API (game window: ${inGameWindow})...`);
@@ -247,6 +248,7 @@ async function executeStatsSync(): Promise<void> {
     logger.error(`Stats sync error: ${error}`);
   } finally {
     isRunning = false;
+    logger.info('Stats sync finished', { durationMs: Date.now() - tickStart });
   }
 }
 

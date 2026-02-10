@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { logger } from '../../config/env.config';
+import { logger } from '../../config/logger.config';
 
 /**
  * Game status for a team's current game

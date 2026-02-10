@@ -2,7 +2,9 @@ import { Server as HttpServer } from 'http';
 import { Server, Socket } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';
 import { verifyToken } from '../utils/jwt';
-import { env, logger } from '../config/env.config';
+import { env } from '../config/env.config';
+import { logger } from '../config/logger.config';
+import { isAllowedOrigin, isAllowedDevOrigin } from '../config/cors.config';
 import { getRedisClient, isRedisAvailable } from '../config/redis.config';
 import { container, KEYS } from '../container';
 import { LeagueRepository } from '../modules/leagues/leagues.repository';
@@ -105,22 +107,13 @@ export class SocketService {
           // Allow requests with no origin (mobile apps, Postman)
           if (!origin) return callback(null, true);
 
-          // Dev: allow any localhost/127.0.0.1 port, local network IPs, and emulator hosts
-          if (env.NODE_ENV !== 'production') {
-            if (
-              origin.startsWith('http://localhost:') ||
-              origin.startsWith('http://127.0.0.1:') ||
-              origin.startsWith('https://localhost:') ||
-              origin.startsWith('http://192.168.') ||
-              origin.startsWith('http://10.0.2.2:') || // Android emulator
-              /^http:\/\/172\.(1[6-9]|2[0-9]|3[0-1])\./.test(origin) // Docker networks (172.16-31.x.x)
-            ) {
-              return callback(null, true);
-            }
+          // Dev: allow common dev origins
+          if (env.NODE_ENV !== 'production' && isAllowedDevOrigin(origin)) {
+            return callback(null, true);
           }
 
-          // Prod: only allow configured FRONTEND_URL
-          if (env.FRONTEND_URL && origin === env.FRONTEND_URL) {
+          // Check against production allowlist (FRONTEND_URL + FRONTEND_URLS)
+          if (isAllowedOrigin(origin)) {
             return callback(null, true);
           }
 

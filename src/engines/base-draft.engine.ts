@@ -12,7 +12,7 @@ import { PlayerRepository } from '../modules/players/players.repository';
 import { RosterPlayersRepository } from '../modules/rosters/rosters.repository';
 import { LeagueRepository, RosterRepository } from '../modules/leagues/leagues.repository';
 import { DomainEventBus, EventTypes } from '../shared/events';
-import { logger } from '../config/env.config';
+import { logger } from '../config/logger.config';
 import { finalizeDraftCompletion } from '../modules/drafts/draft-completion.utils';
 import { container, KEYS } from '../container';
 import { DraftPickAssetRepository } from '../modules/drafts/draft-pick-asset.repository';

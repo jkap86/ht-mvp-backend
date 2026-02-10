@@ -1,4 +1,4 @@
-import { logger } from '../config/env.config';
+import { logger } from '../config/logger.config';
 import { DatabaseException } from './exceptions';
 
 /**

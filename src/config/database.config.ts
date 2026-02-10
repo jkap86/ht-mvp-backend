@@ -1,5 +1,6 @@
 import { PoolConfig } from 'pg';
 import { env } from './env.config';
+import { logger } from './logger.config';
 
 export function getDatabaseConfig(): PoolConfig {
   const config: PoolConfig = {
@@ -26,7 +27,7 @@ export function getDatabaseConfig(): PoolConfig {
     };
 
     if (!rejectUnauthorized) {
-      console.warn(
+      logger.warn(
         '[SECURITY] Database SSL certificate validation is disabled. ' +
           'Set DATABASE_SSL_REJECT_UNAUTHORIZED=true for non-Heroku deployments.'
       );

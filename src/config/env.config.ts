@@ -27,6 +27,9 @@ const envSchema = z.object({
       ? z.string().url().min(1, 'FRONTEND_URL is required in production')
       : z.string().url().optional(),
 
+  // Additional frontend URLs (comma-separated) for multi-origin CORS support
+  FRONTEND_URLS: z.string().optional(),
+
   // Background Jobs
   // Set to "true" to enable background jobs (autopick, player sync)
   // In multi-instance deployments, only one instance should run jobs
@@ -73,27 +76,3 @@ export const env = parseEnv();
 // Type for environment variables
 export type Env = z.infer<typeof envSchema>;
 
-// Log levels in order of verbosity
-const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
-
-// Simple logger that respects LOG_LEVEL
-export const logger = {
-  debug: (message: string, ...args: any[]) => {
-    if (LOG_LEVELS.indexOf(env.LOG_LEVEL) <= LOG_LEVELS.indexOf('debug')) {
-      console.log(`[DEBUG] ${message}`, ...args);
-    }
-  },
-  info: (message: string, ...args: any[]) => {
-    if (LOG_LEVELS.indexOf(env.LOG_LEVEL) <= LOG_LEVELS.indexOf('info')) {
-      console.log(`[INFO] ${message}`, ...args);
-    }
-  },
-  warn: (message: string, ...args: any[]) => {
-    if (LOG_LEVELS.indexOf(env.LOG_LEVEL) <= LOG_LEVELS.indexOf('warn')) {
-      console.warn(`[WARN] ${message}`, ...args);
-    }
-  },
-  error: (message: string, ...args: any[]) => {
-    console.error(`[ERROR] ${message}`, ...args);
-  },
-};

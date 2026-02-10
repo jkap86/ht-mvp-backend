@@ -1,6 +1,14 @@
 import { Socket } from 'socket.io';
-import { logger } from '../config/env.config';
+import { logger } from '../config/logger.config';
 import { getRedisClient } from '../config/redis.config';
+
+if (process.env.NODE_ENV === 'production' && !process.env.REDIS_HOST) {
+  logger.warn(
+    'CRITICAL: Socket rate limiting is using in-memory store in production. ' +
+      'This is unsafe for multi-instance deployments as limits are not shared across instances. ' +
+      'Set REDIS_HOST to enable Redis-backed rate limiting.'
+  );
+}
 
 /**
  * Rate limiter for Socket.IO connections

@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { ZodSchema, ZodError } from 'zod';
-import { logger } from '../config/env.config';
+import { logger } from '../config/logger.config';
 
 /**
  * Validation middleware factory that validates request data against a Zod schema

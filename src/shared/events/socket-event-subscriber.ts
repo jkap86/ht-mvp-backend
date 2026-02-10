@@ -1,6 +1,6 @@
 import { DomainEvent, DomainEventSubscriber, EventTypes } from './domain-event-bus';
 import { tryGetSocketService } from '../../socket/socket.service';
-import { logger } from '../../config/env.config';
+import { logger } from '../../config/logger.config';
 
 /**
  * SocketEventSubscriber translates domain events into Socket.IO emissions.

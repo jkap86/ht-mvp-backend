@@ -3,7 +3,7 @@ import { BasePlayoffEngine } from './base-playoff.engine';
 import { AdvanceResult, PlayoffEngineContext, SeriesWinner } from './playoff-engine.interface';
 import { BracketType, SeriesAggregation, calculateTotalRounds, getWeekRangeForRound } from '../playoff.model';
 import { PlayoffRepository } from '../playoff.repository';
-import { logger } from '../../../config/env.config';
+import { logger } from '../../../config/logger.config';
 
 /**
  * Consolation Engine

@@ -2,6 +2,7 @@ import rateLimit from 'express-rate-limit';
 import { RedisStore } from 'rate-limit-redis';
 import { Request } from 'express';
 import { getRedisClient } from '../config/redis.config';
+import { logger } from '../config/logger.config';
 
 // Match the shape from auth.middleware.ts
 interface AuthRequest extends Request {
@@ -19,6 +20,14 @@ function getRedisStore(): RedisStore | undefined {
 }
 
 const isProd = process.env.NODE_ENV === 'production';
+
+if (isProd && !process.env.REDIS_HOST) {
+  logger.warn(
+    'CRITICAL: Rate limiting is using in-memory store in production. ' +
+      'This is unsafe for multi-instance deployments as limits are not shared across instances. ' +
+      'Set REDIS_HOST to enable Redis-backed rate limiting.'
+  );
+}
 
 /**
  * Rate limiter for authentication endpoints (login, register)
@@ -47,7 +56,9 @@ export const authLimiter = rateLimit({
 export const draftPickLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 10,
-  message: { error: 'Too many pick attempts, please slow down', status: 429 },
+  message: {
+    error: { code: 'RATE_LIMITED', message: 'Too many pick attempts, please slow down' },
+  },
   keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
   standardHeaders: true,
   legacyHeaders: false,
@@ -62,8 +73,7 @@ export const queueLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 30,
   message: {
-    error: 'Too many queue operations, please slow down',
-    status: 429,
+    error: { code: 'RATE_LIMITED', message: 'Too many queue operations, please slow down' },
   },
   keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
   standardHeaders: true,
@@ -79,8 +89,7 @@ export const draftModifyLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 5,
   message: {
-    error: 'Too many draft operations, please slow down',
-    status: 429,
+    error: { code: 'RATE_LIMITED', message: 'Too many draft operations, please slow down' },
   },
   keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
   standardHeaders: true,
@@ -96,8 +105,7 @@ export const dmMessageLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 30, // 30 messages per minute
   message: {
-    error: 'Too many messages, please slow down',
-    status: 429,
+    error: { code: 'RATE_LIMITED', message: 'Too many messages, please slow down' },
   },
   keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
   standardHeaders: true,
@@ -113,8 +121,7 @@ export const dmReadLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 60, // 60 requests per minute
   message: {
-    error: 'Too many requests, please slow down',
-    status: 429,
+    error: { code: 'RATE_LIMITED', message: 'Too many requests, please slow down' },
   },
   keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
   standardHeaders: true,
@@ -130,8 +137,7 @@ export const searchLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 30, // 30 searches per minute
   message: {
-    error: 'Too many search requests, please slow down',
-    status: 429,
+    error: { code: 'RATE_LIMITED', message: 'Too many search requests, please slow down' },
   },
   keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
   standardHeaders: true,
@@ -168,8 +174,7 @@ export const apiReadLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 120, // 120 requests per minute
   message: {
-    error: 'Too many requests, please slow down',
-    status: 429,
+    error: { code: 'RATE_LIMITED', message: 'Too many requests, please slow down' },
   },
   keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
   standardHeaders: true,
@@ -185,8 +190,7 @@ export const tradeLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 20, // 20 trade operations per minute
   message: {
-    error: 'Too many trade operations, please slow down',
-    status: 429,
+    error: { code: 'RATE_LIMITED', message: 'Too many trade operations, please slow down' },
   },
   keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
   standardHeaders: true,
@@ -202,8 +206,7 @@ export const rosterModifyLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 30, // 30 roster operations per minute
   message: {
-    error: 'Too many roster operations, please slow down',
-    status: 429,
+    error: { code: 'RATE_LIMITED', message: 'Too many roster operations, please slow down' },
   },
   keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
   standardHeaders: true,
@@ -219,8 +222,7 @@ export const waiverLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 20, // 20 waiver operations per minute
   message: {
-    error: 'Too many waiver operations, please slow down',
-    status: 429,
+    error: { code: 'RATE_LIMITED', message: 'Too many waiver operations, please slow down' },
   },
   keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
   standardHeaders: true,
@@ -236,8 +238,7 @@ export const playerSyncLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
   max: 2, // 2 syncs per hour
   message: {
-    error: 'Player sync is rate limited. Please try again later.',
-    status: 429,
+    error: { code: 'RATE_LIMITED', message: 'Player sync is rate limited. Please try again later.' },
   },
   keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
   standardHeaders: true,

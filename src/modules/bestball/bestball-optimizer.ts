@@ -7,7 +7,7 @@
 
 import { LineupSlots, PositionSlot } from '../lineups/lineups.model';
 import { canPositionFillSlot, getStarterSlotsList, isStarterSlot } from './slot-eligibility';
-import { logger } from '../../config/env.config';
+import { logger } from '../../config/logger.config';
 
 export interface OptimizeInput {
   /** Starter slot counts (e.g., { QB: 1, RB: 2, WR: 2, FLEX: 1 }) */

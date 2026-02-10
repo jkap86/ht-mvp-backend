@@ -15,7 +15,7 @@ import { PlayerRepository } from '../players/players.repository';
 import { ScoringService } from '../scoring/scoring.service';
 import { LineupSlots, PositionSlot, DEFAULT_ROSTER_CONFIG } from '../lineups/lineups.model';
 import { optimizeBestballLineup, OptimizeInput } from './bestball-optimizer';
-import { logger } from '../../config/env.config';
+import { logger } from '../../config/logger.config';
 
 export type BestballMode = 'live_projected' | 'live_actual' | 'final';
 

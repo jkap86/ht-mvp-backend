@@ -3,7 +3,7 @@ import { PlayerStatsRepository } from './scoring.repository';
 import { PlayerProjectionsRepository } from './projections.repository';
 import { PlayerRepository } from '../players/players.repository';
 import { PlayerStats } from './scoring.model';
-import { logger } from '../../config/env.config';
+import { logger } from '../../config/logger.config';
 
 export interface StatsSyncResult {
   synced: number;

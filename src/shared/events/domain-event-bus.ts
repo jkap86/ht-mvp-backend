@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { logger } from '../../config/env.config';
+import { logger } from '../../config/logger.config';
 
 /**
  * Represents a domain event that can be published and subscribed to.

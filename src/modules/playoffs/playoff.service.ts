@@ -29,7 +29,7 @@ import {
   ValidationException,
   ConflictException,
 } from '../../utils/exceptions';
-import { logger } from '../../config/env.config';
+import { logger } from '../../config/logger.config';
 import { runWithLock, LockDomain } from '../../shared/transaction-runner';
 import { EventTypes, tryGetEventBus } from '../../shared/events';
 

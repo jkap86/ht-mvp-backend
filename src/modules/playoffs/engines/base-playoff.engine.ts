@@ -13,7 +13,7 @@ import {
   calculateTotalRounds,
 } from '../playoff.model';
 import { PlayoffRepository } from '../playoff.repository';
-import { logger } from '../../../config/env.config';
+import { logger } from '../../../config/logger.config';
 
 /**
  * Base Playoff Engine

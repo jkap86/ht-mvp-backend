@@ -4,7 +4,7 @@ import { RosterPlayersRepository, RosterTransactionsRepository } from '../roster
 import { RosterMutationService } from '../rosters/roster-mutation.service';
 import { ScheduleGeneratorService } from '../matchups/schedule-generator.service';
 import { container, KEYS } from '../../container';
-import { logger } from '../../config/env.config';
+import { logger } from '../../config/logger.config';
 
 export interface PopulateRostersContext {
   draftRepo: DraftRepository;

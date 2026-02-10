@@ -1,6 +1,6 @@
 import { Socket } from 'socket.io';
 import { z, ZodSchema } from 'zod';
-import { logger } from '../config/env.config';
+import { logger } from '../config/logger.config';
 import { SOCKET_EVENTS } from '../constants/socket-events';
 
 /**

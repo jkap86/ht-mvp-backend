@@ -15,7 +15,7 @@ import {
   calculateProjectedBonuses,
   getDefensePointsAllowedScore,
 } from './scoring-calculator';
-import { logger } from '../../config/env.config';
+import { logger } from '../../config/logger.config';
 import { runInTransaction } from '../../shared/transaction-runner';
 
 export class ScoringService {

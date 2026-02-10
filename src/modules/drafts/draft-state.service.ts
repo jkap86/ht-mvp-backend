@@ -14,6 +14,7 @@ import { DraftPickAssetRepository } from './draft-pick-asset.repository';
 import { DraftPickAsset } from './draft-pick-asset.model';
 import { container, KEYS } from '../../container';
 import { runInDraftTransaction } from '../../shared/locks';
+import { logger } from '../../config/logger.config';
 
 // ============ Parameter Interfaces for Mutation Methods ============
 
@@ -799,7 +800,7 @@ export class DraftStateService {
         });
       } catch (error) {
         // Log but don't fail the timeout action
-        console.warn(`Failed to enable autodraft for roster ${rosterId}:`, error);
+        logger.warn(`Failed to enable autodraft for roster ${rosterId}: ${error}`);
       }
     }
 
