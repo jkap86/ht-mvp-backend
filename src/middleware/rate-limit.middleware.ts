@@ -183,6 +183,23 @@ export const apiReadLimiter = rateLimit({
 });
 
 /**
+ * Rate limiter for general write operations (create, update, delete)
+ * Limits to 60 requests per minute per user
+ * Used for notification preferences, device registration, and other write endpoints
+ */
+export const apiWriteLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 60, // 60 write operations per minute
+  message: {
+    error: { code: 'RATE_LIMITED', message: 'Too many requests, please slow down' },
+  },
+  keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: getRedisStore(),
+});
+
+/**
  * Rate limiter for trade operations (propose, accept, reject, counter)
  * Limits to 20 operations per minute per user
  */
