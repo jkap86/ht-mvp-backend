@@ -197,7 +197,7 @@ export class PlayerController {
       }
 
       const playerId = requirePlayerId(req);
-      const season = req.params.season;
+      const season = Array.isArray(req.params.season) ? req.params.season[0] : req.params.season;
 
       const stats = await this.statsService.calculateSeasonTotals(playerId, season);
       if (!stats) {
