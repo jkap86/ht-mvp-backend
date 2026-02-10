@@ -277,8 +277,12 @@ export class NotificationService {
       `INSERT INTO device_tokens (user_id, token, device_type, device_name, last_used_at)
        VALUES ($1, $2, $3, $4, NOW())
        ON CONFLICT (token) DO UPDATE SET
+         user_id = EXCLUDED.user_id,
+         device_type = EXCLUDED.device_type,
+         device_name = COALESCE(EXCLUDED.device_name, device_tokens.device_name),
          last_used_at = NOW(),
-         is_active = true`,
+         is_active = true,
+         updated_at = NOW()`,
       [userId, token, deviceType, deviceName]
     );
 
@@ -286,11 +290,14 @@ export class NotificationService {
   }
 
   /**
-   * Unregister a device token
+   * Unregister a device token (scoped to the owning user)
    */
-  async unregisterDeviceToken(token: string): Promise<void> {
-    await this.db.query('UPDATE device_tokens SET is_active = false WHERE token = $1', [token]);
-    logger.info(`Device token unregistered: ${token.substring(0, 20)}...`);
+  async unregisterDeviceToken(userId: string, token: string): Promise<void> {
+    await this.db.query(
+      'UPDATE device_tokens SET is_active = false, updated_at = NOW() WHERE token = $1 AND user_id = $2',
+      [token, userId]
+    );
+    logger.info(`Device token unregistered for user ${userId}`);
   }
 
   /**

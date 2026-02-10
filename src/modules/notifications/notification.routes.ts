@@ -9,7 +9,13 @@ import { NotificationController } from './notification.controller';
 import { NotificationService } from './notification.service';
 import { authMiddleware } from '../../middleware/auth.middleware';
 import { apiReadLimiter, apiWriteLimiter } from '../../middleware/rate-limit.middleware';
+import { validateRequest } from '../../middleware/validation.middleware';
 import { container, KEYS } from '../../container';
+import {
+  registerDeviceSchema,
+  unregisterDeviceSchema,
+  updatePreferencesSchema,
+} from './notification.schemas';
 
 const pool = container.resolve<Pool>(KEYS.POOL);
 const notificationService = new NotificationService(pool);
@@ -24,13 +30,13 @@ router.use(authMiddleware);
 router.get('/preferences', apiReadLimiter, notificationController.getPreferences);
 
 // PUT /api/notifications/preferences - Update preferences
-router.put('/preferences', apiWriteLimiter, notificationController.updatePreferences);
+router.put('/preferences', apiWriteLimiter, validateRequest(updatePreferencesSchema), notificationController.updatePreferences);
 
 // POST /api/notifications/register-device - Register FCM token
-router.post('/register-device', apiWriteLimiter, notificationController.registerDevice);
+router.post('/register-device', apiWriteLimiter, validateRequest(registerDeviceSchema), notificationController.registerDevice);
 
 // DELETE /api/notifications/unregister-device - Unregister FCM token
-router.delete('/unregister-device', apiWriteLimiter, notificationController.unregisterDevice);
+router.delete('/unregister-device', apiWriteLimiter, validateRequest(unregisterDeviceSchema), notificationController.unregisterDevice);
 
 // POST /api/notifications/test - Send test notification (development)
 if (process.env.NODE_ENV !== 'production') {

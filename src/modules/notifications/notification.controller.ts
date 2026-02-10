@@ -49,14 +49,6 @@ export class NotificationController {
       const userId = req.user!.userId;
       const { token, device_type, device_name } = req.body;
 
-      if (!token || !device_type) {
-        return res.status(400).json({ error: 'token and device_type are required' });
-      }
-
-      if (!['ios', 'android', 'web'].includes(device_type)) {
-        return res.status(400).json({ error: 'Invalid device_type' });
-      }
-
       await this.notificationService.registerDeviceToken(
         userId,
         token,
@@ -72,18 +64,15 @@ export class NotificationController {
 
   /**
    * DELETE /api/notifications/unregister-device
-   * Unregister a device token
+   * Unregister a device token (scoped to the authenticated user)
    */
   unregisterDevice = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
+      const userId = req.user!.userId;
       const { token } = req.body;
 
-      if (!token) {
-        return res.status(400).json({ error: 'token is required' });
-      }
-
-      await this.notificationService.unregisterDeviceToken(token);
-      res.status(200).json({ message: 'Device unregistered successfully' });
+      await this.notificationService.unregisterDeviceToken(userId, token);
+      res.status(204).send();
     } catch (error) {
       next(error);
     }
