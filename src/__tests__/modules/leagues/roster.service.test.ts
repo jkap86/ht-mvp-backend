@@ -37,7 +37,7 @@ const createMockLeague = (overrides: Partial<League> = {}): League =>
   new League(
     overrides.id ?? 1,
     overrides.name ?? 'Test League',
-    overrides.status ?? 'active',
+    overrides.status ?? 'pre_draft',
     overrides.settings ?? {},
     overrides.scoringSettings ?? { rec: 1.0 },
     overrides.season ?? '2024',

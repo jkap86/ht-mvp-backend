@@ -73,6 +73,7 @@ const createMockLeagueRepo = (): jest.Mocked<LeagueRepository> =>
     isUserMember: jest.fn(),
     isCommissioner: jest.fn(),
     create: jest.fn(),
+    createWithClient: jest.fn(),
     update: jest.fn(),
     delete: jest.fn(),
     findPublicLeagues: jest.fn(),
@@ -91,6 +92,7 @@ const createMockRosterRepo = (): jest.Mocked<RosterRepository> =>
 const createMockRosterService = (): jest.Mocked<RosterService> =>
   ({
     createInitialRoster: jest.fn(),
+    createInitialRosterWithClient: jest.fn(),
     joinLeague: jest.fn(),
     getLeagueMembers: jest.fn(),
     devBulkAddUsers: jest.fn(),
@@ -127,8 +129,14 @@ describe('LeagueService', () => {
     mockRosterRepo = createMockRosterRepo();
     mockRosterService = createMockRosterService();
     mockDraftService = createMockDraftService();
-    // Create a mock pool (not used in tests but required by constructor)
-    const mockPool = {} as Pool;
+    // Create a mock pool with connect() for runInTransaction support
+    const mockClient = {
+      query: jest.fn().mockResolvedValue({ rows: [] }),
+      release: jest.fn(),
+    };
+    const mockPool = {
+      connect: jest.fn().mockResolvedValue(mockClient),
+    } as unknown as Pool;
     leagueService = new LeagueService(
       mockPool,
       mockLeagueRepo,
@@ -140,8 +148,9 @@ describe('LeagueService', () => {
 
   describe('createLeague', () => {
     it('should create league and commissioner roster on success', async () => {
-      mockLeagueRepo.create.mockResolvedValue(mockLeague);
-      mockRosterService.createInitialRoster.mockResolvedValue(mockRoster as any);
+      mockLeagueRepo.createWithClient.mockResolvedValue(mockLeague);
+      mockRosterService.createInitialRosterWithClient.mockResolvedValue(mockRoster as any);
+      mockDraftService.createDraft.mockResolvedValue({} as any);
       mockLeagueRepo.findByIdWithUserRoster.mockResolvedValue(mockLeague);
 
       const result = await leagueService.createLeague(
@@ -150,8 +159,8 @@ describe('LeagueService', () => {
       );
 
       expect(result.name).toBe('Test League');
-      expect(mockLeagueRepo.create).toHaveBeenCalled();
-      expect(mockRosterService.createInitialRoster).toHaveBeenCalledWith(1, 'user-123');
+      expect(mockLeagueRepo.createWithClient).toHaveBeenCalled();
+      expect(mockRosterService.createInitialRosterWithClient).toHaveBeenCalled();
     });
 
     it('should throw ValidationException for empty name', async () => {
@@ -392,8 +401,9 @@ describe('LeagueService', () => {
 
   describe('createLeague with isPublic', () => {
     it('should create a public league when isPublic is true', async () => {
-      mockLeagueRepo.create.mockResolvedValue(mockPublicLeague);
-      mockRosterService.createInitialRoster.mockResolvedValue(mockRoster as any);
+      mockLeagueRepo.createWithClient.mockResolvedValue(mockPublicLeague);
+      mockRosterService.createInitialRosterWithClient.mockResolvedValue(mockRoster as any);
+      mockDraftService.createDraft.mockResolvedValue({} as any);
       mockLeagueRepo.findByIdWithUserRoster.mockResolvedValue(mockPublicLeague);
 
       const result = await leagueService.createLeague(
@@ -401,15 +411,17 @@ describe('LeagueService', () => {
         'user-123'
       );
 
-      expect(mockLeagueRepo.create).toHaveBeenCalledWith(
+      expect(mockLeagueRepo.createWithClient).toHaveBeenCalledWith(
+        expect.anything(),
         expect.objectContaining({ isPublic: true })
       );
       expect(result.is_public).toBe(true);
     });
 
     it('should create a private league by default', async () => {
-      mockLeagueRepo.create.mockResolvedValue(mockLeague);
-      mockRosterService.createInitialRoster.mockResolvedValue(mockRoster as any);
+      mockLeagueRepo.createWithClient.mockResolvedValue(mockLeague);
+      mockRosterService.createInitialRosterWithClient.mockResolvedValue(mockRoster as any);
+      mockDraftService.createDraft.mockResolvedValue({} as any);
       mockLeagueRepo.findByIdWithUserRoster.mockResolvedValue(mockLeague);
 
       await leagueService.createLeague(
@@ -417,7 +429,8 @@ describe('LeagueService', () => {
         'user-123'
       );
 
-      expect(mockLeagueRepo.create).toHaveBeenCalledWith(
+      expect(mockLeagueRepo.createWithClient).toHaveBeenCalledWith(
+        expect.anything(),
         expect.objectContaining({ isPublic: false })
       );
     });
