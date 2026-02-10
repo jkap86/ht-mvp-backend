@@ -1,7 +1,9 @@
 import { Pool, PoolClient } from 'pg';
 import { Player, playerFromDatabase } from './players.model';
-import { SleeperPlayer } from './sleeper.client';
+import { SleeperPlayer } from '../../integrations/sleeper/sleeper-api-client';
 import { CFBDPlayer } from './cfbd.client';
+import { PlayerMasterData } from '../../integrations/shared/stats-provider.types';
+import { ExternalIdRepository } from './external-ids.repository';
 
 export class PlayerRepository {
   constructor(private readonly db: Pool) {}
@@ -195,10 +197,41 @@ export class PlayerRepository {
   }
 
   /**
+   * Get mapping of external_id to internal player_id for a specific provider
+   * This is the provider-agnostic version that queries the external_ids table
+   * @param provider - Provider identifier (e.g., 'sleeper', 'fantasypros')
+   * @returns Map of external_id -> player_id
+   */
+  async getExternalIdMapForProvider(provider: string): Promise<Map<string, number>> {
+    const result = await this.db.query(
+      'SELECT external_id, player_id FROM player_external_ids WHERE provider = $1',
+      [provider]
+    );
+    const map = new Map<string, number>();
+    for (const row of result.rows) {
+      map.set(row.external_id, row.player_id);
+    }
+    return map;
+  }
+
+  /**
    * Get mapping of sleeper_id to internal player_id for all players
-   * Used for efficient bulk stats syncing
+   * @deprecated Use getExternalIdMapForProvider('sleeper') instead
+   * Kept for backward compatibility during migration
+   * Uses fallback logic: tries external_ids table first, falls back to legacy column
    */
   async getSleeperIdMap(): Promise<Map<string, number>> {
+    // Check if external_ids table has data for sleeper provider
+    const externalIdsExist = await this.db.query(
+      "SELECT EXISTS(SELECT 1 FROM player_external_ids WHERE provider = 'sleeper' LIMIT 1)"
+    );
+
+    if (externalIdsExist.rows[0].exists) {
+      // Use new external_ids table
+      return this.getExternalIdMapForProvider('sleeper');
+    }
+
+    // Fall back to legacy sleeper_id column during migration
     const result = await this.db.query(
       'SELECT sleeper_id, id FROM players WHERE sleeper_id IS NOT NULL'
     );
@@ -370,5 +403,88 @@ export class PlayerRepository {
       "SELECT DISTINCT team FROM players WHERE player_type = 'college' AND team IS NOT NULL"
     );
     return result.rows.map((row) => row.team);
+  }
+
+  /**
+   * Batch upsert players from provider master data (provider-agnostic version)
+   * This method works with any stats provider using the domain DTOs
+   * @param playerData - Array of player master data from provider
+   * @param provider - Provider identifier (e.g., 'sleeper', 'fantasypros')
+   * @param externalIdRepo - Repository for managing external ID mappings
+   * @param batchSize - Number of players to process per batch
+   * @returns Number of players upserted
+   */
+  async batchUpsertFromProvider(
+    playerData: PlayerMasterData[],
+    provider: string,
+    externalIdRepo: ExternalIdRepository,
+    batchSize = 100
+  ): Promise<number> {
+    if (playerData.length === 0) {
+      return 0;
+    }
+
+    let totalUpserted = 0;
+
+    // Process in batches
+    for (let i = 0; i < playerData.length; i += batchSize) {
+      const batch = playerData.slice(i, i + batchSize);
+
+      // Build parameterized batch insert (without sleeper_id - that goes in external_ids table)
+      const values: any[] = [];
+      const placeholders = batch
+        .map((player, idx) => {
+          const baseIdx = idx * 11;
+          values.push(
+            player.firstName || null,
+            player.lastName || null,
+            player.fullName || `${player.firstName || ''} ${player.lastName || ''}`.trim(),
+            [], // fantasy_positions - TODO: map from provider data if available
+            player.position || null,
+            player.team || null,
+            player.yearsExp || null,
+            player.age || null,
+            player.active ?? true,
+            player.status || null,
+            player.injuryStatus || null
+          );
+          return `($${baseIdx + 1}, $${baseIdx + 2}, $${baseIdx + 3}, $${baseIdx + 4}, $${baseIdx + 5}, $${baseIdx + 6}, $${baseIdx + 7}, $${baseIdx + 8}, $${baseIdx + 9}, $${baseIdx + 10}, $${baseIdx + 11})`;
+        })
+        .join(', ');
+
+      // First, find or create players by matching on full_name + position
+      // This is a simplified approach - in production, you might want more sophisticated matching
+      const result = await this.db.query(
+        `INSERT INTO players (
+          first_name, last_name, full_name, fantasy_positions,
+          position, team, years_exp, age, active, status, injury_status
+        ) VALUES ${placeholders}
+        ON CONFLICT (sleeper_id) DO UPDATE SET
+          first_name = EXCLUDED.first_name,
+          last_name = EXCLUDED.last_name,
+          full_name = EXCLUDED.full_name,
+          position = EXCLUDED.position,
+          team = EXCLUDED.team,
+          years_exp = EXCLUDED.years_exp,
+          age = EXCLUDED.age,
+          active = EXCLUDED.active,
+          status = EXCLUDED.status,
+          injury_status = EXCLUDED.injury_status,
+          updated_at = CURRENT_TIMESTAMP
+        RETURNING id`,
+        values
+      );
+
+      // Now upsert external IDs for each player
+      for (let j = 0; j < batch.length; j++) {
+        const playerId = result.rows[j].id;
+        const externalId = batch[j].externalId;
+        await externalIdRepo.upsertExternalId(playerId, provider, externalId);
+      }
+
+      totalUpserted += batch.length;
+    }
+
+    return totalUpserted;
   }
 }

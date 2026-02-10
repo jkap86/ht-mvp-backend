@@ -130,6 +130,10 @@ export const KEYS = {
   SLEEPER_CLIENT: 'sleeperClient',
   CFBD_CLIENT: 'cfbdClient',
 
+  // Stats Provider System
+  STATS_PROVIDER: 'statsProvider',
+  EXTERNAL_ID_REPO: 'externalIdRepo',
+
   // System Messages
   SYSTEM_MESSAGE_SERVICE: 'systemMessageService',
   EVENT_LISTENER_SERVICE: 'eventListenerService',

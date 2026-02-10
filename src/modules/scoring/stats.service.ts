@@ -1,7 +1,8 @@
-import { SleeperApiClient, SleeperPlayerStats } from '../players/sleeper.client';
+import { IStatsProvider } from '../../integrations/shared/stats-provider.interface';
+import { PlayerStatLine } from '../../integrations/shared/stats-provider.types';
 import { PlayerStatsRepository } from './scoring.repository';
 import { PlayerProjectionsRepository } from './projections.repository';
-import { PlayerRepository } from '../players/players.repository';
+import { ExternalIdRepository } from '../players/external-ids.repository';
 import { PlayerStats } from './scoring.model';
 import { logger } from '../../config/logger.config';
 
@@ -13,28 +14,28 @@ export interface StatsSyncResult {
 
 export class StatsService {
   constructor(
-    private readonly sleeperClient: SleeperApiClient,
+    private readonly statsProvider: IStatsProvider,
     private readonly statsRepo: PlayerStatsRepository,
-    private readonly playerRepo: PlayerRepository,
+    private readonly externalIdRepo: ExternalIdRepository,
     private readonly projectionsRepo?: PlayerProjectionsRepository
   ) {}
 
   /**
-   * Sync weekly player stats from Sleeper API
+   * Sync weekly player stats from configured provider
    * @param season - NFL season year
    * @param week - Week number (1-18)
    */
   async syncWeeklyStats(season: number, week: number): Promise<StatsSyncResult> {
-    logger.info(`Syncing stats for ${season} week ${week}...`);
+    logger.info(`Syncing stats for ${season} week ${week} from ${this.statsProvider.providerId}...`);
 
-    // Fetch stats from Sleeper
-    const sleeperStats = await this.sleeperClient.fetchWeeklyStats(season.toString(), week);
-    const sleeperIds = Object.keys(sleeperStats);
-    logger.info(`Fetched ${sleeperIds.length} player stats from Sleeper`);
+    // Fetch stats from provider
+    const providerStats = await this.statsProvider.fetchWeeklyStats(season, week);
+    const externalIds = Object.keys(providerStats);
+    logger.info(`Fetched ${externalIds.length} player stats from ${this.statsProvider.providerId}`);
 
-    // Get sleeper_id -> player_id mapping
-    const sleeperIdMap = await this.playerRepo.getSleeperIdMap();
-    logger.info(`Found ${sleeperIdMap.size} players with sleeper IDs`);
+    // Get external_id -> player_id mapping
+    const externalIdMap = await this.externalIdRepo.getExternalIdMap(this.statsProvider.providerId);
+    logger.info(`Found ${externalIdMap.size} players with ${this.statsProvider.providerId} IDs`);
 
     // Transform and prepare stats for bulk upsert
     const statsToUpsert: Array<
@@ -42,15 +43,15 @@ export class StatsService {
     > = [];
     let skipped = 0;
 
-    for (const sleeperId of sleeperIds) {
-      const playerId = sleeperIdMap.get(sleeperId);
+    for (const externalId of externalIds) {
+      const playerId = externalIdMap.get(externalId);
       if (!playerId) {
         skipped++;
         continue;
       }
 
-      const sleeper = sleeperStats[sleeperId];
-      const transformed = this.mapSleeperStatsToPlayerStats(sleeper, playerId, season, week);
+      const statLine = providerStats[externalId];
+      const transformed = this.mapStatLineToPlayerStats(statLine, playerId, season, week);
       statsToUpsert.push(transformed);
     }
 
@@ -64,12 +65,12 @@ export class StatsService {
     return {
       synced: statsToUpsert.length,
       skipped,
-      total: sleeperIds.length,
+      total: externalIds.length,
     };
   }
 
   /**
-   * Sync weekly player projections from Sleeper API
+   * Sync weekly player projections from configured provider
    * Projections are stored in a separate player_projections table to avoid
    * overwriting actual stats during live games.
    * @param season - NFL season year
@@ -81,18 +82,15 @@ export class StatsService {
       return { synced: 0, skipped: 0, total: 0 };
     }
 
-    logger.info(`Syncing projections for ${season} week ${week}...`);
+    logger.info(`Syncing projections for ${season} week ${week} from ${this.statsProvider.providerId}...`);
 
-    // Fetch projections from Sleeper
-    const sleeperProjections = await this.sleeperClient.fetchWeeklyProjections(
-      season.toString(),
-      week
-    );
-    const sleeperIds = Object.keys(sleeperProjections);
-    logger.info(`Fetched ${sleeperIds.length} player projections from Sleeper`);
+    // Fetch projections from provider
+    const providerProjections = await this.statsProvider.fetchWeeklyProjections(season, week);
+    const externalIds = Object.keys(providerProjections);
+    logger.info(`Fetched ${externalIds.length} player projections from ${this.statsProvider.providerId}`);
 
-    // Get sleeper_id -> player_id mapping
-    const sleeperIdMap = await this.playerRepo.getSleeperIdMap();
+    // Get external_id -> player_id mapping
+    const externalIdMap = await this.externalIdRepo.getExternalIdMap(this.statsProvider.providerId);
 
     // Transform and prepare projections for bulk upsert
     const projectionsToUpsert: Array<
@@ -100,15 +98,15 @@ export class StatsService {
     > = [];
     let skipped = 0;
 
-    for (const sleeperId of sleeperIds) {
-      const playerId = sleeperIdMap.get(sleeperId);
+    for (const externalId of externalIds) {
+      const playerId = externalIdMap.get(externalId);
       if (!playerId) {
         skipped++;
         continue;
       }
 
-      const sleeper = sleeperProjections[sleeperId];
-      const transformed = this.mapSleeperStatsToPlayerStats(sleeper, playerId, season, week);
+      const statLine = providerProjections[externalId];
+      const transformed = this.mapStatLineToPlayerStats(statLine, playerId, season, week);
       projectionsToUpsert.push(transformed);
     }
 
@@ -124,26 +122,27 @@ export class StatsService {
     return {
       synced: projectionsToUpsert.length,
       skipped,
-      total: sleeperIds.length,
+      total: externalIds.length,
     };
   }
 
   /**
-   * Get the current NFL week from Sleeper
+   * Get the current NFL week from configured provider
    */
   async getCurrentNflWeek(): Promise<{ season: string; week: number }> {
-    const nflState = await this.sleeperClient.fetchNflState();
+    const nflState = await this.statsProvider.fetchNflState();
     return {
-      season: nflState.season,
+      season: nflState.season.toString(),
       week: nflState.week,
     };
   }
 
   /**
-   * Transform Sleeper stats format to internal PlayerStats format
+   * Transform provider stat line to internal PlayerStats format
+   * This method is provider-agnostic - it works with the domain DTO
    */
-  private mapSleeperStatsToPlayerStats(
-    sleeper: SleeperPlayerStats,
+  private mapStatLineToPlayerStats(
+    statLine: PlayerStatLine,
     playerId: number,
     season: number,
     week: number
@@ -153,31 +152,32 @@ export class StatsService {
       season,
       week,
       // Passing
-      passYards: sleeper.pass_yd || 0,
-      passTd: sleeper.pass_td || 0,
-      passInt: sleeper.pass_int || 0,
+      passYards: statLine.passYards || 0,
+      passTd: statLine.passTd || 0,
+      passInt: statLine.passInt || 0,
       // Rushing
-      rushYards: sleeper.rush_yd || 0,
-      rushTd: sleeper.rush_td || 0,
+      rushYards: statLine.rushYards || 0,
+      rushTd: statLine.rushTd || 0,
       // Receiving
-      receptions: sleeper.rec || 0,
-      recYards: sleeper.rec_yd || 0,
-      recTd: sleeper.rec_td || 0,
+      receptions: statLine.receptions || 0,
+      recYards: statLine.recYards || 0,
+      recTd: statLine.recTd || 0,
       // Misc - sum up all 2pt conversions
-      fumblesLost: sleeper.fum_lost || 0,
-      twoPtConversions: (sleeper.pass_2pt || 0) + (sleeper.rush_2pt || 0) + (sleeper.rec_2pt || 0),
+      fumblesLost: statLine.fumblesLost || 0,
+      twoPtConversions:
+        (statLine.pass2pt || 0) + (statLine.rush2pt || 0) + (statLine.rec2pt || 0),
       // Kicking
-      fgMade: sleeper.fgm || 0,
-      fgMissed: sleeper.fgmiss || 0,
-      patMade: sleeper.xpm || 0,
-      patMissed: sleeper.xpmiss || 0,
+      fgMade: statLine.fgMade || 0,
+      fgMissed: statLine.fgMissed || 0,
+      patMade: statLine.xpMade || 0,
+      patMissed: statLine.xpMissed || 0,
       // Defense
-      defTd: sleeper.def_td || 0,
-      defInt: sleeper.int || 0,
-      defSacks: sleeper.sack || 0,
-      defFumbleRec: sleeper.fum_rec || 0,
-      defSafety: sleeper.safe || 0,
-      defPointsAllowed: sleeper.pts_allow || 0,
+      defTd: statLine.defTd || 0,
+      defInt: statLine.defInt || 0,
+      defSacks: statLine.defSacks || 0,
+      defFumbleRec: statLine.defFumbleRec || 0,
+      defSafety: statLine.defSafety || 0,
+      defPointsAllowed: statLine.defPointsAllowed || 0,
     };
   }
 }

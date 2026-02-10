@@ -1,5 +1,6 @@
 import { PlayerRepository } from './players.repository';
-import { SleeperApiClient } from './sleeper.client';
+import { ExternalIdRepository } from './external-ids.repository';
+import { IStatsProvider } from '../../integrations/shared/stats-provider.interface';
 import { CFBDApiClient } from './cfbd.client';
 import { playerToResponse } from './players.model';
 import { NotFoundException } from '../../utils/exceptions';
@@ -8,7 +9,8 @@ import { logger } from '../../config/logger.config';
 export class PlayerService {
   constructor(
     private readonly playerRepo: PlayerRepository,
-    private readonly sleeperClient: SleeperApiClient,
+    private readonly externalIdRepo: ExternalIdRepository,
+    private readonly statsProvider: IStatsProvider,
     private readonly cfbdClient?: CFBDApiClient
   ) {}
 
@@ -36,24 +38,27 @@ export class PlayerService {
     return players.map(playerToResponse);
   }
 
-  async syncPlayersFromSleeper(): Promise<{ synced: number; total: number }> {
-    logger.info('Starting player sync from Sleeper API');
+  /**
+   * Sync players from configured stats provider
+   */
+  async syncPlayersFromProvider(): Promise<{ synced: number; total: number }> {
+    logger.info(`Starting player sync from ${this.statsProvider.providerId}`);
 
-    const players = await this.sleeperClient.fetchNflPlayers();
-    const playerIds = Object.keys(players);
+    const playerData = await this.statsProvider.fetchPlayerMasterData();
+    const externalIds = Object.keys(playerData);
 
     // Filter for fantasy-relevant players only (QB, RB, WR, TE, K, DEF)
     const relevantPositions = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'];
 
-    const playersToSync = playerIds
-      .map((id) => players[id])
+    const playersToSync = externalIds
+      .map((id) => playerData[id])
       .filter((player) => {
         // Must have a relevant position
         if (!player.position || !relevantPositions.includes(player.position)) {
           return false;
         }
         // Must have a name
-        if (!player.full_name && !player.first_name) {
+        if (!player.fullName && !player.firstName) {
           return false;
         }
         return true;
@@ -62,7 +67,12 @@ export class PlayerService {
     logger.info('Found fantasy-relevant players to sync', { count: playersToSync.length });
 
     // Use batch upsert for much better performance (100 players per batch)
-    const syncedCount = await this.playerRepo.batchUpsertFromSleeper(playersToSync, 100);
+    const syncedCount = await this.playerRepo.batchUpsertFromProvider(
+      playersToSync,
+      this.statsProvider.providerId,
+      this.externalIdRepo,
+      100
+    );
 
     logger.info('Player sync complete', { synced: syncedCount });
 
@@ -71,8 +81,22 @@ export class PlayerService {
     return { synced: syncedCount, total: totalCount };
   }
 
+  /**
+   * @deprecated Use syncPlayersFromProvider() instead
+   * Kept for backward compatibility during migration
+   */
+  async syncPlayersFromSleeper(): Promise<{ synced: number; total: number }> {
+    return this.syncPlayersFromProvider();
+  }
+
   async getNflState(): Promise<any> {
-    return this.sleeperClient.fetchNflState();
+    const nflState = await this.statsProvider.fetchNflState();
+    return {
+      season: nflState.season.toString(),
+      week: nflState.week,
+      season_type: nflState.seasonType,
+      display_week: nflState.displayWeek,
+    };
   }
 
   /**

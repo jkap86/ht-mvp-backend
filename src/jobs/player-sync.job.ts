@@ -36,9 +36,9 @@ export async function runPlayerSync(): Promise<void> {
 
     try {
       const tickStart = Date.now();
-      logger.info('Starting player sync from Sleeper API...');
+      logger.info('Starting player sync from configured provider...');
       const playerService = container.resolve<PlayerService>(KEYS.PLAYER_SERVICE);
-      const result = await playerService.syncPlayersFromSleeper();
+      const result = await playerService.syncPlayersFromProvider();
       logger.info(`Player sync complete: ${result.synced} synced, ${result.total} total`, {
         durationMs: Date.now() - tickStart,
       });

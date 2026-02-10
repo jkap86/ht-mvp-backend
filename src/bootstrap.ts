@@ -54,8 +54,10 @@ import { SystemMessageService } from './modules/chat/system-message.service';
 import { EventListenerService } from './modules/chat/event-listener.service';
 import { DmService } from './modules/dm/dm.service';
 import { PlayerService } from './modules/players/players.service';
-import { SleeperApiClient } from './modules/players/sleeper.client';
+import { SleeperApiClient } from './integrations/sleeper/sleeper-api-client';
 import { CFBDApiClient } from './modules/players/cfbd.client';
+import { ExternalIdRepository } from './modules/players/external-ids.repository';
+import { StatsProviderFactory } from './integrations/provider-factory';
 import { RosterService as RosterPlayerService } from './modules/rosters/rosters.service';
 import { RosterMutationService } from './modules/rosters/roster-mutation.service';
 import { RosterRulesService } from './modules/rosters/roster-rules.service';
@@ -136,7 +138,19 @@ function bootstrap(): void {
     () => new DuesRepository(container.resolve(KEYS.POOL))
   );
 
-  // External Clients
+  // Stats Provider (singleton per app instance)
+  container.register(KEYS.STATS_PROVIDER, () => {
+    const providerType = StatsProviderFactory.getDefaultProviderType();
+    return StatsProviderFactory.createProvider(providerType);
+  });
+
+  // External ID Repository
+  container.register(
+    KEYS.EXTERNAL_ID_REPO,
+    () => new ExternalIdRepository(container.resolve(KEYS.POOL))
+  );
+
+  // External Clients (legacy - for backward compatibility)
   container.register(KEYS.SLEEPER_CLIENT, () => new SleeperApiClient());
 
   // CFBD Client - only register if API key is configured
@@ -373,7 +387,8 @@ function bootstrap(): void {
     () =>
       new PlayerService(
         container.resolve(KEYS.PLAYER_REPO),
-        container.resolve(KEYS.SLEEPER_CLIENT),
+        container.resolve(KEYS.EXTERNAL_ID_REPO),
+        container.resolve(KEYS.STATS_PROVIDER),
         container.resolve(KEYS.CFBD_CLIENT)
       )
   );
@@ -470,9 +485,9 @@ function bootstrap(): void {
     KEYS.STATS_SERVICE,
     () =>
       new StatsService(
-        container.resolve(KEYS.SLEEPER_CLIENT),
+        container.resolve(KEYS.STATS_PROVIDER),
         container.resolve(KEYS.PLAYER_STATS_REPO),
-        container.resolve(KEYS.PLAYER_REPO),
+        container.resolve(KEYS.EXTERNAL_ID_REPO),
         container.resolve(KEYS.PLAYER_PROJECTIONS_REPO)
       )
   );
