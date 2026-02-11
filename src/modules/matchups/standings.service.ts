@@ -97,7 +97,7 @@ export class StandingsService {
     const sortedMatchups = [...matchups].sort((a, b) => a.week - b.week);
 
     // Get recent results, most recent first
-    const recentMatchups = sortedMatchups.slice(-5).reverse();
+    const recentMatchups = sortedMatchups.reverse();
 
     let streak = 0;
     let streakType: 'W' | 'L' | 'T' | null = null;

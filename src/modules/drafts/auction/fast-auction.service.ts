@@ -20,6 +20,7 @@ import { runWithLock, LockDomain } from '../../../shared/transaction-runner';
 import { logger } from '../../../config/logger.config';
 import { Draft } from '../drafts.model';
 import { resolvePriceWithClient } from './auction-price-resolver';
+import { calculateMaxAffordableBid, canAffordMinBid } from './auction-budget-calculator';
 import { finalizeDraftCompletion } from '../draft-completion.utils';
 import { RosterPlayersRepository } from '../../rosters/rosters.repository';
 import { container, KEYS } from '../../../container';
@@ -203,6 +204,22 @@ export class FastAuctionService {
           }
         }
 
+        // Re-validate draft state inside lock (prevents TOCTOU race)
+        const draftCheck = await client.query('SELECT status, settings, current_roster_id FROM drafts WHERE id = $1 FOR UPDATE', [draftId]);
+        if (draftCheck.rows.length === 0) {
+          throw new NotFoundException('Draft not found');
+        }
+        const lockedDraft = draftCheck.rows[0];
+        if (lockedDraft.status !== 'in_progress') {
+          throw new ValidationException('Draft is not in progress');
+        }
+        if (lockedDraft.settings?.auctionMode !== 'fast') {
+          throw new ValidationException('This is not a fast auction draft');
+        }
+        if (lockedDraft.current_roster_id !== roster.id) {
+          throw new ForbiddenException('It is not your turn to nominate');
+        }
+
         // Check no active lot exists (inside lock)
         const hasActive = await this.lotRepo.hasActiveLotWithClient(client, draftId);
         if (hasActive) {
@@ -251,9 +268,12 @@ export class FastAuctionService {
         // Budget validation: ensure nominator can afford startingBid
         // (In fast auction, nominator becomes leader at startingBid)
         const totalBudget = league.leagueSettings?.auctionBudget ?? 200;
-        const remainingSlots = rosterSlots - budgetInfo.wonCount - 1; // -1 for this nomination
-        const requiredReserve = Math.max(0, remainingSlots) * settings.minBid;
-        const maxAffordable = totalBudget - budgetInfo.spent - requiredReserve - budgetInfo.leadingCommitment;
+        const maxAffordable = calculateMaxAffordableBid(
+          totalBudget, rosterSlots, budgetInfo,
+          0,      // no existing lot bid yet (lot not created)
+          false,  // not yet leading any lot for this nomination
+          settings.minBid
+        );
 
         const openingBid = settings.minBid;
 
@@ -375,6 +395,15 @@ export class FastAuctionService {
           throw new ValidationException('Lot is no longer active');
         }
 
+        // Re-validate roster membership inside lock (prevents stale read race)
+        const rosterCheck = await client.query(
+          'SELECT id FROM rosters WHERE league_id = $1 AND user_id = $2',
+          [draft.leagueId, userId]
+        );
+        if (rosterCheck.rows.length === 0) {
+          throw new ForbiddenException('You are not a member of this league');
+        }
+
         // Paused check: bid_deadline is NULL when draft is paused
         if (!lot.bidDeadline) {
           throw new ValidationException('Draft is paused; bidding is suspended');
@@ -407,23 +436,22 @@ export class FastAuctionService {
         const rosterSlots = league.leagueSettings?.rosterSlots ?? 15;
         const budgetInfo = await this.lotRepo.getRosterBudgetDataWithClient(client, draftId, roster.id);
 
-        // Calculate remaining slots and required reserve
-        const remainingSlots = rosterSlots - budgetInfo.wonCount - 1; // -1 for this lot
-        const requiredReserve = Math.max(0, remainingSlots) * settings.minBid;
-
         // Calculate max affordable bid
-        let maxAffordable =
-          totalBudget - budgetInfo.spent - requiredReserve - budgetInfo.leadingCommitment;
         const isLeadingThisLot = lot.currentBidderRosterId === roster.id;
-        if (isLeadingThisLot) {
-          maxAffordable += lot.currentBid; // Can reuse current commitment
-        }
+        const maxAffordable = calculateMaxAffordableBid(
+          totalBudget, rosterSlots, budgetInfo,
+          lot.currentBid,
+          isLeadingThisLot,
+          settings.minBid
+        );
 
         if (maxBid > maxAffordable) {
           throw new ValidationException(`Maximum affordable bid is $${maxAffordable}`);
         }
 
         // Worst-case budget validation: ensure user can fill remaining roster at minBid
+        const remainingSlots = rosterSlots - budgetInfo.wonCount - 1; // -1 for this lot
+        const requiredReserve = Math.max(0, remainingSlots) * settings.minBid;
         const worstCaseSpend = maxBid + budgetInfo.spent + requiredReserve;
         if (worstCaseSpend > totalBudget) {
           const maxAllowed = totalBudget - budgetInfo.spent - requiredReserve;
@@ -441,14 +469,12 @@ export class FastAuctionService {
           [lotId, roster.id, maxBid]
         );
 
-        // Record bid in history (with idempotency key for replay detection)
-        if (idempotencyKey) {
-          await client.query(
-            `INSERT INTO auction_bid_history (lot_id, roster_id, bid_amount, is_proxy, idempotency_key)
-             VALUES ($1, $2, $3, $4, $5)`,
-            [lotId, roster.id, maxBid, true, idempotencyKey]
-          );
-        }
+        // Record bid in history (always, for consistency with slow auction)
+        await client.query(
+          `INSERT INTO auction_bid_history (lot_id, roster_id, bid_amount, is_proxy, idempotency_key)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [lotId, roster.id, maxBid, true, idempotencyKey ?? null]
+        );
 
         // Resolve price using shared utility
         const result = await resolvePriceWithClient(client, lot, settings);
@@ -544,13 +570,19 @@ export class FastAuctionService {
   }
 
   /**
-   * Advance to the next nominator after a lot is settled.
-   * Skips ineligible teams (full roster or can't afford minBid).
-   * If no teams can nominate (or no eligible players remain), triggers auction completion.
-   * Uses transaction with advisory lock to prevent race conditions.
+   * Shared lock body for advanceNominator and forceAdvanceNominator.
+   * Acquires DRAFT lock, reads draft state, cycles through draft order to find
+   * the next eligible nominator, and updates the database atomically.
+   * Returns null if the draft is not in a state where advancement applies.
    */
-  async advanceNominator(draftId: number): Promise<void> {
-    const result = await runWithLock(
+  private async advanceNominatorInternal(draftId: number): Promise<{
+    auctionComplete: boolean;
+    leagueId?: number;
+    nominatorRosterId?: number;
+    nominationNumber?: number;
+    nominationDeadline?: Date;
+  } | null> {
+    return runWithLock(
       this.pool,
       LockDomain.DRAFT,
       draftId,
@@ -576,7 +608,7 @@ export class FastAuctionService {
         // Check if any eligible players remain
         const hasEligiblePlayers = await this.playerRepo.findRandomEligiblePlayerForAuction(client, draftId);
         if (!hasEligiblePlayers) {
-          return { auctionComplete: true, leagueId: draft.league_id } as const;
+          return { auctionComplete: true, leagueId: draft.league_id };
         }
 
         // Get draft order
@@ -621,10 +653,7 @@ export class FastAuctionService {
           }
 
           // Check can afford minBid
-          const remainingSlots = rosterSlots - budgetData.wonCount - 1;
-          const requiredReserve = Math.max(0, remainingSlots) * minBid;
-          const maxAffordable = totalBudget - budgetData.spent - requiredReserve - budgetData.leadingCommitment;
-          if (minBid > maxAffordable) {
+          if (!canAffordMinBid(totalBudget, rosterSlots, budgetData, minBid)) {
             continue;
           }
 
@@ -642,21 +671,30 @@ export class FastAuctionService {
             nominatorRosterId: rosterId,
             nominationNumber: nextPick,
             nominationDeadline,
-          } as const;
+          };
         }
 
         // All teams are ineligible - auction should complete
-        return { auctionComplete: true, leagueId: draft.league_id } as const;
+        return { auctionComplete: true, leagueId: draft.league_id };
       }
     );
+  }
 
+  /**
+   * Advance to the next nominator after a lot is settled.
+   * Skips ineligible teams (full roster or can't afford minBid).
+   * If no teams can nominate (or no eligible players remain), triggers auction completion.
+   * Uses transaction with advisory lock to prevent race conditions.
+   */
+  async advanceNominator(draftId: number): Promise<void> {
+    const result = await this.advanceNominatorInternal(draftId);
     if (!result) {
       return;
     }
 
     if (result.auctionComplete) {
       // Finalize the auction draft
-      await this.completeAuctionDraft(draftId, result.leagueId);
+      await this.completeAuctionDraft(draftId, result.leagueId!);
       return;
     }
 
@@ -668,7 +706,7 @@ export class FastAuctionService {
         draftId,
         nominatorRosterId: result.nominatorRosterId,
         nominationNumber: result.nominationNumber,
-        nominationDeadline: result.nominationDeadline.toISOString(),
+        nominationDeadline: result.nominationDeadline!.toISOString(),
       },
     });
   }
@@ -679,109 +717,13 @@ export class FastAuctionService {
    */
   async forceAdvanceNominator(draftId: number): Promise<void> {
     try {
-      const result = await runWithLock(
-        this.pool,
-        LockDomain.DRAFT,
-        draftId,
-        async (client) => {
-          // Get current draft state
-          const draftResult = await client.query(
-            'SELECT * FROM drafts WHERE id = $1 FOR UPDATE',
-            [draftId]
-          );
-          if (draftResult.rows.length === 0) {
-            return null;
-          }
-
-          const draft = draftResult.rows[0];
-          if (draft.status !== 'in_progress') {
-            return null;
-          }
-
-          const nominationSeconds = draft.settings?.nominationSeconds ?? 60;
-          const minBid = draft.settings?.minBid ?? 1;
-
-          // Check if any eligible players remain
-          const hasEligiblePlayers = await this.playerRepo.findRandomEligiblePlayerForAuction(client, draftId);
-          if (!hasEligiblePlayers) {
-            return { auctionComplete: true, leagueId: draft.league_id } as const;
-          }
-
-          // Get draft order
-          const orderResult = await client.query(
-            'SELECT * FROM draft_order WHERE draft_id = $1 ORDER BY draft_position',
-            [draftId]
-          );
-          if (orderResult.rows.length === 0) {
-            return null;
-          }
-
-          const order = orderResult.rows;
-
-          // Get league settings for budget/slot checks
-          const leagueResult = await client.query('SELECT * FROM leagues WHERE id = $1', [draft.league_id]);
-          if (leagueResult.rows.length === 0) {
-            return null;
-          }
-          const leagueSettings = leagueResult.rows[0].league_settings ?? {};
-          const totalBudget = leagueSettings.auctionBudget ?? 200;
-          const rosterSlots = leagueSettings.rosterSlots ?? 15;
-
-          // Get all roster budget data in one query
-          const rosterIds = order.map((o: any) => o.roster_id);
-          const budgetDataMap = await this.lotRepo.getAllRosterBudgetDataWithClient(client, draftId, rosterIds);
-
-          // Try each team in order, starting from the next pick position
-          const currentPick = draft.current_pick || 0;
-          for (let i = 0; i < order.length; i++) {
-            const nextPick = currentPick + 1 + i;
-            const nextIndex = (nextPick - 1) % order.length;
-            const candidate = order[nextIndex];
-            const rosterId = candidate.roster_id;
-
-            const budgetData = budgetDataMap.get(rosterId) ?? { spent: 0, wonCount: 0, leadingCommitment: 0 };
-
-            // Check roster not full
-            if (budgetData.wonCount >= rosterSlots) {
-              continue;
-            }
-
-            // Check can afford minBid
-            const remainingSlots = rosterSlots - budgetData.wonCount - 1;
-            const requiredReserve = Math.max(0, remainingSlots) * minBid;
-            const maxAffordable = totalBudget - budgetData.spent - requiredReserve - budgetData.leadingCommitment;
-            if (minBid > maxAffordable) {
-              continue;
-            }
-
-            // This team is eligible - set them as next nominator
-            const nominationDeadline = new Date(Date.now() + nominationSeconds * 1000);
-            await client.query(
-              `UPDATE drafts
-               SET current_pick = $1, current_roster_id = $2, pick_deadline = $3, updated_at = NOW()
-               WHERE id = $4`,
-              [nextPick, rosterId, nominationDeadline, draftId]
-            );
-
-            return {
-              auctionComplete: false,
-              nextRosterId: rosterId,
-              nextPick,
-              nominationDeadline,
-            } as const;
-          }
-
-          // All teams are ineligible - auction should complete
-          return { auctionComplete: true, leagueId: draft.league_id } as const;
-        }
-      );
-
+      const result = await this.advanceNominatorInternal(draftId);
       if (!result) {
         return;
       }
 
       if (result.auctionComplete) {
-        await this.completeAuctionDraft(draftId, result.leagueId);
+        await this.completeAuctionDraft(draftId, result.leagueId!);
         return;
       }
 
@@ -791,16 +733,16 @@ export class FastAuctionService {
         type: EventTypes.AUCTION_NOMINATOR_CHANGED,
         payload: {
           draftId,
-          nominatorRosterId: result.nextRosterId,
-          nominationNumber: result.nextPick,
-          nominationDeadline: result.nominationDeadline.toISOString(),
+          nominatorRosterId: result.nominatorRosterId,
+          nominationNumber: result.nominationNumber,
+          nominationDeadline: result.nominationDeadline!.toISOString(),
         },
       });
 
       logger.info('Force advanced nominator', {
         draftId,
-        nextPick: result.nextPick,
-        nextRosterId: result.nextRosterId,
+        nextPick: result.nominationNumber,
+        nextRosterId: result.nominatorRosterId,
       });
     } catch (error) {
       logger.error('Force advance nominator failed', { draftId, error });
@@ -871,11 +813,11 @@ export class FastAuctionService {
           return { skipReason: 'roster_full' as const };
         }
 
-        const remainingSlots = rosterSlots - budgetInfo.wonCount - 1;
-        const requiredReserve = Math.max(0, remainingSlots) * settings.minBid;
-        const maxAffordable = totalBudget - budgetInfo.spent - requiredReserve - budgetInfo.leadingCommitment;
-
-        if (settings.minBid > maxAffordable) {
+        if (!canAffordMinBid(totalBudget, rosterSlots, budgetInfo, settings.minBid)) {
+          const maxAffordable = calculateMaxAffordableBid(
+            totalBudget, rosterSlots, budgetInfo,
+            0, false, settings.minBid
+          );
           logger.warn('Auto-nomination skipped: nominator cannot afford starting bid', {
             draftId,
             nominatorRosterId: draft.currentRosterId,
@@ -1036,19 +978,29 @@ export class FastAuctionService {
    */
   private async completeAuctionDraft(draftId: number, leagueId: number): Promise<void> {
     try {
-      // Mark draft as completed
-      await this.draftRepo.update(draftId, { status: 'completed' });
-
-      // Finalize: populate rosters, update league status, generate schedule
-      const rosterPlayersRepo = container.resolve<RosterPlayersRepository>(KEYS.ROSTER_PLAYERS_REPO);
-      await finalizeDraftCompletion(
-        {
-          draftRepo: this.draftRepo,
-          leagueRepo: this.leagueRepo,
-          rosterPlayersRepo,
-        },
+      await runWithLock(
+        this.pool,
+        LockDomain.DRAFT,
         draftId,
-        leagueId
+        async (client) => {
+          // Mark draft as completed first (idempotent on retry)
+          await client.query(
+            'UPDATE drafts SET status = $1, updated_at = NOW() WHERE id = $2',
+            ['completed', draftId]
+          );
+
+          // Finalize: populate rosters, update league status, generate schedule
+          const rosterPlayersRepo = container.resolve<RosterPlayersRepository>(KEYS.ROSTER_PLAYERS_REPO);
+          await finalizeDraftCompletion(
+            {
+              draftRepo: this.draftRepo,
+              leagueRepo: this.leagueRepo,
+              rosterPlayersRepo,
+            },
+            draftId,
+            leagueId
+          );
+        }
       );
 
       logger.info('Auction draft completed', { draftId, leagueId });

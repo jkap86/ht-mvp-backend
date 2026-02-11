@@ -17,6 +17,11 @@ import {
   ForbiddenException,
 } from '../../../utils/exceptions';
 
+// Mock event bus for verifying event emission
+const mockEventBus = {
+  publish: jest.fn(),
+};
+
 // Mock runWithLock to bypass actual database locking
 jest.mock('../../../shared/transaction-runner', () => ({
   runWithLock: jest.fn(async (_pool, _domain, _id, fn) => {
@@ -28,6 +33,7 @@ jest.mock('../../../shared/transaction-runner', () => ({
   LockDomain: {
     DRAFT: 700_000_000,
     ROSTER: 200_000_000,
+    AUCTION: 500_000_000,
   },
 }));
 
@@ -42,18 +48,39 @@ jest.mock('../../../socket/socket.service', () => ({
 }));
 
 // Mock draft completion utils
+const mockFinalizeDraftCompletion = jest.fn().mockResolvedValue(undefined);
 jest.mock('../../../modules/drafts/draft-completion.utils', () => ({
-  finalizeDraftCompletion: jest.fn().mockResolvedValue(undefined),
+  finalizeDraftCompletion: (...args: any[]) => mockFinalizeDraftCompletion(...args),
 }));
 
 // Mock container
 jest.mock('../../../container', () => ({
   container: {
     resolve: jest.fn().mockReturnValue({}),
+    tryResolve: jest.fn().mockReturnValue(null),
   },
   KEYS: {
     ROSTER_PLAYERS_REPO: 'rosterPlayersRepo',
+    DOMAIN_EVENT_BUS: 'domainEventBus',
   },
+}));
+
+// Mock shared events to return our mock event bus
+jest.mock('../../../shared/events', () => ({
+  tryGetEventBus: jest.fn(() => mockEventBus),
+  EventTypes: {
+    AUCTION_LOT_STARTED: 'auction:lot_started',
+    AUCTION_BID: 'auction:bid',
+    AUCTION_OUTBID: 'auction:outbid',
+    AUCTION_NOMINATOR_CHANGED: 'auction:nominator_changed',
+    DRAFT_COMPLETED: 'draft:completed',
+  },
+}));
+
+// Mock price resolver
+const mockResolvePriceWithClient = jest.fn();
+jest.mock('../../../modules/drafts/auction/auction-price-resolver', () => ({
+  resolvePriceWithClient: (...args: any[]) => mockResolvePriceWithClient(...args),
 }));
 
 // Mock data
@@ -104,6 +131,7 @@ const mockLeague: any = {
     auctionBudget: 200,
     rosterSlots: 15,
   },
+  activeLeagueSeasonId: 1,
 };
 
 const mockRoster = {
@@ -111,6 +139,15 @@ const mockRoster = {
   leagueId: 1,
   userId: 'user-1',
   username: 'TestUser',
+  createdAt: new Date(),
+  updatedAt: new Date(),
+};
+
+const mockRoster2 = {
+  id: 2,
+  leagueId: 1,
+  userId: 'user-2',
+  username: 'TestUser2',
   createdAt: new Date(),
   updatedAt: new Date(),
 };
@@ -224,6 +261,7 @@ const createMockRosterRepo = (): jest.Mocked<RosterRepository> =>
     findById: jest.fn(),
     findByLeagueId: jest.fn(),
     findByLeagueAndUser: jest.fn(),
+    findByIds: jest.fn().mockResolvedValue([]),
   }) as unknown as jest.Mocked<RosterRepository>;
 
 const createMockLeagueRepo = (): jest.Mocked<LeagueRepository> =>
@@ -243,6 +281,7 @@ const createMockPlayerRepo = (): jest.Mocked<PlayerRepository> =>
     findById: jest.fn(),
     findAll: jest.fn(),
     findRandomEligiblePlayerForAuction: jest.fn(),
+    findByIdWithClient: jest.fn(),
   }) as unknown as jest.Mocked<PlayerRepository>;
 
 const createMockPool = (): jest.Mocked<Pool> =>
@@ -396,6 +435,266 @@ describe('FastAuctionService', () => {
       await expect(service.nominate(1, 'user-1', 100)).rejects.toThrow(ForbiddenException);
       await expect(service.nominate(1, 'user-1', 100)).rejects.toThrow('not your turn');
     });
+
+    it('should create lot and emit AUCTION_LOT_STARTED event on successful nomination', async () => {
+      mockDraftRepo.findById.mockResolvedValue(mockFastDraft);
+      mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster as any);
+
+      const { runWithLock } = require('../../../shared/transaction-runner');
+
+      const createdLot: AuctionLot = {
+        ...mockLot,
+        currentBidderRosterId: 1,
+        currentBid: 1,
+      };
+
+      runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        const mockClient = {
+          query: jest.fn().mockImplementation((sql: string) => {
+            // Draft FOR UPDATE re-validation
+            if (sql.includes('FROM drafts WHERE') && sql.includes('FOR UPDATE')) {
+              return {
+                rows: [{
+                  status: 'in_progress',
+                  settings: { auctionMode: 'fast', nominationSeconds: 60, minBid: 1, minIncrement: 1 },
+                  current_roster_id: 1,
+                }],
+              };
+            }
+            // Player drafted check
+            if (sql.includes('SELECT EXISTS')) {
+              return { rows: [{ exists: false }] };
+            }
+            // Opening bidder updates (UPDATE auction_lots, INSERT proxy, INSERT bid history)
+            return { rows: [], rowCount: 1 };
+          }),
+        };
+
+        mockLotRepo.hasActiveLotWithClient.mockResolvedValue(false);
+        mockPlayerRepo.findByIdWithClient.mockResolvedValue(mockPlayer as any);
+        mockLotRepo.findLotByDraftAndPlayerWithClient.mockResolvedValue(null);
+        mockLotRepo.getRosterBudgetDataWithClient.mockResolvedValue({
+          spent: 0,
+          wonCount: 0,
+          leadingCommitment: 0,
+        });
+        mockLeagueRepo.findById.mockResolvedValue(mockLeague);
+        mockLotRepo.createLotWithClient.mockResolvedValue(createdLot);
+
+        return fn(mockClient);
+      });
+
+      const result = await service.nominate(1, 'user-1', 100);
+
+      expect(result.lot).toBeDefined();
+      expect(result.lot.currentBidderRosterId).toBe(1);
+      expect(result.message).toContain('Test Player');
+      expect(result.message).toContain('$1');
+
+      // Verify event was published
+      expect(mockEventBus.publish).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'auction:lot_started',
+          payload: expect.objectContaining({
+            draftId: 1,
+            serverTime: expect.any(Number),
+          }),
+        })
+      );
+
+      // Verify lot was created with client
+      expect(mockLotRepo.createLotWithClient).toHaveBeenCalled();
+    });
+
+    it('should return existing lot when idempotency key matches (idempotent nomination)', async () => {
+      mockDraftRepo.findById.mockResolvedValue(mockFastDraft);
+      mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster as any);
+
+      const { runWithLock } = require('../../../shared/transaction-runner');
+
+      const existingLotRow = {
+        id: 1,
+        draft_id: 1,
+        player_id: 100,
+        nominator_roster_id: 1,
+        current_bid: 1,
+        current_bidder_roster_id: 1,
+        bid_count: 0,
+        bid_deadline: new Date(Date.now() + 60000),
+        status: 'active',
+        winning_roster_id: null,
+        winning_bid: null,
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+
+      runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        const mockClient = {
+          query: jest.fn().mockImplementation((sql: string) => {
+            // Idempotency check: find existing lot with same key
+            if (sql.includes('idempotency_key')) {
+              return { rows: [{ id: 1 }] };
+            }
+            // Fetch lot by id
+            if (sql.includes('SELECT * FROM auction_lots WHERE id')) {
+              return { rows: [existingLotRow] };
+            }
+            return { rows: [] };
+          }),
+        };
+        return fn(mockClient);
+      });
+
+      const result = await service.nominate(1, 'user-1', 100, 'idempotency-key-123');
+
+      expect(result.lot).toBeDefined();
+      expect(result.lot.id).toBe(1);
+      // Should NOT create a new lot
+      expect(mockLotRepo.createLotWithClient).not.toHaveBeenCalled();
+    });
+
+    it('should reject nomination when budget is exceeded', async () => {
+      mockDraftRepo.findById.mockResolvedValue(mockFastDraft);
+      mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster as any);
+
+      const { runWithLock } = require('../../../shared/transaction-runner');
+
+      runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        const mockClient = {
+          query: jest.fn().mockImplementation((sql: string) => {
+            if (sql.includes('FROM drafts WHERE') && sql.includes('FOR UPDATE')) {
+              return {
+                rows: [{
+                  status: 'in_progress',
+                  settings: { auctionMode: 'fast', nominationSeconds: 60, minBid: 1, minIncrement: 1 },
+                  current_roster_id: 1,
+                }],
+              };
+            }
+            if (sql.includes('SELECT EXISTS')) {
+              return { rows: [{ exists: false }] };
+            }
+            return { rows: [], rowCount: 1 };
+          }),
+        };
+
+        mockLotRepo.hasActiveLotWithClient.mockResolvedValue(false);
+        mockPlayerRepo.findByIdWithClient.mockResolvedValue(mockPlayer as any);
+        mockLotRepo.findLotByDraftAndPlayerWithClient.mockResolvedValue(null);
+        // Budget exhausted: spent 200, total budget is 200
+        mockLotRepo.getRosterBudgetDataWithClient.mockResolvedValue({
+          spent: 200,
+          wonCount: 14,
+          leadingCommitment: 0,
+        });
+        mockLeagueRepo.findById.mockResolvedValue(mockLeague);
+
+        return fn(mockClient);
+      });
+
+      await expect(service.nominate(1, 'user-1', 100)).rejects.toThrow(ValidationException);
+      await expect(
+        (async () => {
+          const { runWithLock: rwl } = require('../../../shared/transaction-runner');
+          rwl.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
+            const mockClient = {
+              query: jest.fn().mockImplementation((sql: string) => {
+                if (sql.includes('FROM drafts WHERE') && sql.includes('FOR UPDATE')) {
+                  return {
+                    rows: [{
+                      status: 'in_progress',
+                      settings: { auctionMode: 'fast', nominationSeconds: 60, minBid: 1, minIncrement: 1 },
+                      current_roster_id: 1,
+                    }],
+                  };
+                }
+                if (sql.includes('SELECT EXISTS')) {
+                  return { rows: [{ exists: false }] };
+                }
+                return { rows: [], rowCount: 1 };
+              }),
+            };
+
+            mockLotRepo.hasActiveLotWithClient.mockResolvedValue(false);
+            mockPlayerRepo.findByIdWithClient.mockResolvedValue(mockPlayer as any);
+            mockLotRepo.findLotByDraftAndPlayerWithClient.mockResolvedValue(null);
+            mockLotRepo.getRosterBudgetDataWithClient.mockResolvedValue({
+              spent: 200,
+              wonCount: 14,
+              leadingCommitment: 0,
+            });
+            mockLeagueRepo.findById.mockResolvedValue(mockLeague);
+
+            return fn(mockClient);
+          });
+          await service.nominate(1, 'user-1', 100);
+        })()
+      ).rejects.toThrow('insufficient budget');
+    });
+
+    it('should reject nomination when player already drafted or nominated', async () => {
+      mockDraftRepo.findById.mockResolvedValue(mockFastDraft);
+      mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster as any);
+
+      const { runWithLock } = require('../../../shared/transaction-runner');
+
+      // Test player already drafted
+      runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        const mockClient = {
+          query: jest.fn().mockImplementation((sql: string) => {
+            if (sql.includes('FROM drafts WHERE') && sql.includes('FOR UPDATE')) {
+              return {
+                rows: [{
+                  status: 'in_progress',
+                  settings: { auctionMode: 'fast', nominationSeconds: 60, minBid: 1, minIncrement: 1 },
+                  current_roster_id: 1,
+                }],
+              };
+            }
+            if (sql.includes('SELECT EXISTS')) {
+              return { rows: [{ exists: true }] }; // Player already drafted
+            }
+            return { rows: [], rowCount: 1 };
+          }),
+        };
+
+        mockLotRepo.hasActiveLotWithClient.mockResolvedValue(false);
+        mockPlayerRepo.findByIdWithClient.mockResolvedValue(mockPlayer as any);
+
+        return fn(mockClient);
+      });
+
+      await expect(service.nominate(1, 'user-1', 100)).rejects.toThrow('already been drafted');
+
+      // Test player already nominated (has existing lot)
+      runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        const mockClient = {
+          query: jest.fn().mockImplementation((sql: string) => {
+            if (sql.includes('FROM drafts WHERE') && sql.includes('FOR UPDATE')) {
+              return {
+                rows: [{
+                  status: 'in_progress',
+                  settings: { auctionMode: 'fast', nominationSeconds: 60, minBid: 1, minIncrement: 1 },
+                  current_roster_id: 1,
+                }],
+              };
+            }
+            if (sql.includes('SELECT EXISTS')) {
+              return { rows: [{ exists: false }] };
+            }
+            return { rows: [], rowCount: 1 };
+          }),
+        };
+
+        mockLotRepo.hasActiveLotWithClient.mockResolvedValue(false);
+        mockPlayerRepo.findByIdWithClient.mockResolvedValue(mockPlayer as any);
+        mockLotRepo.findLotByDraftAndPlayerWithClient.mockResolvedValue(mockLot); // Already nominated
+
+        return fn(mockClient);
+      });
+
+      await expect(service.nominate(1, 'user-1', 100)).rejects.toThrow('already been nominated');
+    });
   });
 
   describe('setMaxBid', () => {
@@ -422,11 +721,446 @@ describe('FastAuctionService', () => {
       await expect(service.setMaxBid(1, 'user-1', 1, 50)).rejects.toThrow(ForbiddenException);
       await expect(service.setMaxBid(1, 'user-1', 1, 50)).rejects.toThrow('not a member');
     });
+
+    it('should resolve price and reset timer on successful bid', async () => {
+      mockDraftRepo.findById.mockResolvedValue(mockFastDraft);
+      mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster2 as any);
+
+      const { runWithLock } = require('../../../shared/transaction-runner');
+
+      const lotCreatedAt = new Date();
+      const activeLotRow = {
+        id: 1,
+        draft_id: 1,
+        player_id: 100,
+        nominator_roster_id: 1,
+        current_bid: 5,
+        current_bidder_roster_id: 1,
+        bid_count: 1,
+        bid_deadline: new Date(Date.now() + 30000),
+        status: 'active',
+        winning_roster_id: null,
+        winning_bid: null,
+        created_at: lotCreatedAt,
+        updated_at: new Date(),
+      };
+
+      const updatedLot: AuctionLot = {
+        id: 1,
+        draftId: 1,
+        playerId: 100,
+        nominatorRosterId: 1,
+        currentBid: 10,
+        currentBidderRosterId: 2,
+        bidCount: 2,
+        bidDeadline: new Date(Date.now() + 15000), // reset timer
+        status: 'active',
+        winningRosterId: null,
+        winningBid: null,
+        createdAt: lotCreatedAt,
+        updatedAt: new Date(),
+      };
+
+      runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        const mockClient = {
+          query: jest.fn().mockImplementation((sql: string) => {
+            // Lot FOR UPDATE
+            if (sql.includes('FROM auction_lots WHERE id') && sql.includes('FOR UPDATE')) {
+              return { rows: [activeLotRow] };
+            }
+            // Roster membership re-check
+            if (sql.includes('FROM rosters WHERE league_id')) {
+              return { rows: [{ id: 2 }] };
+            }
+            // All other queries (INSERT proxy bid, INSERT bid history, UPDATE deadline)
+            return { rows: [], rowCount: 1 };
+          }),
+        };
+
+        mockLeagueRepo.findById.mockResolvedValue(mockLeague);
+        mockLotRepo.getRosterBudgetDataWithClient.mockResolvedValue({
+          spent: 0,
+          wonCount: 0,
+          leadingCommitment: 0,
+        });
+
+        // Mock price resolution: price changed and leader changed
+        mockResolvePriceWithClient.mockResolvedValue({
+          updatedLot,
+          outbidNotifications: [{ rosterId: 1, lotId: 1, previousBid: 5, newLeadingBid: 10 }],
+          leaderChanged: true,
+          priceChanged: true,
+        });
+
+        return fn(mockClient);
+      });
+
+      // Mock getProxyBid for response building
+      mockLotRepo.getProxyBid.mockResolvedValue(mockProxyBid);
+      // Mock findByIds for outbid notification roster lookup
+      mockRosterRepo.findByIds.mockResolvedValue([mockRoster as any]);
+
+      const result = await service.setMaxBid(1, 'user-2', 1, 50);
+
+      expect(result.lot.currentBid).toBe(10);
+      expect(result.lot.currentBidderRosterId).toBe(2);
+      expect(result.message).toContain('$50');
+
+      // Verify event was published
+      expect(mockEventBus.publish).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'auction:bid',
+          payload: expect.objectContaining({
+            draftId: 1,
+            serverTime: expect.any(Number),
+          }),
+        })
+      );
+
+      // Verify price resolver was called
+      expect(mockResolvePriceWithClient).toHaveBeenCalled();
+    });
+
+    it('should cap timer by maxLotDurationSeconds on bids', async () => {
+      const draftWithMaxDuration = {
+        ...mockFastDraft,
+        settings: {
+          ...mockFastDraft.settings,
+          resetOnBidSeconds: 15,
+          maxLotDurationSeconds: 30,
+        },
+      };
+      mockDraftRepo.findById.mockResolvedValue(draftWithMaxDuration);
+      mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster2 as any);
+
+      const { runWithLock } = require('../../../shared/transaction-runner');
+
+      // Lot was created 25 seconds ago, so max deadline is createdAt + 30s = 5s from now
+      const lotCreatedAt = new Date(Date.now() - 25000);
+      const activeLotRow = {
+        id: 1,
+        draft_id: 1,
+        player_id: 100,
+        nominator_roster_id: 1,
+        current_bid: 5,
+        current_bidder_roster_id: 1,
+        bid_count: 1,
+        bid_deadline: new Date(Date.now() + 3000), // 3 seconds remaining
+        status: 'active',
+        winning_roster_id: null,
+        winning_bid: null,
+        created_at: lotCreatedAt,
+        updated_at: new Date(),
+      };
+
+      let capturedDeadlineUpdate: Date | null = null;
+
+      const updatedLotWithOldDeadline: AuctionLot = {
+        id: 1,
+        draftId: 1,
+        playerId: 100,
+        nominatorRosterId: 1,
+        currentBid: 10,
+        currentBidderRosterId: 2,
+        bidCount: 2,
+        bidDeadline: new Date(Date.now() + 3000), // unchanged from lot
+        status: 'active',
+        winningRosterId: null,
+        winningBid: null,
+        createdAt: lotCreatedAt,
+        updatedAt: new Date(),
+      };
+
+      runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        const mockClient = {
+          query: jest.fn().mockImplementation((sql: string, params?: any[]) => {
+            if (sql.includes('FROM auction_lots WHERE id') && sql.includes('FOR UPDATE')) {
+              return { rows: [activeLotRow] };
+            }
+            if (sql.includes('FROM rosters WHERE league_id')) {
+              return { rows: [{ id: 2 }] };
+            }
+            // Capture the deadline update
+            if (sql.includes('UPDATE auction_lots SET bid_deadline')) {
+              capturedDeadlineUpdate = params?.[0];
+              return { rows: [], rowCount: 1 };
+            }
+            return { rows: [], rowCount: 1 };
+          }),
+        };
+
+        mockLeagueRepo.findById.mockResolvedValue(mockLeague);
+        mockLotRepo.getRosterBudgetDataWithClient.mockResolvedValue({
+          spent: 0,
+          wonCount: 0,
+          leadingCommitment: 0,
+        });
+
+        mockResolvePriceWithClient.mockResolvedValue({
+          updatedLot: updatedLotWithOldDeadline,
+          outbidNotifications: [],
+          leaderChanged: true,
+          priceChanged: true,
+        });
+
+        return fn(mockClient);
+      });
+
+      mockLotRepo.getProxyBid.mockResolvedValue(mockProxyBid);
+
+      const result = await service.setMaxBid(1, 'user-2', 1, 50);
+
+      // The new deadline should be capped at createdAt + 30s (~5s from now),
+      // not resetOnBidSeconds (15s from now)
+      expect(capturedDeadlineUpdate).not.toBeNull();
+      const maxAllowed = lotCreatedAt.getTime() + 30000;
+      expect(capturedDeadlineUpdate!.getTime()).toBeLessThanOrEqual(maxAllowed + 1000);
+    });
+
+    it('should not reset timer when leader raises their max bid', async () => {
+      mockDraftRepo.findById.mockResolvedValue(mockFastDraft);
+      mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster as any);
+
+      const { runWithLock } = require('../../../shared/transaction-runner');
+
+      const activeLotRow = {
+        id: 1,
+        draft_id: 1,
+        player_id: 100,
+        nominator_roster_id: 1,
+        current_bid: 5,
+        current_bidder_roster_id: 1, // roster 1 is already leading
+        bid_count: 1,
+        bid_deadline: new Date(Date.now() + 30000),
+        status: 'active',
+        winning_roster_id: null,
+        winning_bid: null,
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+
+      const unchangedLot: AuctionLot = {
+        id: 1,
+        draftId: 1,
+        playerId: 100,
+        nominatorRosterId: 1,
+        currentBid: 5, // price did not change
+        currentBidderRosterId: 1, // leader did not change
+        bidCount: 1,
+        bidDeadline: new Date(Date.now() + 30000),
+        status: 'active',
+        winningRosterId: null,
+        winningBid: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      let deadlineUpdateCalled = false;
+
+      runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        const mockClient = {
+          query: jest.fn().mockImplementation((sql: string) => {
+            if (sql.includes('FROM auction_lots WHERE id') && sql.includes('FOR UPDATE')) {
+              return { rows: [activeLotRow] };
+            }
+            if (sql.includes('FROM rosters WHERE league_id')) {
+              return { rows: [{ id: 1 }] };
+            }
+            if (sql.includes('UPDATE auction_lots SET bid_deadline')) {
+              deadlineUpdateCalled = true;
+              return { rows: [], rowCount: 1 };
+            }
+            return { rows: [], rowCount: 1 };
+          }),
+        };
+
+        mockLeagueRepo.findById.mockResolvedValue(mockLeague);
+        mockLotRepo.getRosterBudgetDataWithClient.mockResolvedValue({
+          spent: 0,
+          wonCount: 0,
+          leadingCommitment: 5, // leading this lot at $5
+        });
+
+        // Price and leader unchanged: leader just raised their max bid
+        mockResolvePriceWithClient.mockResolvedValue({
+          updatedLot: unchangedLot,
+          outbidNotifications: [],
+          leaderChanged: false,
+          priceChanged: false,
+        });
+
+        return fn(mockClient);
+      });
+
+      mockLotRepo.getProxyBid.mockResolvedValue({ ...mockProxyBid, maxBid: 100 });
+
+      const result = await service.setMaxBid(1, 'user-1', 1, 100);
+
+      // Timer should NOT be reset when only max bid is raised without price/leader change
+      expect(deadlineUpdateCalled).toBe(false);
+      expect(result.lot.currentBid).toBe(5); // price unchanged
+    });
+
+    it('should reject when leader tries to lower bid below current price', async () => {
+      mockDraftRepo.findById.mockResolvedValue(mockFastDraft);
+      mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster as any);
+
+      const { runWithLock } = require('../../../shared/transaction-runner');
+
+      const activeLotRow = {
+        id: 1,
+        draft_id: 1,
+        player_id: 100,
+        nominator_roster_id: 1,
+        current_bid: 10,
+        current_bidder_roster_id: 1, // roster 1 is leading at $10
+        bid_count: 2,
+        bid_deadline: new Date(Date.now() + 30000),
+        status: 'active',
+        winning_roster_id: null,
+        winning_bid: null,
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+
+      runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        const mockClient = {
+          query: jest.fn().mockImplementation((sql: string) => {
+            if (sql.includes('FROM auction_lots WHERE id') && sql.includes('FOR UPDATE')) {
+              return { rows: [activeLotRow] };
+            }
+            if (sql.includes('FROM rosters WHERE league_id')) {
+              return { rows: [{ id: 1 }] };
+            }
+            return { rows: [], rowCount: 1 };
+          }),
+        };
+        return fn(mockClient);
+      });
+
+      // Try to set maxBid to 5, but current price is 10
+      await expect(service.setMaxBid(1, 'user-1', 1, 5)).rejects.toThrow(ValidationException);
+
+      runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        const mockClient = {
+          query: jest.fn().mockImplementation((sql: string) => {
+            if (sql.includes('FROM auction_lots WHERE id') && sql.includes('FOR UPDATE')) {
+              return { rows: [activeLotRow] };
+            }
+            if (sql.includes('FROM rosters WHERE league_id')) {
+              return { rows: [{ id: 1 }] };
+            }
+            return { rows: [], rowCount: 1 };
+          }),
+        };
+        return fn(mockClient);
+      });
+
+      await expect(service.setMaxBid(1, 'user-1', 1, 5)).rejects.toThrow(
+        'Cannot lower max bid below current bid'
+      );
+    });
+
+    it('should reject bid when draft is paused (bidDeadline null)', async () => {
+      mockDraftRepo.findById.mockResolvedValue(mockFastDraft);
+      mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster2 as any);
+
+      const { runWithLock } = require('../../../shared/transaction-runner');
+
+      const pausedLotRow = {
+        id: 1,
+        draft_id: 1,
+        player_id: 100,
+        nominator_roster_id: 1,
+        current_bid: 5,
+        current_bidder_roster_id: 1,
+        bid_count: 1,
+        bid_deadline: null, // Paused
+        status: 'active',
+        winning_roster_id: null,
+        winning_bid: null,
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+
+      runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        const mockClient = {
+          query: jest.fn().mockImplementation((sql: string) => {
+            if (sql.includes('FROM auction_lots WHERE id') && sql.includes('FOR UPDATE')) {
+              return { rows: [pausedLotRow] };
+            }
+            if (sql.includes('FROM rosters WHERE league_id')) {
+              return { rows: [{ id: 2 }] };
+            }
+            return { rows: [], rowCount: 1 };
+          }),
+        };
+        return fn(mockClient);
+      });
+
+      await expect(service.setMaxBid(1, 'user-2', 1, 50)).rejects.toThrow('paused');
+    });
+
+    it('should reject bid when lot has expired (bidDeadline in the past)', async () => {
+      mockDraftRepo.findById.mockResolvedValue(mockFastDraft);
+      mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster as any);
+
+      const { runWithLock } = require('../../../shared/transaction-runner');
+
+      const expiredLot = {
+        id: 1,
+        draft_id: 1,
+        player_id: 100,
+        nominator_roster_id: 1,
+        current_bid: 5,
+        current_bidder_roster_id: 1,
+        bid_count: 1,
+        bid_deadline: new Date(Date.now() - 5000), // 5 seconds in the past
+        status: 'active',
+        winning_roster_id: null,
+        winning_bid: null,
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+
+      runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        const mockClient = {
+          query: jest.fn().mockImplementation((sql: string) => {
+            if (sql.includes('FROM auction_lots WHERE id') && sql.includes('FOR UPDATE')) {
+              return { rows: [expiredLot] };
+            }
+            if (sql.includes('FROM rosters WHERE league_id')) {
+              return { rows: [{ id: 1 }] };
+            }
+            return { rows: [], rowCount: 1 };
+          }),
+        };
+        return fn(mockClient);
+      });
+
+      await expect(service.setMaxBid(1, 'user-1', 1, 10)).rejects.toThrow(ValidationException);
+
+      runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        const mockClient = {
+          query: jest.fn().mockImplementation((sql: string) => {
+            if (sql.includes('FROM auction_lots WHERE id') && sql.includes('FOR UPDATE')) {
+              return { rows: [expiredLot] };
+            }
+            if (sql.includes('FROM rosters WHERE league_id')) {
+              return { rows: [{ id: 1 }] };
+            }
+            return { rows: [], rowCount: 1 };
+          }),
+        };
+        return fn(mockClient);
+      });
+
+      await expect(service.setMaxBid(1, 'user-1', 1, 10)).rejects.toThrow('Lot has expired');
+    });
   });
 
   describe('advanceNominator', () => {
     it('should not emit event for non-fast auction', async () => {
-      // The mocked runWithLock will return null for slow auction
       const { runWithLock } = require('../../../shared/transaction-runner');
       runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
         const mockClient = {
@@ -452,6 +1186,159 @@ describe('FastAuctionService', () => {
 
       await expect(service.advanceNominator(1)).rejects.toThrow(NotFoundException);
     });
+
+    it('should cycle through multiple nominators skipping ineligible teams', async () => {
+      const { runWithLock } = require('../../../shared/transaction-runner');
+
+      runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        const mockClient = {
+          query: jest.fn().mockImplementation((sql: string, params?: any[]) => {
+            // Draft FOR UPDATE
+            if (sql.includes('FROM drafts WHERE') && sql.includes('FOR UPDATE')) {
+              return {
+                rows: [{
+                  id: 1,
+                  league_id: 1,
+                  status: 'in_progress',
+                  settings: { auctionMode: 'fast', nominationSeconds: 60, minBid: 1 },
+                  current_pick: 1,
+                }],
+              };
+            }
+            // Draft order
+            if (sql.includes('FROM draft_order')) {
+              return {
+                rows: [
+                  { roster_id: 1, draft_position: 1 },
+                  { roster_id: 2, draft_position: 2 },
+                  { roster_id: 3, draft_position: 3 },
+                ],
+              };
+            }
+            // League query
+            if (sql.includes('FROM leagues WHERE')) {
+              return {
+                rows: [{
+                  id: 1,
+                  league_settings: { auctionBudget: 200, rosterSlots: 15 },
+                }],
+              };
+            }
+            // UPDATE drafts (setting next nominator)
+            if (sql.includes('UPDATE drafts')) {
+              return { rows: [], rowCount: 1 };
+            }
+            return { rows: [] };
+          }),
+        };
+
+        // Roster 1 (next in line): full roster -> skip
+        // Roster 2: can't afford -> skip
+        // Roster 3: eligible -> pick this one
+        mockPlayerRepo.findRandomEligiblePlayerForAuction.mockResolvedValue(mockPlayer as any);
+        mockLotRepo.getAllRosterBudgetDataWithClient.mockResolvedValue(
+          new Map([
+            [1, { spent: 0, wonCount: 15, leadingCommitment: 0 }],   // full roster
+            [2, { spent: 200, wonCount: 14, leadingCommitment: 0 }], // can't afford
+            [3, { spent: 0, wonCount: 0, leadingCommitment: 0 }],    // eligible
+          ])
+        );
+
+        return fn(mockClient);
+      });
+
+      await service.advanceNominator(1);
+
+      // Verify nominator changed event was published for roster 3
+      expect(mockEventBus.publish).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'auction:nominator_changed',
+          payload: expect.objectContaining({
+            draftId: 1,
+            nominatorRosterId: 3,
+          }),
+        })
+      );
+    });
+
+    it('should trigger auction completion when all teams are ineligible', async () => {
+      const { runWithLock } = require('../../../shared/transaction-runner');
+
+      // First call: advanceNominatorInternal finds all teams ineligible
+      // Second call: completeAuctionDraft runs in its own lock
+      let callCount = 0;
+      runWithLock.mockImplementation(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        callCount++;
+        if (callCount === 1) {
+          // advanceNominatorInternal
+          const mockClient = {
+            query: jest.fn().mockImplementation((sql: string) => {
+              if (sql.includes('FROM drafts WHERE') && sql.includes('FOR UPDATE')) {
+                return {
+                  rows: [{
+                    id: 1,
+                    league_id: 1,
+                    status: 'in_progress',
+                    settings: { auctionMode: 'fast', nominationSeconds: 60, minBid: 1 },
+                    current_pick: 1,
+                  }],
+                };
+              }
+              if (sql.includes('FROM draft_order')) {
+                return {
+                  rows: [
+                    { roster_id: 1, draft_position: 1 },
+                    { roster_id: 2, draft_position: 2 },
+                  ],
+                };
+              }
+              if (sql.includes('FROM leagues WHERE')) {
+                return {
+                  rows: [{
+                    id: 1,
+                    league_settings: { auctionBudget: 200, rosterSlots: 15 },
+                  }],
+                };
+              }
+              return { rows: [] };
+            }),
+          };
+
+          mockPlayerRepo.findRandomEligiblePlayerForAuction.mockResolvedValue(mockPlayer as any);
+          // All teams ineligible (full rosters)
+          mockLotRepo.getAllRosterBudgetDataWithClient.mockResolvedValue(
+            new Map([
+              [1, { spent: 0, wonCount: 15, leadingCommitment: 0 }],
+              [2, { spent: 0, wonCount: 15, leadingCommitment: 0 }],
+            ])
+          );
+
+          return fn(mockClient);
+        } else {
+          // completeAuctionDraft
+          const mockClient = {
+            query: jest.fn().mockResolvedValue({ rows: [], rowCount: 1 }),
+          };
+          return fn(mockClient);
+        }
+      });
+
+      await service.advanceNominator(1);
+
+      // Verify draft completed event was published
+      expect(mockEventBus.publish).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'draft:completed',
+          payload: expect.objectContaining({
+            draftId: 1,
+            leagueId: 1,
+          }),
+        })
+      );
+
+      // Verify finalizeDraftCompletion was called
+      expect(mockFinalizeDraftCompletion).toHaveBeenCalled();
+    });
   });
 
   describe('forceAdvanceNominator', () => {
@@ -464,7 +1351,7 @@ describe('FastAuctionService', () => {
       await expect(service.forceAdvanceNominator(1)).rejects.toThrow('Database error');
     });
 
-    it('should return null when draft not found', async () => {
+    it('should throw NotFoundException when draft not found', async () => {
       const { runWithLock } = require('../../../shared/transaction-runner');
       runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
         const mockClient = {
@@ -473,8 +1360,72 @@ describe('FastAuctionService', () => {
         return fn(mockClient);
       });
 
-      // Should complete without throwing (returns null)
+      // advanceNominatorInternal throws NotFoundException, forceAdvanceNominator re-throws
+      await expect(service.forceAdvanceNominator(1)).rejects.toThrow(NotFoundException);
+    });
+
+    it('should behave the same as advanceNominator (shared internal logic)', async () => {
+      const { runWithLock } = require('../../../shared/transaction-runner');
+
+      runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        const mockClient = {
+          query: jest.fn().mockImplementation((sql: string) => {
+            if (sql.includes('FROM drafts WHERE') && sql.includes('FOR UPDATE')) {
+              return {
+                rows: [{
+                  id: 1,
+                  league_id: 1,
+                  status: 'in_progress',
+                  settings: { auctionMode: 'fast', nominationSeconds: 60, minBid: 1 },
+                  current_pick: 1,
+                }],
+              };
+            }
+            if (sql.includes('FROM draft_order')) {
+              return {
+                rows: [
+                  { roster_id: 1, draft_position: 1 },
+                  { roster_id: 2, draft_position: 2 },
+                ],
+              };
+            }
+            if (sql.includes('FROM leagues WHERE')) {
+              return {
+                rows: [{
+                  id: 1,
+                  league_settings: { auctionBudget: 200, rosterSlots: 15 },
+                }],
+              };
+            }
+            if (sql.includes('UPDATE drafts')) {
+              return { rows: [], rowCount: 1 };
+            }
+            return { rows: [] };
+          }),
+        };
+
+        mockPlayerRepo.findRandomEligiblePlayerForAuction.mockResolvedValue(mockPlayer as any);
+        mockLotRepo.getAllRosterBudgetDataWithClient.mockResolvedValue(
+          new Map([
+            [1, { spent: 0, wonCount: 0, leadingCommitment: 0 }],
+            [2, { spent: 0, wonCount: 0, leadingCommitment: 0 }],
+          ])
+        );
+
+        return fn(mockClient);
+      });
+
       await service.forceAdvanceNominator(1);
+
+      // Should emit nominator changed event, same as advanceNominator
+      expect(mockEventBus.publish).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'auction:nominator_changed',
+          payload: expect.objectContaining({
+            draftId: 1,
+          }),
+        })
+      );
     });
   });
 
@@ -529,11 +1480,25 @@ describe('FastAuctionService', () => {
         current_pick: 1,
       };
 
-      // Mock both calls: first autoNominate (returns skipReason), then advanceNominator (detects completion)
+      let completionQueryCalled = false;
+
+      // autoNominate calls runWithLock once (returns skipReason: no_eligible_players),
+      // then advanceNominator calls runWithLock (detects no eligible players -> completion),
+      // then completeAuctionDraft calls runWithLock (marks completed)
+      let callCount = 0;
       runWithLock.mockImplementation(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        callCount++;
         const mockClient = {
-          query: jest.fn()
-            .mockResolvedValueOnce({ rows: [rawDraftRow] }), // Draft query (FOR UPDATE)
+          query: jest.fn().mockImplementation((sql: string) => {
+            if (sql.includes('FROM drafts WHERE') && sql.includes('FOR UPDATE')) {
+              return { rows: [rawDraftRow] };
+            }
+            if (sql.includes("UPDATE drafts SET status = $1") && sql.includes("WHERE id = $2")) {
+              completionQueryCalled = true;
+              return { rows: [], rowCount: 1 };
+            }
+            return { rows: [], rowCount: 1 };
+          }),
         };
         return fn(mockClient);
       });
@@ -541,8 +1506,146 @@ describe('FastAuctionService', () => {
       const result = await service.autoNominate(1);
 
       expect(result).toBeNull();
-      // Verify draft was marked as completed
-      expect(mockDraftRepo.update).toHaveBeenCalledWith(1, { status: 'completed' });
+      // Verify draft was marked as completed via raw SQL (not draftRepo.update)
+      expect(completionQueryCalled).toBe(true);
+    });
+
+    it('should skip and advance when nominator cannot afford min bid', async () => {
+      mockDraftRepo.findById.mockResolvedValue(mockFastDraft);
+
+      const { runWithLock } = require('../../../shared/transaction-runner');
+
+      let callCount = 0;
+      runWithLock.mockImplementation(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        callCount++;
+        if (callCount === 1) {
+          // autoNominate transaction
+          const mockClient = {
+            query: jest.fn().mockResolvedValue({ rows: [] }),
+          };
+
+          mockLotRepo.hasActiveLotWithClient.mockResolvedValue(false);
+          mockPlayerRepo.findRandomEligiblePlayerForAuction.mockResolvedValue(mockPlayer as any);
+          // Nominator cannot afford: budget fully spent
+          mockLotRepo.getRosterBudgetDataWithClient.mockResolvedValue({
+            spent: 200,
+            wonCount: 14,
+            leadingCommitment: 0,
+          });
+          mockLeagueRepo.findById.mockResolvedValue(mockLeague);
+
+          return fn(mockClient);
+        } else {
+          // advanceNominator transaction (called after skip)
+          const mockClient = {
+            query: jest.fn().mockImplementation((sql: string) => {
+              if (sql.includes('FROM drafts WHERE') && sql.includes('FOR UPDATE')) {
+                return {
+                  rows: [{
+                    id: 1,
+                    league_id: 1,
+                    status: 'in_progress',
+                    settings: { auctionMode: 'fast', nominationSeconds: 60, minBid: 1 },
+                    current_pick: 1,
+                  }],
+                };
+              }
+              if (sql.includes('FROM draft_order')) {
+                return {
+                  rows: [
+                    { roster_id: 1, draft_position: 1 },
+                    { roster_id: 2, draft_position: 2 },
+                  ],
+                };
+              }
+              if (sql.includes('FROM leagues WHERE')) {
+                return {
+                  rows: [{
+                    id: 1,
+                    league_settings: { auctionBudget: 200, rosterSlots: 15 },
+                  }],
+                };
+              }
+              if (sql.includes('UPDATE drafts')) {
+                return { rows: [], rowCount: 1 };
+              }
+              return { rows: [] };
+            }),
+          };
+
+          mockPlayerRepo.findRandomEligiblePlayerForAuction.mockResolvedValue(mockPlayer as any);
+          mockLotRepo.getAllRosterBudgetDataWithClient.mockResolvedValue(
+            new Map([
+              [1, { spent: 200, wonCount: 14, leadingCommitment: 0 }],
+              [2, { spent: 0, wonCount: 0, leadingCommitment: 0 }],
+            ])
+          );
+
+          return fn(mockClient);
+        }
+      });
+
+      const result = await service.autoNominate(1);
+
+      expect(result).toBeNull();
+      // Verify advanceNominator was called (nominator changed event emitted)
+      expect(mockEventBus.publish).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'auction:nominator_changed',
+        })
+      );
+    });
+
+    it('should select a random eligible player and create lot', async () => {
+      mockDraftRepo.findById.mockResolvedValue(mockFastDraft);
+
+      const { runWithLock } = require('../../../shared/transaction-runner');
+
+      const createdLot: AuctionLot = {
+        ...mockLot,
+        currentBidderRosterId: 1,
+        currentBid: 1,
+      };
+
+      runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        const mockClient = {
+          query: jest.fn().mockResolvedValue({ rows: [], rowCount: 1 }),
+        };
+
+        mockLotRepo.hasActiveLotWithClient.mockResolvedValue(false);
+        mockPlayerRepo.findRandomEligiblePlayerForAuction.mockResolvedValue(mockPlayer as any);
+        mockLotRepo.getRosterBudgetDataWithClient.mockResolvedValue({
+          spent: 0,
+          wonCount: 0,
+          leadingCommitment: 0,
+        });
+        mockLeagueRepo.findById.mockResolvedValue(mockLeague);
+        mockLotRepo.createLotWithClient.mockResolvedValue(createdLot);
+
+        return fn(mockClient);
+      });
+
+      const result = await service.autoNominate(1);
+
+      expect(result).not.toBeNull();
+      expect(result!.lot).toBeDefined();
+      expect(result!.lot.currentBidderRosterId).toBe(1);
+      expect(result!.message).toContain('Auto-nominated');
+      expect(result!.message).toContain('Test Player');
+
+      // Verify lot creation
+      expect(mockLotRepo.createLotWithClient).toHaveBeenCalled();
+
+      // Verify event was published
+      expect(mockEventBus.publish).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'auction:lot_started',
+          payload: expect.objectContaining({
+            draftId: 1,
+            isAutoNomination: true,
+          }),
+        })
+      );
     });
   });
 
@@ -609,11 +1712,17 @@ describe('FastAuctionService', () => {
         updated_at: new Date(),
       };
 
-      // No idempotencyKey is passed, so the first query is the lot FOR UPDATE
       runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
         const mockClient = {
-          query: jest.fn()
-            .mockResolvedValueOnce({ rows: [expiredLot] }), // lot FOR UPDATE
+          query: jest.fn().mockImplementation((sql: string) => {
+            if (sql.includes('FROM auction_lots WHERE id') && sql.includes('FOR UPDATE')) {
+              return { rows: [expiredLot] };
+            }
+            if (sql.includes('FROM rosters WHERE league_id')) {
+              return { rows: [{ id: 1 }] };
+            }
+            return { rows: [], rowCount: 1 };
+          }),
         };
         return fn(mockClient);
       });
@@ -623,8 +1732,15 @@ describe('FastAuctionService', () => {
       // Verify error message
       runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
         const mockClient = {
-          query: jest.fn()
-            .mockResolvedValueOnce({ rows: [expiredLot] }),
+          query: jest.fn().mockImplementation((sql: string) => {
+            if (sql.includes('FROM auction_lots WHERE id') && sql.includes('FOR UPDATE')) {
+              return { rows: [expiredLot] };
+            }
+            if (sql.includes('FROM rosters WHERE league_id')) {
+              return { rows: [{ id: 1 }] };
+            }
+            return { rows: [], rowCount: 1 };
+          }),
         };
         return fn(mockClient);
       });
@@ -659,6 +1775,16 @@ describe('FastAuctionService', () => {
 
         const mockClient = {
           query: jest.fn().mockImplementation((sql: string) => {
+            // Draft FOR UPDATE re-validation (TOCTOU fix)
+            if (sql.includes('FROM drafts WHERE') && sql.includes('FOR UPDATE')) {
+              return {
+                rows: [{
+                  status: 'in_progress',
+                  settings: { auctionMode: 'fast', nominationSeconds: 120, maxLotDurationSeconds: 60, minBid: 1, minIncrement: 1 },
+                  current_roster_id: 1,
+                }],
+              };
+            }
             if (sql.includes('SELECT EXISTS')) {
               return { rows: [{ exists: false }] };
             }
@@ -694,6 +1820,391 @@ describe('FastAuctionService', () => {
       // Should be approximately 60 seconds (with some tolerance for test execution time)
       expect(diffMs).toBeLessThanOrEqual(61000);
       expect(diffMs).toBeGreaterThan(50000); // At least 50s to ensure it was capped from 120s
+    });
+  });
+
+  describe('budget edge cases', () => {
+    /**
+     * Helper to set up a bid test with specific budget data.
+     * Configures mocks for the setMaxBid flow including draft, roster,
+     * lot, league, and budget data.
+     */
+    function setupBidWithBudget(budgetData: {
+      spent: number;
+      wonCount: number;
+      leadingCommitment: number;
+    }, lotCurrentBid: number, isLeading: boolean) {
+      mockDraftRepo.findById.mockResolvedValue(mockFastDraft);
+      const bidderRoster = isLeading ? mockRoster : mockRoster2;
+      mockRosterRepo.findByLeagueAndUser.mockResolvedValue(bidderRoster as any);
+
+      const { runWithLock } = require('../../../shared/transaction-runner');
+
+      const lotRow = {
+        id: 1,
+        draft_id: 1,
+        player_id: 100,
+        nominator_roster_id: 1,
+        current_bid: lotCurrentBid,
+        current_bidder_roster_id: isLeading ? bidderRoster.id : 99,
+        bid_count: 1,
+        bid_deadline: new Date(Date.now() + 30000),
+        status: 'active',
+        winning_roster_id: null,
+        winning_bid: null,
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+
+      return { runWithLock, lotRow, bidderRoster };
+    }
+
+    it('should succeed when bid is exactly at budget limit', async () => {
+      // Budget: 200, rosterSlots: 15, spent: 0, wonCount: 0, leadingCommitment: 0
+      // Remaining slots after this: 15 - 0 - 1 = 14, reserved: 14 * 1 = 14
+      // Max affordable: 200 - 0 - 14 - 0 = 186
+      const { runWithLock, lotRow } = setupBidWithBudget(
+        { spent: 0, wonCount: 0, leadingCommitment: 0 },
+        5, // current bid
+        false // not leading
+      );
+
+      const updatedLot: AuctionLot = {
+        id: 1,
+        draftId: 1,
+        playerId: 100,
+        nominatorRosterId: 1,
+        currentBid: 186,
+        currentBidderRosterId: 2,
+        bidCount: 2,
+        bidDeadline: new Date(Date.now() + 15000),
+        status: 'active',
+        winningRosterId: null,
+        winningBid: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        const mockClient = {
+          query: jest.fn().mockImplementation((sql: string) => {
+            if (sql.includes('FROM auction_lots WHERE id') && sql.includes('FOR UPDATE')) {
+              return { rows: [lotRow] };
+            }
+            if (sql.includes('FROM rosters WHERE league_id')) {
+              return { rows: [{ id: 2 }] };
+            }
+            return { rows: [], rowCount: 1 };
+          }),
+        };
+
+        mockLeagueRepo.findById.mockResolvedValue(mockLeague);
+        mockLotRepo.getRosterBudgetDataWithClient.mockResolvedValue({
+          spent: 0,
+          wonCount: 0,
+          leadingCommitment: 0,
+        });
+
+        mockResolvePriceWithClient.mockResolvedValue({
+          updatedLot,
+          outbidNotifications: [],
+          leaderChanged: true,
+          priceChanged: true,
+        });
+
+        return fn(mockClient);
+      });
+
+      mockLotRepo.getProxyBid.mockResolvedValue({ ...mockProxyBid, maxBid: 186 });
+
+      // Bid exactly at max affordable (186)
+      const result = await service.setMaxBid(1, 'user-2', 1, 186);
+      expect(result.lot).toBeDefined();
+      expect(result.message).toContain('$186');
+    });
+
+    it('should fail when bid is one dollar over budget limit', async () => {
+      // Max affordable = 200 - 0 - 14*1 - 0 = 186
+      // Bid 187 should fail
+      const { runWithLock, lotRow } = setupBidWithBudget(
+        { spent: 0, wonCount: 0, leadingCommitment: 0 },
+        5,
+        false
+      );
+
+      runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        const mockClient = {
+          query: jest.fn().mockImplementation((sql: string) => {
+            if (sql.includes('FROM auction_lots WHERE id') && sql.includes('FOR UPDATE')) {
+              return { rows: [lotRow] };
+            }
+            if (sql.includes('FROM rosters WHERE league_id')) {
+              return { rows: [{ id: 2 }] };
+            }
+            return { rows: [], rowCount: 1 };
+          }),
+        };
+
+        mockLeagueRepo.findById.mockResolvedValue(mockLeague);
+        mockLotRepo.getRosterBudgetDataWithClient.mockResolvedValue({
+          spent: 0,
+          wonCount: 0,
+          leadingCommitment: 0,
+        });
+
+        return fn(mockClient);
+      });
+
+      await expect(service.setMaxBid(1, 'user-2', 1, 187)).rejects.toThrow(ValidationException);
+
+      // Verify error message mentions max affordable
+      runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        const mockClient = {
+          query: jest.fn().mockImplementation((sql: string) => {
+            if (sql.includes('FROM auction_lots WHERE id') && sql.includes('FOR UPDATE')) {
+              return { rows: [lotRow] };
+            }
+            if (sql.includes('FROM rosters WHERE league_id')) {
+              return { rows: [{ id: 2 }] };
+            }
+            return { rows: [], rowCount: 1 };
+          }),
+        };
+
+        mockLeagueRepo.findById.mockResolvedValue(mockLeague);
+        mockLotRepo.getRosterBudgetDataWithClient.mockResolvedValue({
+          spent: 0,
+          wonCount: 0,
+          leadingCommitment: 0,
+        });
+
+        return fn(mockClient);
+      });
+
+      await expect(service.setMaxBid(1, 'user-2', 1, 187)).rejects.toThrow('$186');
+    });
+
+    it('should free up leading commitment when leader bids on their own lot', async () => {
+      // Roster 1 is leading lot at $50 with leadingCommitment of 50
+      // Budget: 200, spent: 100, wonCount: 5, leadingCommitment: 50
+      // Remaining slots: 15 - 5 - 1 = 9, reserved: 9 * 1 = 9
+      // Without leading lot credit: 200 - 100 - 9 - 50 = 41
+      // With leading lot credit (isLeading=true): 41 + 50 = 91
+      const { runWithLock, lotRow } = setupBidWithBudget(
+        { spent: 100, wonCount: 5, leadingCommitment: 50 },
+        50,
+        true // leading
+      );
+
+      const updatedLot: AuctionLot = {
+        id: 1,
+        draftId: 1,
+        playerId: 100,
+        nominatorRosterId: 1,
+        currentBid: 50,
+        currentBidderRosterId: 1,
+        bidCount: 1,
+        bidDeadline: new Date(Date.now() + 30000),
+        status: 'active',
+        winningRosterId: null,
+        winningBid: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        const mockClient = {
+          query: jest.fn().mockImplementation((sql: string) => {
+            if (sql.includes('FROM auction_lots WHERE id') && sql.includes('FOR UPDATE')) {
+              return { rows: [lotRow] };
+            }
+            if (sql.includes('FROM rosters WHERE league_id')) {
+              return { rows: [{ id: 1 }] };
+            }
+            return { rows: [], rowCount: 1 };
+          }),
+        };
+
+        mockLeagueRepo.findById.mockResolvedValue(mockLeague);
+        mockLotRepo.getRosterBudgetDataWithClient.mockResolvedValue({
+          spent: 100,
+          wonCount: 5,
+          leadingCommitment: 50,
+        });
+
+        mockResolvePriceWithClient.mockResolvedValue({
+          updatedLot,
+          outbidNotifications: [],
+          leaderChanged: false,
+          priceChanged: false,
+        });
+
+        return fn(mockClient);
+      });
+
+      mockLotRepo.getProxyBid.mockResolvedValue({ ...mockProxyBid, maxBid: 91 });
+
+      // Bid 91 should succeed because leading lot commitment is freed
+      const result = await service.setMaxBid(1, 'user-1', 1, 91);
+      expect(result.lot).toBeDefined();
+
+      // But 92 should fail
+      runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        const mockClient = {
+          query: jest.fn().mockImplementation((sql: string) => {
+            if (sql.includes('FROM auction_lots WHERE id') && sql.includes('FOR UPDATE')) {
+              return { rows: [lotRow] };
+            }
+            if (sql.includes('FROM rosters WHERE league_id')) {
+              return { rows: [{ id: 1 }] };
+            }
+            return { rows: [], rowCount: 1 };
+          }),
+        };
+
+        mockLeagueRepo.findById.mockResolvedValue(mockLeague);
+        mockLotRepo.getRosterBudgetDataWithClient.mockResolvedValue({
+          spent: 100,
+          wonCount: 5,
+          leadingCommitment: 50,
+        });
+
+        return fn(mockClient);
+      });
+
+      await expect(service.setMaxBid(1, 'user-1', 1, 92)).rejects.toThrow(ValidationException);
+    });
+  });
+
+  describe('completeAuctionDraft', () => {
+    it('should mark draft completed, finalize rosters, and emit event', async () => {
+      const { runWithLock } = require('../../../shared/transaction-runner');
+
+      // Set up advanceNominator to detect all teams ineligible -> trigger completion
+      let callCount = 0;
+      runWithLock.mockImplementation(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        callCount++;
+        if (callCount === 1) {
+          // advanceNominatorInternal: all teams have full rosters
+          const mockClient = {
+            query: jest.fn().mockImplementation((sql: string) => {
+              if (sql.includes('FROM drafts WHERE') && sql.includes('FOR UPDATE')) {
+                return {
+                  rows: [{
+                    id: 1,
+                    league_id: 1,
+                    status: 'in_progress',
+                    settings: { auctionMode: 'fast', nominationSeconds: 60, minBid: 1 },
+                    current_pick: 1,
+                  }],
+                };
+              }
+              if (sql.includes('FROM draft_order')) {
+                return {
+                  rows: [{ roster_id: 1, draft_position: 1 }],
+                };
+              }
+              if (sql.includes('FROM leagues WHERE')) {
+                return {
+                  rows: [{
+                    id: 1,
+                    league_settings: { auctionBudget: 200, rosterSlots: 15 },
+                  }],
+                };
+              }
+              return { rows: [] };
+            }),
+          };
+
+          mockPlayerRepo.findRandomEligiblePlayerForAuction.mockResolvedValue(mockPlayer as any);
+          mockLotRepo.getAllRosterBudgetDataWithClient.mockResolvedValue(
+            new Map([[1, { spent: 0, wonCount: 15, leadingCommitment: 0 }]])
+          );
+
+          return fn(mockClient);
+        } else {
+          // completeAuctionDraft: runs inside its own lock
+          const mockClient = {
+            query: jest.fn().mockResolvedValue({ rows: [], rowCount: 1 }),
+          };
+          return fn(mockClient);
+        }
+      });
+
+      await service.advanceNominator(1);
+
+      // Verify finalizeDraftCompletion was called with correct arguments
+      expect(mockFinalizeDraftCompletion).toHaveBeenCalledWith(
+        expect.objectContaining({
+          draftRepo: mockDraftRepo,
+          leagueRepo: mockLeagueRepo,
+        }),
+        1,  // draftId
+        1   // leagueId
+      );
+
+      // Verify draft completed event was published
+      expect(mockEventBus.publish).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'draft:completed',
+          payload: {
+            draftId: 1,
+            leagueId: 1,
+          },
+        })
+      );
+    });
+
+    it('should emit DRAFT_COMPLETED event after completion', async () => {
+      const { runWithLock } = require('../../../shared/transaction-runner');
+
+      // Set up: no eligible players -> triggers completion directly
+      let callCount = 0;
+      runWithLock.mockImplementation(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        callCount++;
+        if (callCount === 1) {
+          // advanceNominatorInternal: no eligible players
+          const mockClient = {
+            query: jest.fn().mockImplementation((sql: string) => {
+              if (sql.includes('FROM drafts WHERE') && sql.includes('FOR UPDATE')) {
+                return {
+                  rows: [{
+                    id: 1,
+                    league_id: 1,
+                    status: 'in_progress',
+                    settings: { auctionMode: 'fast', nominationSeconds: 60, minBid: 1 },
+                    current_pick: 1,
+                  }],
+                };
+              }
+              return { rows: [] };
+            }),
+          };
+
+          // No eligible players found
+          mockPlayerRepo.findRandomEligiblePlayerForAuction.mockResolvedValue(null);
+
+          return fn(mockClient);
+        } else {
+          // completeAuctionDraft
+          const mockClient = {
+            query: jest.fn().mockResolvedValue({ rows: [], rowCount: 1 }),
+          };
+          return fn(mockClient);
+        }
+      });
+
+      await service.advanceNominator(1);
+
+      // Find the draft:completed event specifically
+      const completedEventCall = mockEventBus.publish.mock.calls.find(
+        (call: any[]) => call[0].type === 'draft:completed'
+      );
+      expect(completedEventCall).toBeDefined();
+      expect(completedEventCall[0].payload).toEqual({
+        draftId: 1,
+        leagueId: 1,
+      });
     });
   });
 });

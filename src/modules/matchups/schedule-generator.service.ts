@@ -44,6 +44,10 @@ export class ScheduleGeneratorService {
       throw new ForbiddenException('Only the commissioner can generate the schedule');
     }
 
+    if (weeks < 1 || weeks > 18) {
+      throw new ValidationException('Schedule weeks must be between 1 and 18');
+    }
+
     const league = await this.leagueRepo.findById(leagueId);
     if (!league) {
       throw new NotFoundException('League not found');
@@ -56,20 +60,24 @@ export class ScheduleGeneratorService {
 
     const season = parseInt(league.season, 10);
 
-    // Check if schedule already exists
-    const existingCount = await this.matchupsRepo.countByLeagueSeason(leagueId, season);
-    if (existingCount > 0) {
-      throw new ConflictException(
-        'Schedule already exists for this season. Delete existing schedule first.'
-      );
-    }
-
     // Generate round-robin matchups
     const rosterIds = rosters.map((r) => r.id);
     const matchups = this.generateRoundRobinMatchups(rosterIds, weeks);
 
-    // Create matchups in database
+    // Check existence and create matchups atomically within a transaction
+    // to prevent duplicate schedules from concurrent requests
     await runInTransaction(this.db, async (client) => {
+      // Check inside transaction for atomicity
+      const existingResult = await client.query(
+        'SELECT COUNT(*) as count FROM matchups WHERE league_id = $1 AND season = $2 AND is_playoff = false',
+        [leagueId, season]
+      );
+      if (parseInt(existingResult.rows[0].count, 10) > 0) {
+        throw new ConflictException(
+          'Schedule already exists for this season. Delete existing schedule first.'
+        );
+      }
+
       for (const { week, roster1Id, roster2Id } of matchups) {
         await this.matchupsRepo.create(leagueId, season, week, roster1Id, roster2Id, false, client);
       }
@@ -87,6 +95,10 @@ export class ScheduleGeneratorService {
       throw new NotFoundException('League not found');
     }
 
+    if (weeks < 1 || weeks > 18) {
+      throw new ValidationException('Schedule weeks must be between 1 and 18');
+    }
+
     const rosters = await this.rosterRepo.findByLeagueId(leagueId);
     if (rosters.length < 2) {
       throw new ValidationException('Need at least 2 teams to generate schedule');
@@ -94,18 +106,22 @@ export class ScheduleGeneratorService {
 
     const season = parseInt(league.season, 10);
 
-    // Check if schedule already exists (idempotent - skip if exists)
-    const existingCount = await this.matchupsRepo.countByLeagueSeason(leagueId, season);
-    if (existingCount > 0) {
-      return; // Schedule already generated, nothing to do
-    }
-
     // Generate round-robin matchups
     const rosterIds = rosters.map((r) => r.id);
     const matchups = this.generateRoundRobinMatchups(rosterIds, weeks);
 
-    // Create matchups in database
+    // Check existence and create matchups atomically within a transaction
+    // to prevent duplicate schedules from concurrent draft completions
     await runInTransaction(this.db, async (client) => {
+      // Check inside transaction for atomicity
+      const existingResult = await client.query(
+        'SELECT COUNT(*) as count FROM matchups WHERE league_id = $1 AND season = $2 AND is_playoff = false',
+        [leagueId, season]
+      );
+      if (parseInt(existingResult.rows[0].count, 10) > 0) {
+        return; // Schedule already exists
+      }
+
       for (const { week, roster1Id, roster2Id } of matchups) {
         await this.matchupsRepo.create(leagueId, season, week, roster1Id, roster2Id, false, client);
       }

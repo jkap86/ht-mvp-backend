@@ -73,3 +73,25 @@ export function calculateMaxAffordableBid(
 
   return maxAffordable;
 }
+
+/**
+ * Check if a roster can afford the minimum bid for a new nomination.
+ * Used for nominator eligibility checks where there is no active lot context.
+ *
+ * @param totalBudget - Total budget for the roster
+ * @param rosterSlots - Number of roster slots
+ * @param budgetData - Current budget data
+ * @param minBid - Minimum bid required per slot
+ * @returns Whether the roster can afford to nominate at minBid
+ */
+export function canAffordMinBid(
+  totalBudget: number,
+  rosterSlots: number,
+  budgetData: RosterBudgetData,
+  minBid: number
+): boolean {
+  const remainingSlots = rosterSlots - budgetData.wonCount - 1;
+  const reservedForMinBids = Math.max(0, remainingSlots) * minBid;
+  const maxAffordable = totalBudget - budgetData.spent - reservedForMinBids - budgetData.leadingCommitment;
+  return minBid <= maxAffordable;
+}

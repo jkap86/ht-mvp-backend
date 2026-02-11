@@ -81,6 +81,41 @@ export class MatchupsRepository {
   }
 
   /**
+   * Build a detail query with team names and live scores
+   */
+  private buildDetailQuery(whereClause: string, orderBy?: string): string {
+    return `SELECT m.*,
+            COALESCE(r1.settings->>'team_name', u1.username, 'Team ' || r1.roster_id) as roster1_team_name,
+            COALESCE(r2.settings->>'team_name', u2.username, 'Team ' || r2.roster_id) as roster2_team_name,
+            rl1.total_points_live as roster1_points_live,
+            rl1.total_points_projected_live as roster1_points_projected,
+            rl2.total_points_live as roster2_points_live,
+            rl2.total_points_projected_live as roster2_points_projected
+     FROM matchups m
+     JOIN rosters r1 ON m.roster1_id = r1.id
+     JOIN rosters r2 ON m.roster2_id = r2.id
+     LEFT JOIN users u1 ON r1.user_id = u1.id
+     LEFT JOIN users u2 ON r2.user_id = u2.id
+     LEFT JOIN roster_lineups rl1 ON m.roster1_id = rl1.roster_id
+       AND rl1.season = m.season AND rl1.week = m.week
+     LEFT JOIN roster_lineups rl2 ON m.roster2_id = rl2.roster_id
+       AND rl2.season = m.season AND rl2.week = m.week
+     WHERE ${whereClause}${orderBy ? `\n     ORDER BY ${orderBy}` : ''}`;
+  }
+
+  private mapDetailRow(row: any): MatchupDetails {
+    return {
+      ...matchupFromDatabase(row),
+      roster1TeamName: row.roster1_team_name,
+      roster2TeamName: row.roster2_team_name,
+      roster1PointsActual: row.roster1_points_live ? parseFloat(row.roster1_points_live) : null,
+      roster1PointsProjected: row.roster1_points_projected ? parseFloat(row.roster1_points_projected) : null,
+      roster2PointsActual: row.roster2_points_live ? parseFloat(row.roster2_points_live) : null,
+      roster2PointsProjected: row.roster2_points_projected ? parseFloat(row.roster2_points_projected) : null,
+    };
+  }
+
+  /**
    * Get matchups for a league/week with team names and live scores
    */
   async findByLeagueAndWeekWithDetails(
@@ -89,41 +124,10 @@ export class MatchupsRepository {
     week: number
   ): Promise<MatchupDetails[]> {
     const result = await this.db.query(
-      `SELECT m.*,
-              COALESCE(r1.settings->>'team_name', u1.username, 'Team ' || r1.roster_id) as roster1_team_name,
-              COALESCE(r2.settings->>'team_name', u2.username, 'Team ' || r2.roster_id) as roster2_team_name,
-              rl1.total_points_live as roster1_points_live,
-              rl1.total_points_projected_live as roster1_points_projected,
-              rl2.total_points_live as roster2_points_live,
-              rl2.total_points_projected_live as roster2_points_projected
-       FROM matchups m
-       JOIN rosters r1 ON m.roster1_id = r1.id
-       JOIN rosters r2 ON m.roster2_id = r2.id
-       LEFT JOIN users u1 ON r1.user_id = u1.id
-       LEFT JOIN users u2 ON r2.user_id = u2.id
-       LEFT JOIN roster_lineups rl1 ON m.roster1_id = rl1.roster_id
-         AND rl1.season = m.season AND rl1.week = m.week
-       LEFT JOIN roster_lineups rl2 ON m.roster2_id = rl2.roster_id
-         AND rl2.season = m.season AND rl2.week = m.week
-       WHERE m.league_id = $1 AND m.season = $2 AND m.week = $3
-       ORDER BY m.id`,
+      this.buildDetailQuery('m.league_id = $1 AND m.season = $2 AND m.week = $3', 'm.id'),
       [leagueId, season, week]
     );
-
-    return result.rows.map((row) => ({
-      ...matchupFromDatabase(row),
-      roster1TeamName: row.roster1_team_name,
-      roster2TeamName: row.roster2_team_name,
-      // Live scores (for non-final matchups)
-      roster1PointsActual: row.roster1_points_live ? parseFloat(row.roster1_points_live) : null,
-      roster1PointsProjected: row.roster1_points_projected
-        ? parseFloat(row.roster1_points_projected)
-        : null,
-      roster2PointsActual: row.roster2_points_live ? parseFloat(row.roster2_points_live) : null,
-      roster2PointsProjected: row.roster2_points_projected
-        ? parseFloat(row.roster2_points_projected)
-        : null,
-    }));
+    return result.rows.map(row => this.mapDetailRow(row));
   }
 
   /**
@@ -131,43 +135,11 @@ export class MatchupsRepository {
    */
   async findByIdWithDetails(matchupId: number): Promise<MatchupDetails | null> {
     const result = await this.db.query(
-      `SELECT m.*,
-              COALESCE(r1.settings->>'team_name', u1.username, 'Team ' || r1.roster_id) as roster1_team_name,
-              COALESCE(r2.settings->>'team_name', u2.username, 'Team ' || r2.roster_id) as roster2_team_name,
-              rl1.total_points_live as roster1_points_live,
-              rl1.total_points_projected_live as roster1_points_projected,
-              rl2.total_points_live as roster2_points_live,
-              rl2.total_points_projected_live as roster2_points_projected
-       FROM matchups m
-       JOIN rosters r1 ON m.roster1_id = r1.id
-       JOIN rosters r2 ON m.roster2_id = r2.id
-       LEFT JOIN users u1 ON r1.user_id = u1.id
-       LEFT JOIN users u2 ON r2.user_id = u2.id
-       LEFT JOIN roster_lineups rl1 ON m.roster1_id = rl1.roster_id
-         AND rl1.season = m.season AND rl1.week = m.week
-       LEFT JOIN roster_lineups rl2 ON m.roster2_id = rl2.roster_id
-         AND rl2.season = m.season AND rl2.week = m.week
-       WHERE m.id = $1`,
+      this.buildDetailQuery('m.id = $1'),
       [matchupId]
     );
-
     if (result.rows.length === 0) return null;
-
-    const row = result.rows[0];
-    return {
-      ...matchupFromDatabase(row),
-      roster1TeamName: row.roster1_team_name,
-      roster2TeamName: row.roster2_team_name,
-      // Live scores (for non-final matchups)
-      roster1PointsActual: row.roster1_points_live ? parseFloat(row.roster1_points_live) : null,
-      roster1PointsProjected: row.roster1_points_projected
-        ? parseFloat(row.roster1_points_projected)
-        : null,
-      roster2PointsActual: row.roster2_points_live ? parseFloat(row.roster2_points_live) : null,
-      roster2PointsProjected: row.roster2_points_projected
-        ? parseFloat(row.roster2_points_projected)
-        : null,
-    };
+    return this.mapDetailRow(result.rows[0]);
   }
 
   /**
@@ -326,6 +298,7 @@ export class MatchupsRepository {
         LEFT JOIN matchups m ON (m.roster1_id = r.id OR m.roster2_id = r.id)
           AND m.season = $2
           AND m.is_final = true
+          AND m.is_playoff = false
         WHERE r.league_id = $1
         GROUP BY r.id, r.settings, u.username
       ),

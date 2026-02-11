@@ -325,12 +325,14 @@ export class MatchupService {
     // First calculate all scores (pass pre-fetched league to avoid redundant DB queries)
     await this.scoringService.calculateWeeklyScores(leagueId, week, userId, league);
 
-    // Get all matchups for the week
+    // Get all matchups for the week (outside lock — matchups don't change once created,
+    // and we need them to compute rosterIds for the lock list)
     const matchups = await this.matchupsRepo.findByLeagueAndWeek(leagueId, season, week);
 
-    // Get all lineups for the week
-    const lineups = await this.lineupsRepo.getByLeagueAndWeek(leagueId, season, week);
-    const lineupMap = new Map(lineups.map((l) => [l.rosterId, l]));
+    // Guard against re-finalization
+    if (matchups.length > 0 && matchups.every(m => m.isFinal)) {
+      throw new ValidationException(`Week ${week} matchups are already finalized`);
+    }
 
     // Check if league median is enabled and this is not a playoff week
     const useLeagueMedian = league.leagueSettings?.useLeagueMedian === true;
@@ -342,6 +344,11 @@ export class MatchupService {
     // Update matchup scores and finalize with LINEUP locks
     const locks = rosterIds.map(id => ({ domain: LockDomain.LINEUP, id }));
     await runWithLocks(this.db, locks, async (client: PoolClient) => {
+      // Read lineups INSIDE the lock to prevent TOCTOU — lineup data could change
+      // between the read and lock acquisition if read outside
+      const lineups = await this.lineupsRepo.getByLeagueAndWeek(leagueId, season, week);
+      const lineupMap = new Map(lineups.map((l) => [l.rosterId, l]));
+
       for (const matchup of matchups) {
         const lineup1 = lineupMap.get(matchup.roster1Id);
         const lineup2 = lineupMap.get(matchup.roster2Id);

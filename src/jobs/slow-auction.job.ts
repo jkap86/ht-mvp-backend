@@ -36,123 +36,125 @@ async function processExpiredLots(): Promise<void> {
 
     logger.debug('slow-auction tick started', { jobName: 'slow-auction' });
 
+    let results: Awaited<ReturnType<SlowAuctionService['processExpiredLots']>>;
     try {
       const slowAuctionService = container.resolve<SlowAuctionService>(KEYS.SLOW_AUCTION_SERVICE);
-      const results = await slowAuctionService.processExpiredLots();
+      results = await slowAuctionService.processExpiredLots();
+    } finally {
+      // Release lock immediately after DB processing — post-processing has its own locks
+      await client.query('SELECT pg_advisory_unlock($1)', [SLOW_AUCTION_LOCK_ID]);
+    }
 
-      for (const result of results) {
-        if (result.winner) {
-          lotsSettled++;
-          logger.info(
-            `Lot ${result.lot.id} settled: player ${result.lot.playerId} ` +
-              `won by roster ${result.winner.rosterId} for $${result.winner.amount}`
-          );
-        } else {
-          lotsPassed++;
-          logger.info(
-            `Lot ${result.lot.id} passed: player ${result.lot.playerId} received no bids`
-          );
-        }
-
-        // Emit domain events (routed to socket by SocketEventSubscriber)
-        const eventBus = tryGetEventBus();
-
-        if (result.passed) {
-          // Lot passed (no bids)
-          eventBus?.publish({
-            type: EventTypes.AUCTION_LOT_PASSED,
-            payload: {
-              draftId: result.lot.draftId,
-              lotId: result.lot.id,
-              playerId: result.lot.playerId,
-            },
-          });
-        } else {
-          // Lot won
-          eventBus?.publish({
-            type: EventTypes.AUCTION_LOT_SOLD,
-            payload: {
-              draftId: result.lot.draftId,
-              lotId: result.lot.id,
-              playerId: result.lot.playerId,
-              winnerRosterId: result.winner!.rosterId,
-              price: result.winner!.amount,
-            },
-          });
-        }
-
-        // Advance nominator for fast auctions only (with retry logic)
-        // Check auction mode from the lot's draft to avoid wasteful calls for slow auctions
-        // Use pool.query instead of client to avoid holding the lock connection during processing
-        const draftForLot = await pool.query(
-          'SELECT settings FROM drafts WHERE id = $1',
-          [result.lot.draftId]
+    // Post-processing: emit events and advance nominators (outside advisory lock)
+    for (const result of results) {
+      if (result.winner) {
+        lotsSettled++;
+        logger.info(
+          `Lot ${result.lot.id} settled: player ${result.lot.playerId} ` +
+            `won by roster ${result.winner.rosterId} for $${result.winner.amount}`
         );
-        const lotAuctionMode = draftForLot.rows[0]?.settings?.auctionMode ?? 'slow';
+      } else {
+        lotsPassed++;
+        logger.info(
+          `Lot ${result.lot.id} passed: player ${result.lot.playerId} received no bids`
+        );
+      }
 
-        if (lotAuctionMode === 'fast') {
-          const fastAuctionService = container.resolve<FastAuctionService>(
-            KEYS.FAST_AUCTION_SERVICE
-          );
-          const MAX_ADVANCEMENT_RETRIES = 3;
-          let advancementSuccess = false;
+      // Emit domain events (routed to socket by SocketEventSubscriber)
+      const eventBus = tryGetEventBus();
 
-          for (let attempt = 1; attempt <= MAX_ADVANCEMENT_RETRIES; attempt++) {
-            try {
-              await fastAuctionService.advanceNominator(result.lot.draftId);
-              advancementSuccess = true;
-              break;
-            } catch (error) {
-              logger.warn('Nominator advancement attempt failed', {
-                jobName: 'slow-auction',
-                draftId: result.lot.draftId,
-                attempt,
-                maxAttempts: MAX_ADVANCEMENT_RETRIES,
-                error,
-              });
-              if (attempt < MAX_ADVANCEMENT_RETRIES) {
-                // Wait 100ms before retry
-                await new Promise((resolve) => setTimeout(resolve, 100));
-              }
-            }
-          }
+      if (result.passed) {
+        // Lot passed (no bids)
+        eventBus?.publish({
+          type: EventTypes.AUCTION_LOT_PASSED,
+          payload: {
+            draftId: result.lot.draftId,
+            lotId: result.lot.id,
+            playerId: result.lot.playerId,
+          },
+        });
+      } else {
+        // Lot won
+        eventBus?.publish({
+          type: EventTypes.AUCTION_LOT_SOLD,
+          payload: {
+            draftId: result.lot.draftId,
+            lotId: result.lot.id,
+            playerId: result.lot.playerId,
+            winnerRosterId: result.winner!.rosterId,
+            price: result.winner!.amount,
+          },
+        });
+      }
 
-          if (!advancementSuccess) {
-            logger.error('All nominator advancement attempts failed, trying force advance', {
+      // Advance nominator for fast auctions only (with retry logic)
+      // Check auction mode from the lot's draft to avoid wasteful calls for slow auctions
+      // Use pool.query instead of client to avoid holding the lock connection during processing
+      const draftForLot = await pool.query(
+        'SELECT settings FROM drafts WHERE id = $1',
+        [result.lot.draftId]
+      );
+      const lotAuctionMode = draftForLot.rows[0]?.settings?.auctionMode ?? 'slow';
+
+      if (lotAuctionMode === 'fast') {
+        const fastAuctionService = container.resolve<FastAuctionService>(
+          KEYS.FAST_AUCTION_SERVICE
+        );
+        const MAX_ADVANCEMENT_RETRIES = 3;
+        let advancementSuccess = false;
+
+        for (let attempt = 1; attempt <= MAX_ADVANCEMENT_RETRIES; attempt++) {
+          try {
+            await fastAuctionService.advanceNominator(result.lot.draftId);
+            advancementSuccess = true;
+            break;
+          } catch (error) {
+            logger.warn('Nominator advancement attempt failed', {
               jobName: 'slow-auction',
               draftId: result.lot.draftId,
+              attempt,
               maxAttempts: MAX_ADVANCEMENT_RETRIES,
+              error,
             });
-
-            // Fallback: Use forceAdvanceNominator to skip to next nominator
-            try {
-              await fastAuctionService.forceAdvanceNominator(result.lot.draftId);
-              logger.info('Force advance nominator succeeded', {
-                jobName: 'slow-auction',
-                draftId: result.lot.draftId,
-              });
-            } catch (fallbackError) {
-              logger.error('Force advance nominator also failed - draft may be stuck', {
-                jobName: 'slow-auction',
-                draftId: result.lot.draftId,
-                error: fallbackError,
-              });
+            if (attempt < MAX_ADVANCEMENT_RETRIES) {
+              // Wait 100ms before retry
+              await new Promise((resolve) => setTimeout(resolve, 100));
             }
+          }
+        }
+
+        if (!advancementSuccess) {
+          logger.error('All nominator advancement attempts failed, trying force advance', {
+            jobName: 'slow-auction',
+            draftId: result.lot.draftId,
+            maxAttempts: MAX_ADVANCEMENT_RETRIES,
+          });
+
+          // Fallback: Use forceAdvanceNominator to skip to next nominator
+          try {
+            await fastAuctionService.forceAdvanceNominator(result.lot.draftId);
+            logger.info('Force advance nominator succeeded', {
+              jobName: 'slow-auction',
+              draftId: result.lot.draftId,
+            });
+          } catch (fallbackError) {
+            logger.error('Force advance nominator also failed - draft may be stuck', {
+              jobName: 'slow-auction',
+              draftId: result.lot.draftId,
+              error: fallbackError,
+            });
           }
         }
       }
-
-      const durationMs = Date.now() - tickStart;
-      logger.info('slow-auction tick complete', {
-        jobName: 'slow-auction',
-        lotsSettled,
-        lotsPassed,
-        durationMs,
-      });
-    } finally {
-      // Always release advisory lock
-      await client.query('SELECT pg_advisory_unlock($1)', [SLOW_AUCTION_LOCK_ID]);
     }
+
+    const durationMs = Date.now() - tickStart;
+    logger.info('slow-auction tick complete', {
+      jobName: 'slow-auction',
+      lotsSettled,
+      lotsPassed,
+      durationMs,
+    });
   } catch (error) {
     logger.error('slow-auction job error', { jobName: 'slow-auction', error });
   } finally {
