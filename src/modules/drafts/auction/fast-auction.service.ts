@@ -272,7 +272,8 @@ export class FastAuctionService {
           bidDeadline,
           openingBid,
           undefined,
-          idempotencyKey
+          idempotencyKey,
+          league.activeLeagueSeasonId
         );
 
         // Fast auction: Nominator becomes the leader at openingBid
@@ -838,7 +839,10 @@ export class FastAuctionService {
           randomPlayer.id,
           draft.currentRosterId!,
           bidDeadline,
-          settings.minBid
+          settings.minBid,
+          undefined,
+          undefined,
+          league.activeLeagueSeasonId
         );
 
         // Fast auction: Nominator becomes the leader at startingBid

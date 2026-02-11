@@ -339,7 +339,8 @@ export class SlowAuctionService {
             bidDeadline,
             settings.minBid,
             undefined,
-            idempotencyKey
+            idempotencyKey,
+            league.activeLeagueSeasonId
           );
 
           return { lot, message: 'Player nominated successfully' };

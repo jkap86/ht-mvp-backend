@@ -26,15 +26,16 @@ export class AuctionLotRepository {
     nominatorRosterId: number,
     bidDeadline: Date,
     startingBid: number,
-    nominationDate?: string
+    nominationDate?: string,
+    leagueSeasonId?: number
   ): Promise<AuctionLot> {
     // Use provided date or default to today (UTC)
     const nomDate = nominationDate || new Date().toISOString().split('T')[0];
     const result = await this.db.query(
-      `INSERT INTO auction_lots (draft_id, player_id, nominator_roster_id, bid_deadline, current_bid, current_bidder_roster_id, status, nomination_date)
-       VALUES ($1, $2, $3, $4, $5, NULL, 'active', $6)
+      `INSERT INTO auction_lots (draft_id, player_id, nominator_roster_id, bid_deadline, current_bid, current_bidder_roster_id, status, nomination_date, league_season_id)
+       VALUES ($1, $2, $3, $4, $5, NULL, 'active', $6, $7)
        RETURNING *`,
-      [draftId, playerId, nominatorRosterId, bidDeadline, startingBid, nomDate]
+      [draftId, playerId, nominatorRosterId, bidDeadline, startingBid, nomDate, leagueSeasonId ?? null]
     );
     return auctionLotFromDatabase(result.rows[0]);
   }
@@ -485,14 +486,15 @@ export class AuctionLotRepository {
     bidDeadline: Date,
     startingBid: number,
     nominationDate?: string,
-    idempotencyKey?: string
+    idempotencyKey?: string,
+    leagueSeasonId?: number
   ): Promise<AuctionLot> {
     const nomDate = nominationDate || new Date().toISOString().split('T')[0];
     const result = await client.query(
-      `INSERT INTO auction_lots (draft_id, player_id, nominator_roster_id, bid_deadline, current_bid, current_bidder_roster_id, status, nomination_date, idempotency_key)
-       VALUES ($1, $2, $3, $4, $5, NULL, 'active', $6, $7)
+      `INSERT INTO auction_lots (draft_id, player_id, nominator_roster_id, bid_deadline, current_bid, current_bidder_roster_id, status, nomination_date, idempotency_key, league_season_id)
+       VALUES ($1, $2, $3, $4, $5, NULL, 'active', $6, $7, $8)
        RETURNING *`,
-      [draftId, playerId, nominatorRosterId, bidDeadline, startingBid, nomDate, idempotencyKey || null]
+      [draftId, playerId, nominatorRosterId, bidDeadline, startingBid, nomDate, idempotencyKey || null, leagueSeasonId ?? null]
     );
     return auctionLotFromDatabase(result.rows[0]);
   }
