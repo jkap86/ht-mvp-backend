@@ -266,6 +266,8 @@ export class DraftCoreRepository {
 
   /**
    * Get best available player for autopick.
+   * Ranks by ADP (average draft position) with player id as tiebreaker.
+   * Respects playerPool filtering and only considers active players.
    */
   async getBestAvailablePlayer(
     draftId: number,
@@ -292,17 +294,7 @@ export class DraftCoreRepository {
        WHERE active = true
        ${playerFilter}
        AND id NOT IN (SELECT player_id FROM draft_picks WHERE draft_id = $1 AND player_id IS NOT NULL)
-       ORDER BY
-         CASE position
-           WHEN 'QB' THEN 1
-           WHEN 'RB' THEN 2
-           WHEN 'WR' THEN 3
-           WHEN 'TE' THEN 4
-           WHEN 'K' THEN 5
-           WHEN 'DEF' THEN 6
-           ELSE 7
-         END,
-         id
+       ORDER BY adp ASC NULLS LAST, id ASC
        LIMIT 1`,
       [draftId]
     );

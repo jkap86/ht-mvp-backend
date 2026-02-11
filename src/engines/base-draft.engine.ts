@@ -11,13 +11,15 @@ import { DraftPickAsset } from '../modules/drafts/draft-pick-asset.model';
 import { PlayerRepository } from '../modules/players/players.repository';
 import { RosterPlayersRepository } from '../modules/rosters/rosters.repository';
 import { LeagueRepository, RosterRepository } from '../modules/leagues/leagues.repository';
-import { DomainEventBus, EventTypes } from '../shared/events';
+import { EventTypes, tryGetEventBus } from '../shared/events';
 import { logger } from '../config/logger.config';
 import { finalizeDraftCompletion } from '../modules/drafts/draft-completion.utils';
+import { computeNextPickState as computeNextPickStateShared, NextPickState } from '../modules/drafts/draft-pick-state.utils';
 import { container, KEYS } from '../container';
 import { DraftPickAssetRepository } from '../modules/drafts/draft-pick-asset.repository';
 import { VetDraftPickSelectionRepository } from '../modules/drafts/vet-draft-pick-selection.repository';
 import { Pool, PoolClient } from 'pg';
+import { runInDraftTransaction } from '../shared/locks';
 
 /**
  * Abstract base class for draft engines.
@@ -265,9 +267,9 @@ export abstract class BaseDraftEngine implements IDraftEngine {
 
       // Publish domain events AFTER transaction commits
       if (result.advanced) {
-        const eventBus = container.resolve<DomainEventBus>(KEYS.DOMAIN_EVENT_BUS);
+        const eventBus = tryGetEventBus();
         if (result.nextPickInfo) {
-          eventBus.publish({
+          eventBus?.publish({
             type: EventTypes.DRAFT_NEXT_PICK,
             payload: {
               draftId,
@@ -277,7 +279,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
         } else {
           const completedDraft = await this.draftRepo.findById(draftId);
           if (completedDraft) {
-            eventBus.publish({
+            eventBus?.publish({
               type: EventTypes.DRAFT_COMPLETED,
               payload: {
                 draftId,
@@ -338,48 +340,54 @@ export abstract class BaseDraftEngine implements IDraftEngine {
       throw new Error('No current roster to pick for');
     }
 
-    const draftOrder = await this.draftRepo.getDraftOrder(draft.id);
-    const settings = draft.settings as DraftSettings;
-    const includeRookiePicks = settings?.includeRookiePicks ?? false;
+    // Wrap all reads and the pick execution in a single draft transaction
+    // to prevent race conditions where another process drafts the same player
+    // between our queue read and the pick write.
+    const pool = container.resolve<Pool>(KEYS.POOL);
+    return runInDraftTransaction(pool, draft.id, async (client) => {
+      const draftOrder = await this.draftRepo.getDraftOrder(draft.id);
+      const settings = draft.settings as DraftSettings;
+      const includeRookiePicks = settings?.includeRookiePicks ?? false;
 
-    // Get selected pick asset IDs if this draft includes rookie picks
-    let draftedPickAssetIds: Set<number> | undefined;
-    if (includeRookiePicks) {
-      const vetPickSelectionRepo = container.resolve<VetDraftPickSelectionRepository>(
-        KEYS.VET_PICK_SELECTION_REPO
-      );
-      draftedPickAssetIds = await vetPickSelectionRepo.getSelectedAssetIds(draft.id);
-    }
-
-    // Get the user's queue and drafted player IDs
-    const queue = await this.draftRepo.getQueue(draft.id, draft.currentRosterId);
-    const draftedPlayerIds = await this.draftRepo.getDraftedPlayerIds(draft.id);
-
-    // Find first available queue item (player or pick asset)
-    for (const queueItem of queue) {
-      if (queueItem.playerId !== null) {
-        // Player entry
-        if (!draftedPlayerIds.has(queueItem.playerId)) {
-          // Found available player - use player pick flow
-          // Queue cleanup happens atomically inside makePickAndAdvanceTx
-          return await this.performAutoPickPlayer(draft, draftOrder, queueItem.playerId, true);
-        }
-        // Player already drafted - remove from queue
-        await this.draftRepo.removeFromQueue(queueItem.id);
-      } else if (queueItem.pickAssetId !== null && includeRookiePicks) {
-        // Pick asset entry (only if draft allows)
-        if (!draftedPickAssetIds?.has(queueItem.pickAssetId)) {
-          // Found available pick asset - use pick asset flow
-          // Queue cleanup happens atomically inside makePickAssetSelectionTx
-          return await this.performAutoPickAsset(draft, draftOrder, queueItem.pickAssetId);
-        }
-        // Pick asset already drafted - remove from queue
-        await this.draftRepo.removeFromQueue(queueItem.id);
+      // Get selected pick asset IDs if this draft includes rookie picks
+      let draftedPickAssetIds: Set<number> | undefined;
+      if (includeRookiePicks) {
+        const vetPickSelectionRepo = container.resolve<VetDraftPickSelectionRepository>(
+          KEYS.VET_PICK_SELECTION_REPO
+        );
+        draftedPickAssetIds = await vetPickSelectionRepo.getSelectedAssetIds(draft.id);
       }
-    }
 
-    // Fall back to best available player
-    return await this.performAutoPickPlayer(draft, draftOrder, null, false);
+      // Get the user's queue and drafted player IDs
+      const queue = await this.draftRepo.getQueue(draft.id, draft.currentRosterId!);
+      const draftedPlayerIds = await this.draftRepo.getDraftedPlayerIds(draft.id);
+
+      // Find first available queue item (player or pick asset)
+      for (const queueItem of queue) {
+        if (queueItem.playerId !== null) {
+          // Player entry
+          if (!draftedPlayerIds.has(queueItem.playerId)) {
+            // Found available player - use player pick flow
+            // Queue cleanup happens atomically inside makePickAndAdvanceTxWithClient
+            return await this.performAutoPickPlayer(draft, draftOrder, queueItem.playerId, true, client);
+          }
+          // Player already drafted - remove from queue
+          await this.draftRepo.removeFromQueue(queueItem.id);
+        } else if (queueItem.pickAssetId !== null && includeRookiePicks) {
+          // Pick asset entry (only if draft allows)
+          if (!draftedPickAssetIds?.has(queueItem.pickAssetId)) {
+            // Found available pick asset - use pick asset flow
+            // Queue cleanup happens atomically inside makePickAssetSelectionTxWithClient
+            return await this.performAutoPickAsset(draft, draftOrder, queueItem.pickAssetId, client);
+          }
+          // Pick asset already drafted - remove from queue
+          await this.draftRepo.removeFromQueue(queueItem.id);
+        }
+      }
+
+      // Fall back to best available player
+      return await this.performAutoPickPlayer(draft, draftOrder, null, false, client);
+    });
   }
 
   /**
@@ -390,7 +398,8 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     draft: Draft,
     draftOrder: DraftOrderEntry[],
     playerId: number | null,
-    usedQueue: boolean
+    usedQueue: boolean,
+    client?: PoolClient
   ): Promise<DraftPick> {
     const totalRosters = draftOrder.length;
 
@@ -414,7 +423,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     // Create the pick AND advance state atomically in a single transaction
     const pickInRound = this.getPickInRound(draft.currentPick, totalRosters);
     const idempotencyKey = `autopick-${draft.id}-${draft.currentPick}`;
-    const { pick, draft: updatedDraft } = await this.draftRepo.makePickAndAdvanceTx({
+    const pickParams = {
       draftId: draft.id,
       expectedPickNumber: draft.currentPick,
       round: draft.currentRound,
@@ -424,7 +433,12 @@ export abstract class BaseDraftEngine implements IDraftEngine {
       nextPickState,
       idempotencyKey,
       isAutoPick: true,
-    });
+    };
+    // Use WithClient variant if a client is provided (caller already holds the lock),
+    // otherwise fall back to the standalone transaction variant
+    const { pick, draft: updatedDraft } = client
+      ? await this.draftRepo.makePickAndAdvanceTxWithClient(client, pickParams)
+      : await this.draftRepo.makePickAndAdvanceTx(pickParams);
 
     // Handle draft completion if this was the last pick
     if (nextPickState.status === 'completed') {
@@ -469,7 +483,8 @@ export abstract class BaseDraftEngine implements IDraftEngine {
   protected async performAutoPickAsset(
     draft: Draft,
     draftOrder: DraftOrderEntry[],
-    pickAssetId: number
+    pickAssetId: number,
+    client?: PoolClient
   ): Promise<any> {
     const totalRosters = draftOrder.length;
     const pickInRound = this.getPickInRound(draft.currentPick, totalRosters);
@@ -482,14 +497,19 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     const nextPickState = this.computeNextPickState(draft, draftOrder, pickAssets);
 
     // Record selection atomically
-    const result = await this.draftRepo.makePickAssetSelectionTx({
+    const selectionParams = {
       draftId: draft.id,
       expectedPickNumber: draft.currentPick,
       draftPickAssetId: pickAssetId,
       rosterId: draft.currentRosterId!,
       nextPickState,
       idempotencyKey: `autopick-asset-${draft.id}-${draft.currentPick}`,
-    });
+    };
+    // Use WithClient variant if a client is provided (caller already holds the lock),
+    // otherwise fall back to the standalone transaction variant
+    const result = client
+      ? await this.draftRepo.makePickAssetSelectionTxWithClient(client, selectionParams)
+      : await this.draftRepo.makePickAssetSelectionTx(selectionParams);
 
     // Handle draft completion
     if (nextPickState.status === 'completed') {
@@ -530,8 +550,8 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     };
 
     // Publish domain events AFTER transaction commits
-    const eventBus = container.resolve<DomainEventBus>(KEYS.DOMAIN_EVENT_BUS);
-    eventBus.publish({
+    const eventBus = tryGetEventBus();
+    eventBus?.publish({
       type: EventTypes.DRAFT_PICK,
       payload: {
         draftId: draft.id,
@@ -540,7 +560,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     });
 
     if (nextPickState.status !== 'completed') {
-      eventBus.publish({
+      eventBus?.publish({
         type: EventTypes.DRAFT_NEXT_PICK,
         payload: {
           draftId: draft.id,
@@ -556,7 +576,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
       // Draft completed
       const completedDraft = await this.draftRepo.findById(draft.id);
       if (completedDraft) {
-        eventBus.publish({
+        eventBus?.publish({
           type: EventTypes.DRAFT_COMPLETED,
           payload: {
             draftId: draft.id,
@@ -586,8 +606,8 @@ export abstract class BaseDraftEngine implements IDraftEngine {
       await this.draftRepo.setAutodraftEnabled(draft.id, draft.currentRosterId!, true);
 
       // Publish domain event to notify the user (and others) that autodraft was force-enabled
-      const eventBus = container.resolve<DomainEventBus>(KEYS.DOMAIN_EVENT_BUS);
-      eventBus.publish({
+      const eventBus = tryGetEventBus();
+      eventBus?.publish({
         type: EventTypes.DRAFT_AUTODRAFT_TOGGLED,
         payload: {
           draftId: draft.id,
@@ -606,59 +626,15 @@ export abstract class BaseDraftEngine implements IDraftEngine {
   /**
    * Pre-compute the next pick state without making any DB changes.
    * Used for pick asset selections where we need to pass the next state to the atomic transaction.
+   *
+   * Delegates to the shared computeNextPickState utility.
    */
   protected computeNextPickState(
     draft: Draft,
     draftOrder: DraftOrderEntry[],
     pickAssets: DraftPickAsset[] = []
-  ): {
-    currentPick: number | null;
-    currentRound: number | null;
-    currentRosterId: number | null;
-    originalRosterId: number | null;
-    isTraded: boolean;
-    pickDeadline: Date | null;
-    status?: 'in_progress' | 'completed';
-    completedAt?: Date | null;
-  } {
-    const totalRosters = draftOrder.length;
-    const totalPicks = totalRosters * draft.rounds;
-    const nextPick = draft.currentPick + 1;
-
-    if (nextPick > totalPicks) {
-      // Draft complete
-      return {
-        currentPick: null,
-        currentRound: null,
-        currentRosterId: null,
-        originalRosterId: null,
-        isTraded: false,
-        pickDeadline: null,
-        status: 'completed',
-        completedAt: new Date(),
-      };
-    }
-
-    const nextRound = this.getRound(nextPick, totalRosters);
-
-    // Use getActualPickerForPickNumber to account for traded picks
-    const actualPicker = this.getActualPickerForPickNumber(draft, draftOrder, pickAssets, nextPick);
-
-    // Fall back to original picker logic if traded picks not calculated
-    const originalPicker = this.getPickerForPickNumber(draft, draftOrder, nextPick);
-    const nextPickerRosterId = actualPicker?.rosterId ?? originalPicker?.rosterId ?? null;
-
-    const pickDeadline = this.calculatePickDeadline(draft);
-
-    return {
-      currentPick: nextPick,
-      currentRound: nextRound,
-      currentRosterId: nextPickerRosterId,
-      originalRosterId: actualPicker?.originalRosterId ?? originalPicker?.rosterId ?? null,
-      isTraded: actualPicker?.isTraded ?? false,
-      pickDeadline,
-      status: 'in_progress',
-    };
+  ): NextPickState {
+    return computeNextPickStateShared(draft, draftOrder, this, pickAssets);
   }
 
   /**
@@ -826,7 +802,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     playerId: number,
     nextPickInfo: NextPickDetails | null
   ): Promise<void> {
-    const eventBus = container.resolve<DomainEventBus>(KEYS.DOMAIN_EVENT_BUS);
+    const eventBus = tryGetEventBus();
 
     // Enrich pick with player info for event
     const player = await this.playerRepo.findById(playerId);
@@ -838,13 +814,13 @@ export abstract class BaseDraftEngine implements IDraftEngine {
       player_team: player?.team,
     };
 
-    eventBus.publish({
+    eventBus?.publish({
       type: EventTypes.DRAFT_PICK,
       payload: enrichedPick,
     });
 
     // Publish queue update event for all users in draft
-    eventBus.publish({
+    eventBus?.publish({
       type: EventTypes.DRAFT_QUEUE_UPDATED,
       payload: {
         draftId: draft.id,
@@ -854,7 +830,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     });
 
     if (nextPickInfo) {
-      eventBus.publish({
+      eventBus?.publish({
         type: EventTypes.DRAFT_NEXT_PICK,
         payload: {
           draftId: draft.id,
@@ -865,7 +841,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
       // Draft completed
       const completedDraft = await this.draftRepo.findById(draft.id);
       if (completedDraft) {
-        eventBus.publish({
+        eventBus?.publish({
           type: EventTypes.DRAFT_COMPLETED,
           payload: {
             draftId: draft.id,

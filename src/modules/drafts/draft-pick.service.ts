@@ -1,13 +1,14 @@
-import { Pool, PoolClient } from 'pg';
+import { Pool } from 'pg';
 import { DraftRepository } from './drafts.repository';
-import { Draft, DraftOrderEntry, DraftSettings, PlayerPoolType, draftToResponse } from './drafts.model';
+import { Draft, DraftOrderEntry, DraftSettings, draftToResponse } from './drafts.model';
+import { validatePlayerPoolEligibility } from './draft-validation.utils';
 import { DraftPickAssetRepository } from './draft-pick-asset.repository';
 import { VetDraftPickSelectionRepository } from './vet-draft-pick-selection.repository';
 import { draftPickAssetWithDetailsToResponse, DraftPickAsset } from './draft-pick-asset.model';
+import { computeNextPickState, NextPickState } from './draft-pick-state.utils';
 import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import { RosterPlayersRepository } from '../rosters/rosters.repository';
 import { PlayerRepository } from '../players/players.repository';
-import { Player } from '../players/players.model';
 import { NotFoundException, ForbiddenException, ValidationException, ConflictException, ErrorCode } from '../../utils/exceptions';
 import { EventTypes, tryGetEventBus } from '../../shared/events';
 import { DraftEngineFactory, IDraftEngine } from '../../engines';
@@ -131,7 +132,7 @@ export class DraftPickService {
         if (!draft) throw new NotFoundException('Draft not found');
 
         // Validate player eligibility with fresh draft settings inside lock
-        await this.validatePlayerPoolEligibility(client, draft, playerId);
+        await validatePlayerPoolEligibility(client, draft, playerId, this.playerRepo);
 
         // Verify draft belongs to the league
         if (draft.leagueId !== leagueId) {
@@ -501,112 +502,16 @@ export class DraftPickService {
   /**
    * Pre-compute the next pick state without making any DB changes.
    * This is used by the atomic makePickAndAdvanceTx to update draft state.
+   *
+   * Delegates to the shared computeNextPickState utility.
    */
   private computeNextPickState(
     draft: Draft,
     draftOrder: DraftOrderEntry[],
     engine: IDraftEngine,
-    pickAssets: import('./draft-pick-asset.model').DraftPickAsset[] = []
-  ): {
-    currentPick: number | null;
-    currentRound: number | null;
-    currentRosterId: number | null;
-    originalRosterId: number | null;
-    isTraded: boolean;
-    pickDeadline: Date | null;
-    status?: 'in_progress' | 'completed';
-    completedAt?: Date | null;
-  } {
-    const totalRosters = draftOrder.length;
-    const totalPicks = totalRosters * draft.rounds;
-    const nextPick = draft.currentPick + 1;
-
-    if (nextPick > totalPicks) {
-      // Draft complete
-      return {
-        currentPick: null,
-        currentRound: null,
-        currentRosterId: null,
-        originalRosterId: null,
-        isTraded: false,
-        pickDeadline: null,
-        status: 'completed',
-        completedAt: new Date(),
-      };
-    }
-
-    const nextRound = engine.getRound(nextPick, totalRosters);
-
-    // Use getActualPickerForPickNumber to account for traded picks
-    const actualPicker = engine.getActualPickerForPickNumber?.(
-      draft,
-      draftOrder,
-      pickAssets,
-      nextPick
-    );
-
-    // Fall back to original picker logic if engine doesn't support traded picks
-    const originalPicker = engine.getPickerForPickNumber(draft, draftOrder, nextPick);
-    const nextPickerRosterId = actualPicker?.rosterId ?? originalPicker?.rosterId ?? null;
-
-    const pickDeadline = engine.calculatePickDeadline(draft);
-
-    return {
-      currentPick: nextPick,
-      currentRound: nextRound,
-      currentRosterId: nextPickerRosterId,
-      originalRosterId: actualPicker?.originalRosterId ?? originalPicker?.rosterId ?? null,
-      isTraded: actualPicker?.isTraded ?? false,
-      pickDeadline,
-      status: 'in_progress',
-    };
+    pickAssets: DraftPickAsset[] = []
+  ): NextPickState {
+    return computeNextPickState(draft, draftOrder, engine, pickAssets);
   }
 
-  /**
-   * Validate that a player is eligible for this draft's player pool.
-   * Uses the transaction client to avoid connection churn during peak drafts.
-   */
-  private async validatePlayerPoolEligibility(
-    client: PoolClient,
-    draft: Draft,
-    playerId: number
-  ): Promise<void> {
-    const settings = draft.settings as DraftSettings;
-    const playerPool = settings?.playerPool;
-
-    // Default: allow all NFL players (no restriction)
-    if (!playerPool || playerPool.length === 0) {
-      return;
-    }
-
-    const player = await this.playerRepo.findByIdWithClient(client, playerId);
-    if (!player) {
-      throw new NotFoundException('Player not found');
-    }
-
-    if (!this.isPlayerInPool(player, playerPool)) {
-      const poolLabels = playerPool.map(p =>
-        p === 'veteran' ? 'veterans' : p === 'rookie' ? 'rookies' : 'college players'
-      ).join(', ');
-      throw new ValidationException(
-        `This draft only allows ${poolLabels}. ${player.fullName} is not eligible.`
-      );
-    }
-  }
-
-  private isPlayerInPool(player: Player, playerPool: PlayerPoolType[]): boolean {
-    for (const poolType of playerPool) {
-      if (poolType === 'veteran' && player.playerType === 'nfl' &&
-          (player.yearsExp === null || player.yearsExp > 0)) {
-        return true;
-      }
-      if (poolType === 'rookie' && player.playerType === 'nfl' && player.yearsExp === 0) {
-        return true;
-      }
-      if (poolType === 'college' && player.playerType === 'college') {
-        return true;
-      }
-    }
-    return false;
-  }
 }

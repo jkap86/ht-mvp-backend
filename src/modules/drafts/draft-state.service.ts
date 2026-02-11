@@ -1,6 +1,7 @@
 import { Pool, PoolClient } from 'pg';
 import { DraftRepository } from './drafts.repository';
 import { Draft, DraftOrderEntry, DraftSettings, draftToResponse } from './drafts.model';
+import { validatePlayerPoolEligibility } from './draft-validation.utils';
 import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import { RosterPlayersRepository } from '../rosters/rosters.repository';
 import { PlayerRepository } from '../players/players.repository';
@@ -12,6 +13,7 @@ import { finalizeDraftCompletion } from './draft-completion.utils';
 import { ScheduleGeneratorService } from '../matchups/schedule-generator.service';
 import { DraftPickAssetRepository } from './draft-pick-asset.repository';
 import { DraftPickAsset } from './draft-pick-asset.model';
+import { computeNextPickState as computeNextPickStateShared, NextPickState } from './draft-pick-state.utils';
 import { container, KEYS } from '../../container';
 import { runInDraftTransaction } from '../../shared/locks';
 import { runWithLock, LockDomain } from '../../shared/transaction-runner';
@@ -64,19 +66,7 @@ export interface ApplyPickResult {
   player?: Player | null;
 }
 
-/**
- * Next pick state computed after a pick
- */
-export interface NextPickState {
-  currentPick: number | null;
-  currentRound: number | null;
-  currentRosterId: number | null;
-  originalRosterId?: number | null;
-  isTraded?: boolean;
-  pickDeadline: Date | null;
-  status?: 'in_progress' | 'completed';
-  completedAt?: Date | null;
-}
+// NextPickState is now defined in './draft-pick-state.utils' and imported above.
 
 export class DraftStateService {
   constructor(
@@ -484,7 +474,18 @@ export class DraftStateService {
       throw new ValidationException('Cannot complete a draft that has not started');
     }
 
-    // Run unified finalization (rosters, league status, schedule)
+    // Mark draft as completed FIRST to prevent races with in-flight picks.
+    // If this fails, no side effects have occurred yet.
+    // If finalization fails after this, a retry can detect "completed" status
+    // and re-run finalization (idempotent).
+    const updatedDraft = await this.draftRepo.updateWithLock(draftId, {
+      status: 'completed',
+      completedAt: new Date(),
+      pickDeadline: null,
+      currentRosterId: null,
+    });
+
+    // Run unified finalization (rosters, league status, schedule) AFTER status update
     await finalizeDraftCompletion(
       {
         draftRepo: this.draftRepo,
@@ -495,14 +496,6 @@ export class DraftStateService {
       draftId,
       draft.leagueId
     );
-
-    // Use updateWithLock to ensure atomic update and prevent races with in-flight picks
-    const updatedDraft = await this.draftRepo.updateWithLock(draftId, {
-      status: 'completed',
-      completedAt: new Date(),
-      pickDeadline: null,
-      currentRosterId: null,
-    });
 
     const response = draftToResponse(updatedDraft);
 
@@ -523,6 +516,10 @@ export class DraftStateService {
       throw new ValidationException('Cannot delete a draft that is in progress');
     }
 
+    if (draft.status === 'completed') {
+      throw new ValidationException('Cannot delete a completed draft. Rosters have already been populated.');
+    }
+
     const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
     if (!isCommissioner) {
       throw new ForbiddenException('Only the commissioner can delete drafts');
@@ -531,7 +528,7 @@ export class DraftStateService {
     await this.draftRepo.delete(draftId);
   }
 
-  async undoPick(draftId: number, userId: string): Promise<{ draft: any; undone: any }> {
+  async undoPick(leagueId: number, draftId: number, userId: string): Promise<{ draft: any; undone: any }> {
     // Get the pool for running the transaction
     const pool = container.resolve<Pool>(KEYS.POOL);
 
@@ -541,6 +538,10 @@ export class DraftStateService {
         // Read fresh draft state inside lock
         const draft = await this.draftRepo.findByIdWithClient(client, draftId);
         if (!draft) throw new NotFoundException('Draft not found');
+
+        if (draft.leagueId !== leagueId) {
+          throw new NotFoundException('Draft not found');
+        }
 
         const isCommissioner = await this.leagueRepo.isCommissioner(draft.leagueId, userId);
         if (!isCommissioner) {
@@ -695,7 +696,7 @@ export class DraftStateService {
         }
 
         // Validate player pool eligibility
-        await this.validatePlayerPoolEligibility(client, draft, playerId, playerRepo);
+        await validatePlayerPoolEligibility(client, draft, playerId, playerRepo);
 
         // Read fresh draft order inside lock
         const draftOrder = await this.draftRepo.getDraftOrderWithClient(client, draftId);
@@ -958,6 +959,8 @@ export class DraftStateService {
 
   /**
    * Compute the next pick state without making any DB changes.
+   *
+   * Delegates to the shared computeNextPickState utility.
    */
   private computeNextPickState(
     draft: Draft,
@@ -965,96 +968,12 @@ export class DraftStateService {
     engine: IDraftEngine,
     pickAssets: DraftPickAsset[] = []
   ): NextPickState {
-    const totalRosters = draftOrder.length;
-    const totalPicks = totalRosters * draft.rounds;
-    const nextPick = draft.currentPick + 1;
-
-    if (nextPick > totalPicks) {
-      return {
-        currentPick: null,
-        currentRound: null,
-        currentRosterId: null,
-        originalRosterId: null,
-        isTraded: false,
-        pickDeadline: null,
-        status: 'completed',
-        completedAt: new Date(),
-      };
-    }
-
-    const nextRound = engine.getRound(nextPick, totalRosters);
-
-    const actualPicker = engine.getActualPickerForPickNumber?.(
-      draft,
-      draftOrder,
-      pickAssets,
-      nextPick
-    );
-
-    const originalPicker = engine.getPickerForPickNumber(draft, draftOrder, nextPick);
-    const nextPickerRosterId = actualPicker?.rosterId ?? originalPicker?.rosterId ?? null;
-
-    const pickDeadline = engine.calculatePickDeadline(draft);
-
-    return {
-      currentPick: nextPick,
-      currentRound: nextRound,
-      currentRosterId: nextPickerRosterId,
-      originalRosterId: actualPicker?.originalRosterId ?? originalPicker?.rosterId ?? null,
-      isTraded: actualPicker?.isTraded ?? false,
-      pickDeadline,
-      status: 'in_progress',
-    };
-  }
-
-  /**
-   * Validate that a player is eligible for this draft's player pool.
-   */
-  private async validatePlayerPoolEligibility(
-    client: PoolClient,
-    draft: Draft,
-    playerId: number,
-    playerRepo: PlayerRepository
-  ): Promise<void> {
-    const settings = draft.settings as DraftSettings;
-    const playerPool = settings?.playerPool;
-
-    if (!playerPool || playerPool.length === 0) {
-      return;
-    }
-
-    const player = await playerRepo.findByIdWithClient(client, playerId);
-    if (!player) {
-      throw new NotFoundException('Player not found');
-    }
-
-    if (!this.isPlayerInPool(player, playerPool)) {
-      const poolLabels = playerPool
-        .map((p) => (p === 'veteran' ? 'veterans' : p === 'rookie' ? 'rookies' : 'college players'))
-        .join(', ');
-      throw new ValidationException(
-        `This draft only allows ${poolLabels}. ${player.fullName} is not eligible.`
-      );
-    }
-  }
-
-  private isPlayerInPool(player: Player, playerPool: string[]): boolean {
-    for (const poolType of playerPool) {
-      if (poolType === 'veteran' && player.playerType === 'nfl' && (player.yearsExp === null || player.yearsExp > 0)) {
-        return true;
-      }
-      if (poolType === 'rookie' && player.playerType === 'nfl' && player.yearsExp === 0) {
-        return true;
-      }
-      if (poolType === 'college' && player.playerType === 'college') {
-        return true;
-      }
-    }
-    return false;
+    return computeNextPickStateShared(draft, draftOrder, engine, pickAssets);
   }
 
   /**
    * Get the best available player for autopick.
+   * Uses ADP ranking, respects playerPool filtering, and only considers active players.
    */
   private async getBestAvailablePlayer(
     client: PoolClient,
@@ -1078,14 +997,35 @@ export class DraftStateService {
       return await playerRepo.findByIdWithClient(client, queueResult.rows[0].player_id);
     }
 
-    // Fall back to best available by ADP
+    // Fall back to best available by ADP, respecting playerPool and active status.
+    // This mirrors the logic in DraftCoreRepository.getBestAvailablePlayer() to ensure
+    // consistent ranking regardless of which autopick code path is triggered.
+    const settings = draft.settings as DraftSettings;
+    const playerPool = settings?.playerPool || ['veteran', 'rookie'];
+
+    const conditions: string[] = [];
+    if (playerPool.includes('veteran')) {
+      conditions.push("(player_type = 'nfl' AND (years_exp > 0 OR years_exp IS NULL))");
+    }
+    if (playerPool.includes('rookie')) {
+      conditions.push("(player_type = 'nfl' AND years_exp = 0)");
+    }
+    if (playerPool.includes('college')) {
+      conditions.push("(player_type = 'college')");
+    }
+
+    const playerFilter = conditions.length > 0
+      ? `AND (${conditions.join(' OR ')})`
+      : '';
+
     const bestAvailableResult = await client.query(
       `SELECT id FROM players
-       WHERE player_type = 'nfl'
+       WHERE active = true
+       ${playerFilter}
        AND id NOT IN (
          SELECT player_id FROM draft_picks WHERE draft_id = $1 AND player_id IS NOT NULL
        )
-       ORDER BY adp ASC NULLS LAST
+       ORDER BY adp ASC NULLS LAST, id ASC
        LIMIT 1`,
       [draft.id]
     );

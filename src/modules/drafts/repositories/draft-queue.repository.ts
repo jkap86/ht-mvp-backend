@@ -192,15 +192,29 @@ export class DraftQueueRepository {
           );
         }
       } else {
-        // Legacy behavior: reorder by player IDs only
-        await client.query('DELETE FROM draft_queue WHERE draft_id = $1 AND roster_id = $2', [
-          draftId,
-          rosterId,
-        ]);
-        for (let i = 0; i < playerIds.length; i++) {
+        // Legacy behavior: reorder by player IDs
+        // Uses UPDATE instead of DELETE+INSERT to preserve pick asset entries
+        // and avoid N+1 query overhead
+        if (playerIds.length > 0) {
+          // Build a single UPDATE using a VALUES list for batch position assignment
+          // Each (player_id, new_position) pair is provided as a row in the VALUES clause
+          const params: (number | string)[] = [draftId, rosterId];
+          const valueRows: string[] = [];
+          for (let i = 0; i < playerIds.length; i++) {
+            const playerIdParam = params.length + 1;
+            const positionParam = params.length + 2;
+            valueRows.push(`($${playerIdParam}::int, $${positionParam}::int)`);
+            params.push(playerIds[i], i + 1);
+          }
+
           await client.query(
-            'INSERT INTO draft_queue (draft_id, roster_id, player_id, queue_position) VALUES ($1, $2, $3, $4)',
-            [draftId, rosterId, playerIds[i], i + 1]
+            `UPDATE draft_queue dq
+             SET queue_position = v.new_position
+             FROM (VALUES ${valueRows.join(', ')}) AS v(player_id, new_position)
+             WHERE dq.draft_id = $1
+               AND dq.roster_id = $2
+               AND dq.player_id = v.player_id`,
+            params
           );
         }
       }

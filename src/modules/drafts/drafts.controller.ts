@@ -214,9 +214,10 @@ export class DraftController {
   undoPick = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const userId = requireUserId(req);
+      const leagueId = requireLeagueId(req);
       const draftId = requireDraftId(req);
 
-      const result = await this.draftService.undoPick(draftId, userId);
+      const result = await this.draftService.undoPick(leagueId, draftId, userId);
       res.status(200).json(result);
     } catch (error) {
       next(error);
