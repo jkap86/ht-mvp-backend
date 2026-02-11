@@ -16,7 +16,7 @@ import {
 } from '../middleware/socket-rate-limit.middleware';
 
 // Membership cache configuration
-const MEMBERSHIP_CACHE_TTL_SECONDS = 120; // 2 minutes
+const MEMBERSHIP_CACHE_TTL_SECONDS = 30; // 30 seconds
 const MEMBERSHIP_CACHE_PREFIX = 'socket_membership:';
 
 interface AuthenticatedSocket extends Socket {

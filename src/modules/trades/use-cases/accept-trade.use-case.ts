@@ -78,7 +78,7 @@ export async function acceptTrade(
       // If already accepted, return current state (idempotent retry)
       if (currentTrade.status === 'accepted') {
         const details = await ctx.tradesRepo.findByIdWithDetails(tradeId, roster.id);
-        if (!details) throw new Error('Failed to get trade details');
+        if (!details) throw new NotFoundException('Failed to get trade details');
         return details;
       }
       // If in another state, cannot accept
@@ -209,7 +209,7 @@ export async function acceptTrade(
       updatedTrade = result;
 
       const details = await ctx.tradesRepo.findByIdWithDetails(tradeId, roster.id);
-      if (!details) throw new Error('Failed to get trade details');
+      if (!details) throw new NotFoundException('Failed to get trade details');
       return details;
     }
   );

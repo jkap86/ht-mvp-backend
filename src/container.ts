@@ -1,3 +1,5 @@
+import { ValidationException } from './utils/exceptions';
+
 type Factory<T> = () => T;
 
 class Container {
@@ -17,7 +19,7 @@ class Container {
     // Create new instance
     const factory = this.factories.get(key);
     if (!factory) {
-      throw new Error(`No factory registered for key: ${key}`);
+      throw new ValidationException(`No factory registered for key: ${key}`);
     }
 
     const instance = factory() as T;
@@ -92,6 +94,7 @@ export const KEYS = {
   AUTH_SERVICE: 'authService',
   AUTHORIZATION_SERVICE: 'authorizationService',
   LEAGUE_SERVICE: 'leagueService',
+  DASHBOARD_SERVICE: 'dashboardService',
   ROSTER_SERVICE: 'rosterService',
   ROSTER_PLAYER_SERVICE: 'rosterPlayerService',
   LINEUP_SERVICE: 'lineupService',

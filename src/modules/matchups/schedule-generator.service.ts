@@ -141,9 +141,11 @@ export class ScheduleGeneratorService {
         // Skip bye matchups
         if (team1 === -1 || team2 === -1) continue;
 
-        // Always use canonical order (smaller ID first) to prevent duplicate matchups
+        // Canonical order for dedup logic (smaller ID first)
         const [lowId, highId] = team1 < team2 ? [team1, team2] : [team2, team1];
-        matchups.push({ week, roster1Id: lowId, roster2Id: highId });
+        // Alternate home/away based on round parity to prevent systematic bias
+        const [homeId, awayId] = round % 2 === 0 ? [lowId, highId] : [highId, lowId];
+        matchups.push({ week, roster1Id: homeId, roster2Id: awayId });
       }
     }
 

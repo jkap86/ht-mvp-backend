@@ -2,6 +2,7 @@ import { Socket } from 'socket.io';
 import { z, ZodSchema } from 'zod';
 import { logger } from '../config/logger.config';
 import { SOCKET_EVENTS } from '../constants/socket-events';
+import { AppException } from '../utils/exceptions';
 
 /**
  * Validation error response sent to client
@@ -73,7 +74,7 @@ export function onValidated<T>(
 
       socket.emit(SOCKET_EVENTS.APP.ERROR, {
         code: 'HANDLER_ERROR',
-        message: err instanceof Error ? err.message : 'Internal error',
+        message: err instanceof AppException ? err.message : 'An unexpected error occurred',
         event,
       });
     }

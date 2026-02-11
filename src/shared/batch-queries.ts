@@ -11,6 +11,16 @@ export interface BatchValidationResult<T> {
 }
 
 /**
+ * Result from a pick asset batch validation query.
+ * Extends BatchValidationResult with a wrongOwner array to distinguish
+ * "not found" from "exists but owned by another roster".
+ */
+export interface PickAssetBatchValidationResult<T> extends BatchValidationResult<T> {
+  /** IDs that exist but are owned by a different roster */
+  wrongOwner: number[];
+}
+
+/**
  * Batch validate that players exist on a roster.
  *
  * Replaces N individual findByRosterAndPlayer calls with a single query.
@@ -58,9 +68,9 @@ export async function batchValidatePickAssets(
   client: PoolClient | Pool,
   expectedOwnerId: number,
   pickAssetIds: number[]
-): Promise<BatchValidationResult<{ id: number; currentOwnerId: number }>> {
+): Promise<PickAssetBatchValidationResult<{ id: number; currentOwnerId: number }>> {
   if (pickAssetIds.length === 0) {
-    return { found: new Map(), missing: [] };
+    return { found: new Map(), missing: [], wrongOwner: [] };
   }
 
   const result = await client.query(
@@ -72,6 +82,7 @@ export async function batchValidatePickAssets(
 
   const found = new Map<number, { id: number; currentOwnerId: number }>();
   const missing: number[] = [];
+  const wrongOwner: number[] = [];
 
   const rowMap = new Map(result.rows.map((r) => [r.id, r]));
 
@@ -80,14 +91,14 @@ export async function batchValidatePickAssets(
     if (!row) {
       missing.push(id);
     } else if (row.current_owner_roster_id !== expectedOwnerId) {
-      // Asset exists but wrong owner
-      missing.push(id);
+      // Asset exists but owned by a different roster
+      wrongOwner.push(id);
     } else {
       found.set(id, { id: row.id, currentOwnerId: row.current_owner_roster_id });
     }
   }
 
-  return { found, missing };
+  return { found, missing, wrongOwner };
 }
 
 /**
@@ -164,7 +175,7 @@ export async function batchValidateTradeAssets(
   pickAssetIds: number[]
 ): Promise<{
   players: BatchValidationResult<{ playerId: number }>;
-  picks: BatchValidationResult<{ id: number; currentOwnerId: number }>;
+  picks: PickAssetBatchValidationResult<{ id: number; currentOwnerId: number }>;
   valid: boolean;
 }> {
   // Run both validations in parallel (they're independent)
@@ -173,7 +184,10 @@ export async function batchValidateTradeAssets(
     batchValidatePickAssets(client, rosterId, pickAssetIds),
   ]);
 
-  const valid = players.missing.length === 0 && picks.missing.length === 0;
+  const valid =
+    players.missing.length === 0 &&
+    picks.missing.length === 0 &&
+    picks.wrongOwner.length === 0;
 
   return { players, picks, valid };
 }

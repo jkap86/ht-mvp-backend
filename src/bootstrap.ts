@@ -38,6 +38,7 @@ import {
 import { AuthService } from './modules/auth/auth.service';
 import { AuthorizationService } from './modules/auth/authorization.service';
 import { LeagueService } from './modules/leagues/leagues.service';
+import { DashboardService } from './modules/leagues/dashboard.service';
 import { RosterService } from './modules/leagues/roster.service';
 import { DraftService } from './modules/drafts/drafts.service';
 import { DraftOrderService } from './modules/drafts/draft-order.service';
@@ -307,6 +308,16 @@ function bootstrap(): void {
         container.resolve(KEYS.DRAFT_SERVICE),
         container.resolve(KEYS.EVENT_LISTENER_SERVICE),
         container.resolve(KEYS.MATCHUPS_REPO)
+      )
+  );
+
+  container.register(
+    KEYS.DASHBOARD_SERVICE,
+    () =>
+      new DashboardService(
+        container.resolve(KEYS.POOL),
+        container.resolve(KEYS.LEAGUE_REPO),
+        container.resolve(KEYS.ROSTER_REPO)
       )
   );
 

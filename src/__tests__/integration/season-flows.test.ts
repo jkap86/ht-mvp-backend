@@ -34,7 +34,7 @@ import { RosterTransaction } from '../../modules/rosters/rosters.model';
 // Track batch validation calls and allow tests to configure responses
 let batchValidationConfig: {
   rosterPlayers: Map<string, { found: Map<number, { playerId: number }>; missing: number[] }>;
-  pickAssets: Map<string, { found: Map<number, { id: number; currentOwnerId: number }>; missing: number[] }>;
+  pickAssets: Map<string, { found: Map<number, { id: number; currentOwnerId: number }>; missing: number[]; wrongOwner?: number[] }>;
 } = {
   rosterPlayers: new Map(),
   pickAssets: new Map(),
@@ -59,9 +59,9 @@ const configureBatchValidation = {
       const found = new Map<number, { id: number; currentOwnerId: number }>(
         pickAssetIds.map((id) => [id, { id, currentOwnerId: ownerId }])
       );
-      batchValidationConfig.pickAssets.set(key, { found, missing: [] });
+      batchValidationConfig.pickAssets.set(key, { found, missing: [], wrongOwner: [] });
     } else {
-      batchValidationConfig.pickAssets.set(key, { found: new Map(), missing: pickAssetIds });
+      batchValidationConfig.pickAssets.set(key, { found: new Map(), missing: pickAssetIds, wrongOwner: [] });
     }
   },
   reset: () => {
@@ -87,13 +87,13 @@ jest.mock('../../shared/batch-queries', () => ({
     const key = `${expectedOwnerId}`;
     const config = batchValidationConfig.pickAssets.get(key);
     if (config) {
-      return config;
+      return { ...config, wrongOwner: config.wrongOwner ?? [] };
     }
     // Default: all picks are valid
     const found = new Map<number, { id: number; currentOwnerId: number }>(
       pickAssetIds.map((id: number) => [id, { id, currentOwnerId: expectedOwnerId }])
     );
-    return { found, missing: [] };
+    return { found, missing: [], wrongOwner: [] };
   }),
   batchValidateTradeAssets: jest.fn(async (_client, rosterId, playerIds, pickAssetIds) => {
     const playersKey = `${rosterId}`;
@@ -113,18 +113,18 @@ jest.mock('../../shared/batch-queries', () => ({
 
     let picksResult;
     if (picksConfig) {
-      picksResult = picksConfig;
+      picksResult = { ...picksConfig, wrongOwner: picksConfig.wrongOwner ?? [] };
     } else {
       const found = new Map<number, { id: number; currentOwnerId: number }>(
         pickAssetIds.map((id: number) => [id, { id, currentOwnerId: rosterId }])
       );
-      picksResult = { found, missing: [] };
+      picksResult = { found, missing: [], wrongOwner: [] };
     }
 
     return {
       players: playersResult,
       picks: picksResult,
-      valid: playersResult.missing.length === 0 && picksResult.missing.length === 0,
+      valid: playersResult.missing.length === 0 && picksResult.missing.length === 0 && picksResult.wrongOwner.length === 0,
     };
   }),
   batchGetRostersByPlayers: jest.fn(async () => new Map()),

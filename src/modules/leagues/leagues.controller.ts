@@ -17,8 +17,8 @@ export class LeagueController {
   getMyLeagues = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const userId = requireUserId(req);
-      const limit = parseInt(req.query.limit as string, 10) || 50;
-      const offset = parseInt(req.query.offset as string, 10) || 0;
+      const limit = Math.min(parseInt(req.query.limit as string, 10) || 50, 100);
+      const offset = Math.max(parseInt(req.query.offset as string, 10) || 0, 0);
 
       const leagues = await this.leagueService.getUserLeagues(userId, limit, offset);
       res.status(200).json(leagues);
@@ -226,8 +226,8 @@ export class LeagueController {
   discoverLeagues = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const userId = requireUserId(req);
-      const limit = parseInt(req.query.limit as string, 10) || 50;
-      const offset = parseInt(req.query.offset as string, 10) || 0;
+      const limit = Math.min(parseInt(req.query.limit as string, 10) || 50, 100);
+      const offset = Math.max(parseInt(req.query.offset as string, 10) || 0, 0);
 
       const leagues = await this.leagueService.discoverPublicLeagues(userId, limit, offset);
       res.status(200).json(leagues);

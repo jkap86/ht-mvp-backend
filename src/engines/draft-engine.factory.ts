@@ -5,6 +5,7 @@ import { DraftRepository } from '../modules/drafts/drafts.repository';
 import { PlayerRepository } from '../modules/players/players.repository';
 import { RosterPlayersRepository } from '../modules/rosters/rosters.repository';
 import { LeagueRepository, RosterRepository } from '../modules/leagues/leagues.repository';
+import { ValidationException, NotFoundException } from '../utils/exceptions';
 
 /**
  * Factory for creating draft engines based on draft type.
@@ -45,7 +46,7 @@ export class DraftEngineFactory {
           this.rosterRepo
         );
       default:
-        throw new Error(`Unknown draft type: ${draftType}`);
+        throw new ValidationException(`Unknown draft type: ${draftType}`);
     }
   }
 
@@ -55,7 +56,7 @@ export class DraftEngineFactory {
   async getEngineForDraft(draftId: number): Promise<IDraftEngine> {
     const draft = await this.draftRepo.findById(draftId);
     if (!draft) {
-      throw new Error(`Draft not found: ${draftId}`);
+      throw new NotFoundException(`Draft not found: ${draftId}`);
     }
     return this.createEngine(draft.draftType);
   }

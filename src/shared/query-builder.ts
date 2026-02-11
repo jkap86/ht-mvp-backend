@@ -6,6 +6,16 @@
  */
 
 /**
+ * Validates that a string is a safe SQL identifier (table or column name).
+ * Only allows alphanumeric characters and underscores, must start with a letter or underscore.
+ */
+function assertSafeIdentifier(identifier: string, context: string): void {
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(identifier)) {
+    throw new Error(`Unsafe SQL identifier in ${context}: "${identifier}"`);
+  }
+}
+
+/**
  * Result of building a query with parameters.
  */
 export interface QueryResult {
@@ -77,6 +87,9 @@ export function buildUpdateQuery(
     returningColumns,
   } = options;
 
+  assertSafeIdentifier(table, 'buildUpdateQuery table');
+  assertSafeIdentifier(whereColumn, 'buildUpdateQuery whereColumn');
+
   const setClauses: string[] = [];
   const values: any[] = [];
   let paramIndex = 1;
@@ -86,6 +99,7 @@ export function buildUpdateQuery(
 
     // Use custom mapping if provided, otherwise convert camelCase to snake_case
     const column = columnMapping[key] || toSnakeCase(key);
+    assertSafeIdentifier(column, 'buildUpdateQuery column');
     setClauses.push(`${column} = $${paramIndex++}`);
     values.push(value);
   }
@@ -103,6 +117,7 @@ export function buildUpdateQuery(
   let query = `UPDATE ${table} SET ${setClauses.join(', ')} WHERE ${whereColumn} = $${paramIndex}`;
 
   if (returningColumns) {
+    returningColumns.forEach((col) => assertSafeIdentifier(col, 'buildUpdateQuery returningColumns'));
     query += ` RETURNING ${returningColumns.join(', ')}`;
   } else if (returning) {
     query += ' RETURNING *';
@@ -148,6 +163,8 @@ export function buildUpdateQueryMultiWhere(
     returningColumns,
   } = options;
 
+  assertSafeIdentifier(table, 'buildUpdateQueryMultiWhere table');
+
   const setClauses: string[] = [];
   const values: any[] = [];
   let paramIndex = 1;
@@ -155,6 +172,7 @@ export function buildUpdateQueryMultiWhere(
   for (const [key, value] of Object.entries(updates)) {
     if (value === undefined) continue;
     const column = columnMapping[key] || toSnakeCase(key);
+    assertSafeIdentifier(column, 'buildUpdateQueryMultiWhere column');
     setClauses.push(`${column} = $${paramIndex++}`);
     values.push(value);
   }
@@ -169,6 +187,7 @@ export function buildUpdateQueryMultiWhere(
 
   const whereClauses: string[] = [];
   for (const { column, value } of whereConditions) {
+    assertSafeIdentifier(column, 'buildUpdateQueryMultiWhere whereCondition');
     whereClauses.push(`${column} = $${paramIndex++}`);
     values.push(value);
   }
@@ -176,6 +195,7 @@ export function buildUpdateQueryMultiWhere(
   let query = `UPDATE ${table} SET ${setClauses.join(', ')} WHERE ${whereClauses.join(' AND ')}`;
 
   if (returningColumns) {
+    returningColumns.forEach((col) => assertSafeIdentifier(col, 'buildUpdateQueryMultiWhere returningColumns'));
     query += ` RETURNING ${returningColumns.join(', ')}`;
   } else if (returning) {
     query += ' RETURNING *';
@@ -220,9 +240,13 @@ export function buildBatchInsertQuery(
 ): QueryResult {
   const { onConflict, returning = false, returningColumns } = options;
 
+  assertSafeIdentifier(table, 'buildBatchInsertQuery table');
+
   if (rows.length === 0) {
     throw new Error('No rows to insert');
   }
+
+  columns.forEach((col) => assertSafeIdentifier(col, 'buildBatchInsertQuery column'));
 
   const values: any[] = [];
   const placeholders: string[] = [];
@@ -245,6 +269,7 @@ export function buildBatchInsertQuery(
   }
 
   if (returningColumns) {
+    returningColumns.forEach((col) => assertSafeIdentifier(col, 'buildBatchInsertQuery returningColumns'));
     query += ` RETURNING ${returningColumns.join(', ')}`;
   } else if (returning) {
     query += ' RETURNING *';
@@ -343,6 +368,11 @@ export function buildSelectQuery(
     offset,
   } = options;
 
+  assertSafeIdentifier(table, 'buildSelectQuery table');
+  columns.forEach((col) => {
+    if (col !== '*') assertSafeIdentifier(col, 'buildSelectQuery columns');
+  });
+
   const whereClauses: string[] = [];
   const values: any[] = [];
   let paramIndex = 1;
@@ -350,6 +380,7 @@ export function buildSelectQuery(
   for (const [key, value] of Object.entries(conditions)) {
     if (value === undefined) continue;
     const column = columnMapping[key] || toSnakeCase(key);
+    assertSafeIdentifier(column, 'buildSelectQuery condition column');
     whereClauses.push(`${column} = $${paramIndex++}`);
     values.push(value);
   }
@@ -361,6 +392,7 @@ export function buildSelectQuery(
   }
 
   if (orderBy) {
+    assertSafeIdentifier(orderBy, 'buildSelectQuery orderBy');
     query += ` ORDER BY ${orderBy} ${orderDirection}`;
   }
 
@@ -414,6 +446,7 @@ export class QueryBuilder {
    */
   addCondition(column: string, value: any, operator = '='): this {
     if (value !== undefined) {
+      assertSafeIdentifier(column, 'QueryBuilder.addCondition column');
       this.parts.push(`${column} ${operator} ${this.addParam(value)}`);
     }
     return this;

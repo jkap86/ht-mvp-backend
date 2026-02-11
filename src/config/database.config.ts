@@ -14,12 +14,10 @@ export function getDatabaseConfig(): PoolConfig {
   };
 
   // SSL configuration for production
-  // SECURITY NOTE: rejectUnauthorized: false is required for Heroku Postgres
-  // because Heroku uses self-signed certificates that change periodically.
-  // For non-Heroku deployments, set DATABASE_SSL_REJECT_UNAUTHORIZED=true
-  // and provide proper CA certificates.
+  // SECURITY NOTE: SSL certificate validation is enabled by default.
+  // Set DATABASE_SSL_REJECT_UNAUTHORIZED=false for environments with self-signed certs (e.g., Heroku Postgres).
   if (env.NODE_ENV === 'production') {
-    const rejectUnauthorized = process.env.DATABASE_SSL_REJECT_UNAUTHORIZED === 'true';
+    const rejectUnauthorized = process.env.DATABASE_SSL_REJECT_UNAUTHORIZED !== 'false';
     config.ssl = {
       rejectUnauthorized,
       // If using proper certificates, you can add:
@@ -29,7 +27,7 @@ export function getDatabaseConfig(): PoolConfig {
     if (!rejectUnauthorized) {
       logger.warn(
         '[SECURITY] Database SSL certificate validation is disabled. ' +
-          'Set DATABASE_SSL_REJECT_UNAUTHORIZED=true for non-Heroku deployments.'
+          'Only use DATABASE_SSL_REJECT_UNAUTHORIZED=false for environments with self-signed certs.'
       );
     }
   }

@@ -322,8 +322,8 @@ export class MatchupService {
       await this.bestballService.generateBestballLineupsForLeague(leagueId, season, week, 'final');
     }
 
-    // First calculate all scores
-    await this.scoringService.calculateWeeklyScores(leagueId, week, userId);
+    // First calculate all scores (pass pre-fetched league to avoid redundant DB queries)
+    await this.scoringService.calculateWeeklyScores(leagueId, week, userId, league);
 
     // Get all matchups for the week
     const matchups = await this.matchupsRepo.findByLeagueAndWeek(leagueId, season, week);

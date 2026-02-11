@@ -76,6 +76,7 @@
 
 import type { PoolClient } from 'pg';
 import { logger } from '../config/logger.config';
+import { LockTimeoutError } from '../utils/exceptions';
 import { tryGetEventBus } from './events';
 
 /**
@@ -145,11 +146,25 @@ function sortLocks(locks: LockSpec[]): LockSpec[] {
 const DEFAULT_SLOW_LOCK_THRESHOLD_MS = 5000;
 
 /**
+ * Default timeout for lock acquisition (30 seconds).
+ * Uses SET LOCAL statement_timeout to prevent indefinite blocking.
+ */
+const DEFAULT_LOCK_TIMEOUT_MS = 30_000;
+
+/**
+ * PostgreSQL error code for statement cancellation due to statement_timeout.
+ */
+const PG_STATEMENT_TIMEOUT_ERROR_CODE = '57014';
+
+/**
  * Options for lock acquisition.
  */
 export interface LockOptions {
   /** Threshold in ms before logging a slow lock warning (default: 5000ms) */
   slowThresholdMs?: number;
+  /** Timeout in ms for lock acquisition. If the lock isn't acquired within this time,
+   *  a LockTimeoutError is thrown. Set to 0 for no timeout. (default: 30000ms) */
+  timeoutMs?: number;
 }
 
 /**
@@ -182,13 +197,36 @@ export async function withLocks<T>(
   // Sort locks to ensure consistent ordering
   const sortedLocks = sortLocks(locks);
   const slowThreshold = options?.slowThresholdMs ?? DEFAULT_SLOW_LOCK_THRESHOLD_MS;
+  const lockTimeoutMs = options?.timeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS;
 
   // Acquire all locks in order
   for (const lock of sortedLocks) {
     const lockId = getLockId(lock.domain, lock.id);
     const start = Date.now();
 
-    await client.query('SELECT pg_advisory_xact_lock($1)', [lockId]);
+    // Set statement timeout to prevent indefinite blocking during lock acquisition
+    if (lockTimeoutMs > 0) {
+      await client.query(`SET LOCAL statement_timeout = ${lockTimeoutMs}`);
+    }
+    try {
+      await client.query('SELECT pg_advisory_xact_lock($1)', [lockId]);
+    } catch (err: unknown) {
+      // Check if this is a statement timeout (PG error code 57014)
+      const pgError = err as { code?: string };
+      if (pgError.code === PG_STATEMENT_TIMEOUT_ERROR_CODE) {
+        throw new LockTimeoutError(
+          lockId,
+          lockTimeoutMs,
+          `Failed to acquire lock: domain=${LockDomain[lock.domain]} id=${lock.id} lockId=${lockId} within ${lockTimeoutMs}ms`
+        );
+      }
+      throw err;
+    } finally {
+      // Reset statement timeout so the callback runs without artificial time limits
+      if (lockTimeoutMs > 0) {
+        await client.query('SET LOCAL statement_timeout = 0');
+      }
+    }
 
     const elapsed = Date.now() - start;
     if (elapsed > slowThreshold) {
@@ -330,9 +368,31 @@ export async function runInDraftTransaction<T>(
     eventBus?.beginTransaction();
 
     const lockId = getLockId(LockDomain.DRAFT, draftId);
+    const lockTimeoutMs = options?.timeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS;
     const start = Date.now();
 
-    await client.query('SELECT pg_advisory_xact_lock($1)', [lockId]);
+    // Set statement timeout to prevent indefinite blocking during lock acquisition
+    if (lockTimeoutMs > 0) {
+      await client.query(`SET LOCAL statement_timeout = ${lockTimeoutMs}`);
+    }
+    try {
+      await client.query('SELECT pg_advisory_xact_lock($1)', [lockId]);
+    } catch (err: unknown) {
+      const pgError = err as { code?: string };
+      if (pgError.code === PG_STATEMENT_TIMEOUT_ERROR_CODE) {
+        throw new LockTimeoutError(
+          lockId,
+          lockTimeoutMs,
+          `Failed to acquire draft lock: draftId=${draftId} lockId=${lockId} within ${lockTimeoutMs}ms`
+        );
+      }
+      throw err;
+    } finally {
+      // Reset statement timeout so the callback runs without artificial time limits
+      if (lockTimeoutMs > 0) {
+        await client.query('SET LOCAL statement_timeout = 0');
+      }
+    }
 
     const elapsed = Date.now() - start;
     if (elapsed > slowThreshold) {

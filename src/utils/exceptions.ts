@@ -41,6 +41,9 @@ export const ErrorCode = {
   ROSTER_FULL: 'ROSTER_FULL',
   PLAYER_NOT_ON_ROSTER: 'PLAYER_NOT_ON_ROSTER',
   PLAYER_ALREADY_ON_ROSTER: 'PLAYER_ALREADY_ON_ROSTER',
+
+  // Lock errors
+  LOCK_TIMEOUT: 'LOCK_TIMEOUT',
 } as const;
 
 export type ErrorCodeType = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -137,6 +140,25 @@ export class DatabaseException extends AppException {
       `Database operation failed: ${operation}`,
       originalError
     );
+  }
+}
+
+/**
+ * Thrown when an advisory lock cannot be acquired within the configured timeout.
+ * Indicates contention or a stuck transaction holding the lock.
+ */
+export class LockTimeoutError extends AppException {
+  public readonly lockId: number;
+  public readonly timeoutMs: number;
+
+  constructor(lockId: number, timeoutMs: number, message?: string) {
+    super(
+      message ?? `Failed to acquire advisory lock ${lockId} within ${timeoutMs}ms`,
+      409,
+      ErrorCode.LOCK_TIMEOUT
+    );
+    this.lockId = lockId;
+    this.timeoutMs = timeoutMs;
   }
 }
 

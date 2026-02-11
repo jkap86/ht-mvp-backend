@@ -10,6 +10,13 @@ import {
 import { signToken, verifyToken } from '../../utils/jwt';
 
 /**
+ * Pre-computed bcrypt hash used to prevent timing side-channel attacks on login.
+ * When a username doesn't exist, we still run bcrypt.compare against this dummy
+ * hash so the response time is indistinguishable from a valid-user-wrong-password path.
+ */
+const DUMMY_BCRYPT_HASH = '$2b$10$abcdefghijklmnopqrstuuVWXYZabcdefghijklmnopqrstuv';
+
+/**
  * Hash a token using SHA-256 for secure storage.
  * This allows us to verify tokens without storing them in plaintext.
  */
@@ -93,6 +100,8 @@ export class AuthService {
     // Find user
     const user = await this.userRepository.findByUsername(username);
     if (!user) {
+      // Constant-time: run bcrypt against a dummy hash to prevent timing side-channel
+      await bcrypt.compare(password, DUMMY_BCRYPT_HASH);
       throw new InvalidCredentialsException('Invalid credentials');
     }
 

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import dotenv from 'dotenv';
+import { ValidationException } from '../utils/exceptions';
 
 // Load environment variables
 dotenv.config();
@@ -64,7 +65,7 @@ const parseEnv = () => {
       error.issues.forEach((issue) => {
         console.error(`  - ${issue.path.join('.')}: ${issue.message}`);
       });
-      throw new Error('Invalid environment configuration');
+      throw new ValidationException('Invalid environment configuration');
     }
     throw error;
   }

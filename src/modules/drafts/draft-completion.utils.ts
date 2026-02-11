@@ -109,11 +109,11 @@ export async function populateRostersFromDraft(
     `Populated rosters from draft ${draftId}: added=${addedCount}, skipped=${skippedCount}, failed=${failedCount} of ${picks.length} picks`
   );
 
-  // Fail if more than 10% of picks failed (excluding duplicates)
-  // This threshold is reasonable because a few transient failures shouldn't abort everything,
-  // but systematic failures (like roster size issues) should be surfaced.
+  // Fail if more than 2% of picks failed (excluding duplicates)
+  // This threshold is intentionally strict because draft completion is a critical operation
+  // and even a small number of failures could mean lost player assignments.
   const totalNonDuplicatePicks = picks.filter((p) => p.playerId !== null).length - skippedCount;
-  const failureThreshold = Math.max(1, Math.ceil(totalNonDuplicatePicks * 0.1)); // At least 1, or 10%
+  const failureThreshold = Math.max(1, Math.ceil(totalNonDuplicatePicks * 0.02)); // At least 1, or 2%
 
   if (failedCount > failureThreshold) {
     const errorSummary = failedDetails
@@ -123,6 +123,14 @@ export async function populateRostersFromDraft(
     throw new Error(
       `Draft completion failed: ${failedCount} picks could not be added to rosters. ` +
         `Threshold: ${failureThreshold}. Examples: ${errorSummary}`
+    );
+  }
+
+  // Warn about any failures even if within threshold, so commissioners have visibility
+  if (failedCount > 0 && failedCount <= failureThreshold) {
+    logger.warn(
+      `Draft ${draftId} completed with ${failedCount} failed picks (within threshold of ${failureThreshold})`,
+      { failedDetails: failedDetails.slice(0, 10) }
     );
   }
 }

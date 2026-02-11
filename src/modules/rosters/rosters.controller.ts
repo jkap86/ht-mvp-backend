@@ -116,8 +116,8 @@ export class RostersController {
       const userId = requireUserId(req);
       const position = req.query.position as string | undefined;
       const search = req.query.search as string | undefined;
-      const limit = parseInt(req.query.limit as string, 10) || 50;
-      const offset = parseInt(req.query.offset as string, 10) || 0;
+      const limit = Math.min(parseInt(req.query.limit as string, 10) || 50, 100);
+      const offset = Math.max(parseInt(req.query.offset as string, 10) || 0, 0);
 
       const players = await this.rosterService.getFreeAgents(
         leagueId,
@@ -138,8 +138,8 @@ export class RostersController {
     try {
       const leagueId = requireLeagueId(req);
       const userId = requireUserId(req);
-      const limit = parseInt(req.query.limit as string, 10) || 50;
-      const offset = parseInt(req.query.offset as string, 10) || 0;
+      const limit = Math.min(parseInt(req.query.limit as string, 10) || 50, 100);
+      const offset = Math.max(parseInt(req.query.offset as string, 10) || 0, 0);
 
       const transactions = await this.rosterService.getLeagueTransactions(
         leagueId,

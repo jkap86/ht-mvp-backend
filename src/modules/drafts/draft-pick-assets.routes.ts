@@ -6,12 +6,9 @@ import { RosterRepository } from '../leagues/leagues.repository';
 import { authMiddleware } from '../../middleware/auth.middleware';
 import { apiReadLimiter } from '../../middleware/rate-limit.middleware';
 import { container, KEYS } from '../../container';
-import { pool } from '../../db/pool';
-
-// Create pick asset repository (not in container, instantiate directly)
-const pickAssetRepo = new DraftPickAssetRepository(pool);
 
 // Resolve dependencies from container
+const pickAssetRepo = container.resolve<DraftPickAssetRepository>(KEYS.PICK_ASSET_REPO);
 const authService = container.resolve<AuthorizationService>(KEYS.AUTHORIZATION_SERVICE);
 const rosterRepo = container.resolve<RosterRepository>(KEYS.ROSTER_REPO);
 

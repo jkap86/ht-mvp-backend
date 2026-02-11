@@ -3,6 +3,7 @@ import { PlayerStatsRepository } from './scoring.repository';
 import { PlayerProjectionsRepository } from './projections.repository';
 import { LineupsRepository } from '../lineups/lineups.repository';
 import { LeagueRepository } from '../leagues/leagues.repository';
+import { League } from '../leagues/leagues.model';
 import { PlayerRepository } from '../players/players.repository';
 import { GameProgressService, TeamGameStatus } from './game-progress.service';
 import { PlayerStats, ScoringRules, ScoringType, DEFAULT_SCORING_RULES } from './scoring.model';
@@ -121,21 +122,35 @@ export class ScoringService {
 
   /**
    * Calculate and store weekly scores for all rosters in a league
+   * @param prefetchedLeague - Optional pre-fetched league to avoid redundant DB queries.
+   *   When provided, commissioner check is skipped (caller is responsible for authorization).
    */
-  async calculateWeeklyScores(leagueId: number, week: number, userId: string): Promise<void> {
-    // Only commissioner can calculate scores
-    const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
-    if (!isCommissioner) {
-      throw new ForbiddenException('Only the commissioner can calculate scores');
-    }
+  async calculateWeeklyScores(
+    leagueId: number,
+    week: number,
+    userId: string,
+    prefetchedLeague?: League
+  ): Promise<void> {
+    let league: League;
 
-    const league = await this.leagueRepo.findById(leagueId);
-    if (!league) {
-      throw new NotFoundException('League not found');
+    if (prefetchedLeague) {
+      league = prefetchedLeague;
+    } else {
+      // Only commissioner can calculate scores
+      const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
+      if (!isCommissioner) {
+        throw new ForbiddenException('Only the commissioner can calculate scores');
+      }
+
+      const fetched = await this.leagueRepo.findById(leagueId);
+      if (!fetched) {
+        throw new NotFoundException('League not found');
+      }
+      league = fetched;
     }
 
     const season = parseInt(league.season, 10);
-    const rules = await this.getScoringRules(leagueId, userId);
+    const { rules } = normalizeLeagueScoringSettings(league.scoringSettings);
 
     // Get all lineups for the week
     const lineups = await this.lineupsRepo.getByLeagueAndWeek(leagueId, season, week);
