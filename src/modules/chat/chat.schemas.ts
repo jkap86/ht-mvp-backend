@@ -4,13 +4,17 @@ import { z } from 'zod';
  * Zod schemas for chat endpoint validation
  */
 
+/** Strip HTML tags to prevent XSS in future web clients */
+const stripHtml = (val: string) => val.replace(/<[^>]*>/g, '');
+
 /** Schema for sending a chat message */
 export const sendMessageSchema = z.object({
   message: z
     .string()
     .min(1, 'Message cannot be empty')
     .max(1000, 'Message cannot exceed 1000 characters')
-    .trim(),
+    .trim()
+    .transform(stripHtml),
 });
 
 /** Schema for chat message query parameters */

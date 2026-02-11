@@ -5,6 +5,7 @@ export interface JwtPayload {
   sub: string;
   userId: string;
   username: string;
+  type?: 'access' | 'refresh';
 }
 
 export function signToken(payload: JwtPayload, options?: { expiresIn?: string }): string {
@@ -26,5 +27,6 @@ export function verifyToken(token: string): JwtPayload {
     sub,
     userId: sub,
     username: (decoded as any).username ?? '',
+    type: (decoded as any).type as 'access' | 'refresh' | undefined,
   };
 }

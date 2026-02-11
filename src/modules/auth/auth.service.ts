@@ -96,12 +96,10 @@ export class AuthService {
       throw new InvalidCredentialsException('Invalid credentials');
     }
 
-    // Check if account is locked
+    // Check if account is locked - return generic message to prevent username enumeration
     const isLocked = await this.userRepository.isAccountLocked(user.userId);
     if (isLocked) {
-      throw new InvalidCredentialsException(
-        `Account is locked due to too many failed login attempts. Please try again in ${this.LOCK_DURATION_MINUTES} minutes.`
-      );
+      throw new InvalidCredentialsException('Invalid credentials');
     }
 
     // Verify password
@@ -113,9 +111,6 @@ export class AuthService {
       // Lock account if max attempts reached
       if (failedAttempts >= this.MAX_FAILED_ATTEMPTS) {
         await this.userRepository.lockAccount(user.userId, this.LOCK_DURATION_MINUTES);
-        throw new InvalidCredentialsException(
-          `Account locked due to too many failed login attempts. Please try again in ${this.LOCK_DURATION_MINUTES} minutes.`
-        );
       }
 
       throw new InvalidCredentialsException('Invalid credentials');
@@ -157,6 +152,11 @@ export class AuthService {
   async refreshAccessToken(refreshToken: string): Promise<AuthResult> {
     try {
       const payload = verifyToken(refreshToken);
+
+      // Reject access tokens used at the refresh endpoint
+      if (payload.type !== 'refresh') {
+        throw new InvalidCredentialsException('Invalid refresh token');
+      }
 
       const user = await this.userRepository.findById(payload.sub);
       if (!user) {
@@ -216,14 +216,14 @@ export class AuthService {
 
   private generateAccessToken(user: User): string {
     return signToken(
-      { sub: user.userId, userId: user.userId, username: user.username },
+      { sub: user.userId, userId: user.userId, username: user.username, type: 'access' },
       { expiresIn: this.ACCESS_TOKEN_EXPIRY }
     );
   }
 
   private generateRefreshToken(user: User): string {
     return signToken(
-      { sub: user.userId, userId: user.userId, username: user.username },
+      { sub: user.userId, userId: user.userId, username: user.username, type: 'refresh' },
       { expiresIn: this.REFRESH_TOKEN_EXPIRY }
     );
   }

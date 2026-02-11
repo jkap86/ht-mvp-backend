@@ -24,7 +24,7 @@ jest.mock('../utils/jwt', () => ({
   signToken: jest.fn().mockReturnValue('mock_token'),
   verifyToken: jest.fn().mockImplementation((token) => {
     if (token === 'valid_refresh_token') {
-      return { sub: 'user-123', userId: 'user-123', username: 'testuser' };
+      return { sub: 'user-123', userId: 'user-123', username: 'testuser', type: 'refresh' };
     }
     throw new Error('Invalid token');
   }),

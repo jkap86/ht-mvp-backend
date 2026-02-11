@@ -54,9 +54,11 @@ export class UserRepository {
   async searchByUsername(query: string, excludeUserId?: string): Promise<User[]> {
     let sqlQuery = `
       SELECT * FROM users
-      WHERE LOWER(username) LIKE LOWER($1)
+      WHERE LOWER(username) LIKE LOWER($1) ESCAPE '\\'
     `;
-    const params: any[] = [`%${query}%`];
+    // Escape LIKE wildcards to prevent enumeration via % or _
+    const escapedQuery = query.replace(/[%_\\]/g, '\\$&');
+    const params: any[] = [`%${escapedQuery}%`];
 
     if (excludeUserId) {
       sqlQuery += ` AND id != $2`;

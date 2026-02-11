@@ -25,6 +25,16 @@ export const authMiddleware = (req: AuthRequest, res: Response, next: NextFuncti
   try {
     const payload = verifyToken(token);
 
+    // Reject refresh tokens used as access tokens
+    if (payload.type === 'refresh') {
+      return res.status(401).json({
+        error: {
+          code: 'INVALID_TOKEN',
+          message: 'Invalid or expired token',
+        },
+      });
+    }
+
     req.user = {
       userId: payload.sub,
       username: payload.username,

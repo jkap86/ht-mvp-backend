@@ -111,8 +111,10 @@ export class PlayerRepository {
 
     // Only add name filter if query is provided
     if (query && query.trim().length > 0) {
-      sql += ` AND LOWER(full_name) LIKE LOWER($${paramIndex++})`;
-      params.push(`%${query}%`);
+      // Escape LIKE wildcards to prevent enumeration via % or _
+      const escapedQuery = query.replace(/[%_\\]/g, '\\$&');
+      sql += ` AND LOWER(full_name) LIKE LOWER($${paramIndex++}) ESCAPE '\\'`;
+      params.push(`%${escapedQuery}%`);
     }
 
     if (position) {

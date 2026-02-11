@@ -4,13 +4,17 @@ import { z } from 'zod';
  * Zod schemas for DM endpoint validation
  */
 
+/** Strip HTML tags to prevent XSS in future web clients */
+const stripHtml = (val: string) => val.replace(/<[^>]*>/g, '');
+
 /** Schema for sending a DM message */
 export const sendDmSchema = z.object({
   message: z
     .string()
     .min(1, 'Message cannot be empty')
     .max(1000, 'Message cannot exceed 1000 characters')
-    .trim(),
+    .trim()
+    .transform(stripHtml),
 });
 
 /** Schema for DM message query parameters */
