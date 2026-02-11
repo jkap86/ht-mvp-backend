@@ -7,13 +7,17 @@ import { Router } from 'express';
 import { Pool } from 'pg';
 import { ActivityController } from './activity.controller';
 import { ActivityService } from './activity.service';
+import { AuthorizationService } from '../auth/authorization.service';
+import { RosterRepository } from '../rosters/roster.repository';
 import { authMiddleware } from '../../middleware/auth.middleware';
 import { apiReadLimiter } from '../../middleware/rate-limit.middleware';
 import { container, KEYS } from '../../container';
 
 const pool = container.resolve<Pool>(KEYS.POOL);
 const activityService = new ActivityService(pool);
-const activityController = new ActivityController(activityService);
+const authService = container.resolve<AuthorizationService>(KEYS.AUTHORIZATION_SERVICE);
+const rosterRepo = container.resolve<RosterRepository>(KEYS.ROSTER_REPO);
+const activityController = new ActivityController(activityService, authService, rosterRepo);
 
 const router = Router();
 
