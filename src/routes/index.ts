@@ -13,7 +13,7 @@ import { checkRedisHealth } from '../config/redis.config';
 
 const router = Router();
 
-// Health check
+// Health check - public endpoint, no sensitive details
 router.get('/health', async (req, res) => {
   let dbHealthy = true;
   try {
@@ -23,7 +23,6 @@ router.get('/health', async (req, res) => {
   }
 
   const redisHealthy = process.env.REDIS_HOST ? await checkRedisHealth() : true;
-  const poolMetrics = getPoolMetrics();
   const isHealthy = dbHealthy && redisHealthy;
 
   res.status(isHealthy ? 200 : 503).json({
@@ -31,7 +30,6 @@ router.get('/health', async (req, res) => {
     timestamp: new Date().toISOString(),
     database: dbHealthy ? 'ok' : 'error',
     redis: process.env.REDIS_HOST ? (redisHealthy ? 'ok' : 'error') : 'disabled',
-    pool: poolMetrics,
   });
 });
 
