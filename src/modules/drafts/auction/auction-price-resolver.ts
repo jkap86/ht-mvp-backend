@@ -84,9 +84,11 @@ export async function resolvePriceWithClient(
   let newPrice: number;
 
   if (proxyBids.length === 1) {
-    // Single bidder: wins at minBid
+    // Single bidder: wins at the higher of currentBid or minBid.
+    // In fast auction, currentBid is set to the opening bid at nomination,
+    // so this prevents price from regressing below the opening bid.
     newLeader = proxyBids[0].rosterId;
-    newPrice = settings.minBid;
+    newPrice = Math.max(lot.currentBid ?? settings.minBid, settings.minBid);
   } else {
     // Multiple bidders: highest wins at second-highest + increment
     const highest = proxyBids[0];
@@ -94,6 +96,9 @@ export async function resolvePriceWithClient(
     newLeader = highest.rosterId;
     newPrice = Math.min(highest.maxBid, secondHighest.maxBid + settings.minIncrement);
   }
+
+  // Monotonic guard: resolved price must never decrease below lot.currentBid
+  newPrice = Math.max(newPrice, lot.currentBid ?? 0);
 
   leaderChanged = newLeader !== previousLeader;
   priceChanged = newPrice !== lot.currentBid;

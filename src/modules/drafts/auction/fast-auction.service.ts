@@ -175,7 +175,7 @@ export class FastAuctionService {
     }
 
     // Use transaction with advisory lock to prevent race condition
-    const { lot, playerName } = await runWithLock(
+    const { lot, playerName, openingBid } = await runWithLock(
       this.pool,
       LockDomain.DRAFT,
       draftId,
@@ -189,7 +189,7 @@ export class FastAuctionService {
           if (existing.rows.length > 0) {
             const lotResult = await client.query('SELECT * FROM auction_lots WHERE id = $1', [existing.rows[0].id]);
             if (lotResult.rows.length > 0) {
-              return { lot: auctionLotFromDatabase(lotResult.rows[0]), playerName: '' };
+              return { lot: auctionLotFromDatabase(lotResult.rows[0]), playerName: '', openingBid: settings.minBid };
             }
           }
         }
@@ -246,14 +246,22 @@ export class FastAuctionService {
         const requiredReserve = Math.max(0, remainingSlots) * settings.minBid;
         const maxAffordable = totalBudget - budgetInfo.spent - requiredReserve - budgetInfo.leadingCommitment;
 
-        if (settings.minBid > maxAffordable) {
+        const openingBid = settings.minBid;
+
+        if (openingBid > maxAffordable) {
           throw new ValidationException(
             `Cannot nominate: insufficient budget. Maximum affordable bid is $${maxAffordable}`
           );
         }
 
         // Calculate bid deadline for fast auction
-        const bidDeadline = new Date(Date.now() + settings.nominationSeconds * 1000);
+        let bidDeadline = new Date(Date.now() + settings.nominationSeconds * 1000);
+        if (settings.maxLotDurationSeconds) {
+          const maxDeadline = new Date(Date.now() + settings.maxLotDurationSeconds * 1000);
+          if (bidDeadline > maxDeadline) {
+            bidDeadline = maxDeadline;
+          }
+        }
 
         // Create the lot using transaction client
         const lot = await this.lotRepo.createLotWithClient(
@@ -262,16 +270,16 @@ export class FastAuctionService {
           playerId,
           roster.id,
           bidDeadline,
-          settings.minBid,
+          openingBid,
           undefined,
           idempotencyKey
         );
 
-        // Fast auction: Nominator becomes the leader at startingBid
-        await this.setNominatorAsOpeningBidder(client, lot, roster.id, settings.minBid);
+        // Fast auction: Nominator becomes the leader at openingBid
+        await this.setNominatorAsOpeningBidder(client, lot, roster.id, openingBid);
         lot.currentBidderRosterId = roster.id;
 
-        return { lot, playerName: player.fullName };
+        return { lot, playerName: player.fullName, openingBid };
       }
     );
 
@@ -289,7 +297,7 @@ export class FastAuctionService {
 
     return {
       lot,
-      message: `${playerName} nominated for $${settings.minBid}`,
+      message: `${playerName} nominated for $${openingBid}`,
     };
   }
 
@@ -355,6 +363,11 @@ export class FastAuctionService {
         }
         if (lot.status !== 'active') {
           throw new ValidationException('Lot is no longer active');
+        }
+
+        // Hard deadline check: reject bids after lot expiry (server-authoritative)
+        if (lot.bidDeadline && new Date() >= lot.bidDeadline) {
+          throw new ValidationException('Lot has expired; please refresh');
         }
 
         // Validate bid meets minimum
@@ -810,7 +823,13 @@ export class FastAuctionService {
         }
 
         // Calculate bid deadline
-        const bidDeadline = new Date(Date.now() + settings.nominationSeconds * 1000);
+        let bidDeadline = new Date(Date.now() + settings.nominationSeconds * 1000);
+        if (settings.maxLotDurationSeconds) {
+          const maxDeadline = new Date(Date.now() + settings.maxLotDurationSeconds * 1000);
+          if (bidDeadline > maxDeadline) {
+            bidDeadline = maxDeadline;
+          }
+        }
 
         // Create the lot using transaction client
         const lot = await this.lotRepo.createLotWithClient(

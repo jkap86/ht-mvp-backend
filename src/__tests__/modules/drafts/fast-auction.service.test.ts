@@ -583,4 +583,117 @@ describe('FastAuctionService', () => {
       expect(result.activeLot).toBeNull();
     });
   });
+
+  describe('setMaxBid - deadline enforcement', () => {
+    it('should reject bid after lot deadline has passed', async () => {
+      // Set up draft and roster for fast auction
+      mockDraftRepo.findById.mockResolvedValue(mockFastDraft);
+      mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster as any);
+
+      const { runWithLock } = require('../../../shared/transaction-runner');
+
+      // Create lot with expired deadline (database row format)
+      const expiredLot = {
+        id: 1,
+        draft_id: 1,
+        player_id: 100,
+        nominator_roster_id: 1,
+        current_bid: 5,
+        current_bidder_roster_id: 1,
+        bid_count: 1,
+        bid_deadline: new Date(Date.now() - 5000), // 5 seconds in the past
+        status: 'active',
+        winning_roster_id: null,
+        winning_bid: null,
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+
+      // No idempotencyKey is passed, so the first query is the lot FOR UPDATE
+      runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        const mockClient = {
+          query: jest.fn()
+            .mockResolvedValueOnce({ rows: [expiredLot] }), // lot FOR UPDATE
+        };
+        return fn(mockClient);
+      });
+
+      await expect(service.setMaxBid(1, 'user-1', 1, 10)).rejects.toThrow(ValidationException);
+
+      // Verify error message
+      runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        const mockClient = {
+          query: jest.fn()
+            .mockResolvedValueOnce({ rows: [expiredLot] }),
+        };
+        return fn(mockClient);
+      });
+
+      await expect(service.setMaxBid(1, 'user-1', 1, 10)).rejects.toThrow('Lot has expired');
+    });
+  });
+
+  describe('nominate - deadline capping', () => {
+    it('should cap initial bidDeadline by maxLotDurationSeconds', async () => {
+      // Draft with nominationSeconds=120 but maxLotDurationSeconds=60
+      const draftWithMaxDuration = {
+        ...mockFastDraft,
+        settings: {
+          ...mockFastDraft.settings,
+          nominationSeconds: 120,
+          maxLotDurationSeconds: 60,
+        },
+      };
+      mockDraftRepo.findById.mockResolvedValue(draftWithMaxDuration);
+      mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster as any);
+
+      const { runWithLock } = require('../../../shared/transaction-runner');
+
+      let capturedBidDeadline: Date | null = null;
+
+      runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        const createdLot = {
+          ...mockLot,
+          currentBidderRosterId: 1,
+        };
+
+        const mockClient = {
+          query: jest.fn().mockImplementation((sql: string) => {
+            if (sql.includes('SELECT EXISTS')) {
+              return { rows: [{ exists: false }] };
+            }
+            return { rows: [], rowCount: 1 };
+          }),
+        };
+
+        // Mock lot repo methods that use the client
+        mockLotRepo.hasActiveLotWithClient.mockResolvedValue(false);
+        mockPlayerRepo.findByIdWithClient = jest.fn().mockResolvedValue(mockPlayer) as any;
+        mockLotRepo.findLotByDraftAndPlayerWithClient.mockResolvedValue(null);
+        mockLotRepo.getRosterBudgetDataWithClient.mockResolvedValue({
+          spent: 0,
+          wonCount: 0,
+          leadingCommitment: 0,
+        });
+        mockLeagueRepo.findById.mockResolvedValue(mockLeague);
+        mockLotRepo.createLotWithClient.mockImplementation(
+          async (_client, _draftId, _playerId, _rosterId, bidDeadline) => {
+            capturedBidDeadline = bidDeadline;
+            return createdLot;
+          }
+        );
+
+        return fn(mockClient);
+      });
+
+      await service.nominate(1, 'user-1', 100);
+
+      // The bidDeadline should be capped at ~60s, not 120s
+      expect(capturedBidDeadline).not.toBeNull();
+      const diffMs = capturedBidDeadline!.getTime() - Date.now();
+      // Should be approximately 60 seconds (with some tolerance for test execution time)
+      expect(diffMs).toBeLessThanOrEqual(61000);
+      expect(diffMs).toBeGreaterThan(50000); // At least 50s to ensure it was capped from 120s
+    });
+  });
 });

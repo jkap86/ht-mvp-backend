@@ -665,6 +665,10 @@ export class SlowAuctionService {
           price = Math.min(candidateMaxBid, nextHighestBid + settings.minIncrement);
         }
 
+        // Floor guard: settlement price must never be below the lot's current_bid.
+        // In fast auction, lot.currentBid is the opening bid set at nomination.
+        price = Math.max(price, lot.currentBid ?? settings.minBid);
+
         // Roster already locked above - proceed with budget validation
 
         // Validate budget and slots
@@ -696,14 +700,19 @@ export class SlowAuctionService {
         }
 
         // This bidder can afford - settle to them
+        // Idempotent: AND status = 'active' ensures we don't re-settle a lot
         const settleResult = await client.query(
           `UPDATE auction_lots
            SET status = 'won', winning_roster_id = $2, winning_bid = $3,
                current_bidder_roster_id = $2, current_bid = $3, updated_at = CURRENT_TIMESTAMP
-           WHERE id = $1
+           WHERE id = $1 AND status = 'active'
            RETURNING *`,
           [lotId, candidateRosterId, price]
         );
+
+        if (settleResult.rowCount === 0) {
+          throw new ValidationException('Lot already settled or no longer active');
+        }
         const settledLot = auctionLotFromDatabase(settleResult.rows[0]);
 
         // Create draft pick entry
