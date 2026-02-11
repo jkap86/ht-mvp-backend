@@ -15,8 +15,13 @@ export const sendMessageSchema = z.object({
     .max(1500, 'Message cannot exceed 1500 characters')
     .trim()
     .transform((val) => {
-      // Don't strip HTML from gif:: prefixed URLs
-      if (val.startsWith('gif::')) return val;
+      // Validate gif:: prefixed URLs
+      if (val.startsWith('gif::')) {
+        const url = val.substring(5);
+        try { new URL(url); } catch { throw new Error('Invalid GIF URL'); }
+        if (!url.startsWith('https://')) throw new Error('GIF URL must use HTTPS');
+        return val;
+      }
       return stripHtml(val);
     }),
 });

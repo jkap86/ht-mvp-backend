@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { DmController } from './dm.controller';
 import { DmService } from './dm.service';
+import { DmRepository } from './dm.repository';
 import { DmReactionRepository } from './dm-reaction.repository';
 import { authMiddleware } from '../../middleware/auth.middleware';
 import { validateRequest } from '../../middleware/validation.middleware';
@@ -11,7 +12,8 @@ import { sendDmSchema, getDmMessagesQuerySchema, dmReactionSchema } from './dm.s
 // Resolve dependencies from container
 const dmService = container.resolve<DmService>(KEYS.DM_SERVICE);
 const dmReactionRepo = container.resolve<DmReactionRepository>(KEYS.DM_REACTION_REPO);
-const dmController = new DmController(dmService, dmReactionRepo);
+const dmRepo = container.resolve<DmRepository>(KEYS.DM_REPO);
+const dmController = new DmController(dmService, dmReactionRepo, dmRepo);
 
 const router = Router();
 
@@ -40,6 +42,6 @@ router.put('/:conversationId/read', dmReadLimiter, dmController.markAsRead);
 router.post('/:conversationId/messages/:messageId/reactions', dmMessageLimiter, validateRequest(dmReactionSchema), dmController.addReaction);
 
 // DELETE /api/dm/:conversationId/messages/:messageId/reactions
-router.delete('/:conversationId/messages/:messageId/reactions', dmReadLimiter, validateRequest(dmReactionSchema), dmController.removeReaction);
+router.delete('/:conversationId/messages/:messageId/reactions', dmMessageLimiter, validateRequest(dmReactionSchema), dmController.removeReaction);
 
 export default router;

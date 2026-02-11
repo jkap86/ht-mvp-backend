@@ -1,9 +1,10 @@
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../../middleware/auth.middleware';
 import { DmService } from './dm.service';
+import { DmRepository } from './dm.repository';
 import { DmReactionRepository, groupDmReactions } from './dm-reaction.repository';
 import { requireUserId } from '../../utils/controller-helpers';
-import { ValidationException, ForbiddenException } from '../../utils/exceptions';
+import { ValidationException, ForbiddenException, NotFoundException } from '../../utils/exceptions';
 import { EventTypes, tryGetEventBus } from '../../shared/events';
 
 /**
@@ -41,7 +42,8 @@ function parseBefore(value: string | undefined): number | undefined {
 export class DmController {
   constructor(
     private readonly dmService: DmService,
-    private readonly dmReactionRepo: DmReactionRepository
+    private readonly dmReactionRepo: DmReactionRepository,
+    private readonly dmRepo: DmRepository
   ) {}
 
   /**
@@ -96,7 +98,7 @@ export class DmController {
 
       const messagesWithReactions = messages.map((m: any) => ({
         ...m,
-        reactions: groupDmReactions(reactionsMap.get(m.id) || []),
+        reactions: groupDmReactions(reactionsMap.get(m.id) || [], userId),
       }));
 
       res.status(200).json(messagesWithReactions);
@@ -170,8 +172,17 @@ export class DmController {
 
       const { emoji } = req.body;
 
+      // Verify user is a participant of this conversation
+      const isParticipant = await this.dmRepo.isUserParticipant(conversationId, userId);
+      if (!isParticipant) {
+        throw new ForbiddenException('You are not a participant in this conversation');
+      }
+
       // Verify message belongs to this conversation
       const msgConvId = await this.dmReactionRepo.getMessageConversationId(messageId);
+      if (msgConvId === null) {
+        throw new NotFoundException('Message not found');
+      }
       if (msgConvId !== conversationId) {
         throw new ForbiddenException('Message does not belong to this conversation');
       }
@@ -216,8 +227,17 @@ export class DmController {
 
       const { emoji } = req.body;
 
+      // Verify user is a participant of this conversation
+      const isParticipant = await this.dmRepo.isUserParticipant(conversationId, userId);
+      if (!isParticipant) {
+        throw new ForbiddenException('You are not a participant in this conversation');
+      }
+
       // Verify message belongs to this conversation
       const msgConvId = await this.dmReactionRepo.getMessageConversationId(messageId);
+      if (msgConvId === null) {
+        throw new NotFoundException('Message not found');
+      }
       if (msgConvId !== conversationId) {
         throw new ForbiddenException('Message does not belong to this conversation');
       }

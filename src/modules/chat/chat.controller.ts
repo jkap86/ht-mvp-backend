@@ -2,14 +2,16 @@ import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../../middleware/auth.middleware';
 import { ChatService } from './chat.service';
 import { ChatReactionRepository, groupReactions } from './chat-reaction.repository';
+import { LeagueRepository } from '../leagues/leagues.repository';
 import { requireUserId, requireLeagueId } from '../../utils/controller-helpers';
-import { ValidationException, ForbiddenException } from '../../utils/exceptions';
+import { ValidationException, ForbiddenException, NotFoundException } from '../../utils/exceptions';
 import { EventTypes, tryGetEventBus } from '../../shared/events';
 
 export class ChatController {
   constructor(
     private readonly chatService: ChatService,
-    private readonly chatReactionRepo: ChatReactionRepository
+    private readonly chatReactionRepo: ChatReactionRepository,
+    private readonly leagueRepo: LeagueRepository
   ) {}
 
   getMessages = async (req: AuthRequest, res: Response, next: NextFunction) => {
@@ -61,8 +63,17 @@ export class ChatController {
 
       const { emoji } = req.body;
 
+      // Verify user is a member of this league
+      const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
+      if (!isMember) {
+        throw new ForbiddenException('You are not a member of this league');
+      }
+
       // Verify message belongs to this league
       const msgLeagueId = await this.chatReactionRepo.getMessageLeagueId(messageId);
+      if (msgLeagueId === null) {
+        throw new NotFoundException('Message not found');
+      }
       if (msgLeagueId !== leagueId) {
         throw new ForbiddenException('Message does not belong to this league');
       }
@@ -97,8 +108,17 @@ export class ChatController {
 
       const { emoji } = req.body;
 
+      // Verify user is a member of this league
+      const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
+      if (!isMember) {
+        throw new ForbiddenException('You are not a member of this league');
+      }
+
       // Verify message belongs to this league
       const msgLeagueId = await this.chatReactionRepo.getMessageLeagueId(messageId);
+      if (msgLeagueId === null) {
+        throw new NotFoundException('Message not found');
+      }
       if (msgLeagueId !== leagueId) {
         throw new ForbiddenException('Message does not belong to this league');
       }

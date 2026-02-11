@@ -4,6 +4,7 @@ export interface ReactionGroup {
   emoji: string;
   count: number;
   users: string[];
+  hasReacted: boolean;
 }
 
 export interface ReactionRow {
@@ -107,5 +108,6 @@ export function groupReactions(rows: ReactionRow[], currentUserId?: string): Rea
     emoji,
     count: users.length,
     users,
+    hasReacted: currentUserId ? users.includes(currentUserId) : false,
   }));
 }

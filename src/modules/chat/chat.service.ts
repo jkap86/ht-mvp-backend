@@ -22,8 +22,8 @@ export class ChatService {
       throw new ValidationException('Message cannot be empty');
     }
 
-    if (message.length > 1000) {
-      throw new ValidationException('Message cannot exceed 1000 characters');
+    if (message.length > 1500) {
+      throw new ValidationException('Message cannot exceed 1500 characters');
     }
 
     const msg = await this.chatRepo.create(leagueId, userId, message.trim());

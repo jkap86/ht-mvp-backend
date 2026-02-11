@@ -10,6 +10,7 @@ export interface DmReactionGroup {
   emoji: string;
   count: number;
   users: string[];
+  hasReacted: boolean;
 }
 
 export class DmReactionRepository {
@@ -80,7 +81,7 @@ export class DmReactionRepository {
 /**
  * Group raw DM reaction rows into aggregated reaction groups.
  */
-export function groupDmReactions(rows: DmReactionRow[]): DmReactionGroup[] {
+export function groupDmReactions(rows: DmReactionRow[], currentUserId?: string): DmReactionGroup[] {
   const emojiMap = new Map<string, string[]>();
 
   for (const row of rows) {
@@ -93,5 +94,6 @@ export function groupDmReactions(rows: DmReactionRow[]): DmReactionGroup[] {
     emoji,
     count: users.length,
     users,
+    hasReacted: currentUserId ? users.includes(currentUserId) : false,
   }));
 }
