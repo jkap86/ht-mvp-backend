@@ -170,9 +170,9 @@ export class DashboardService {
     const statsResult = await this.db.query(
       `SELECT
         COUNT(*) FILTER (WHERE status = 'active') as active_lots,
-        COUNT(*) FILTER (WHERE status = 'active' AND ends_at < NOW() + INTERVAL '1 hour') as ending_soon,
-        COUNT(*) FILTER (WHERE status = 'active' AND current_winner_roster_id = $2) as user_leading,
-        COUNT(*) FILTER (WHERE status = 'active' AND nominator_roster_id = $2 AND current_winner_roster_id != $2) as user_outbid
+        COUNT(*) FILTER (WHERE status = 'active' AND bid_deadline < NOW() + INTERVAL '1 hour') as ending_soon,
+        COUNT(*) FILTER (WHERE status = 'active' AND current_bidder_roster_id = $2) as user_leading,
+        COUNT(*) FILTER (WHERE status = 'active' AND nominator_roster_id = $2 AND current_bidder_roster_id != $2) as user_outbid
        FROM auction_lots
        WHERE draft_id = $1`,
       [draftId, userRosterId]
