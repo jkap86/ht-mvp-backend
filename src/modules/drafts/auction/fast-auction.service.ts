@@ -366,6 +366,11 @@ export class FastAuctionService {
           throw new ValidationException('Lot is no longer active');
         }
 
+        // Paused check: bid_deadline is NULL when draft is paused
+        if (!lot.bidDeadline) {
+          throw new ValidationException('Draft is paused; bidding is suspended');
+        }
+
         // Hard deadline check: reject bids after lot expiry (server-authoritative)
         if (lot.bidDeadline && new Date() >= lot.bidDeadline) {
           throw new ValidationException('Lot has expired; please refresh');

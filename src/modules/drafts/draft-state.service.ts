@@ -14,6 +14,7 @@ import { DraftPickAssetRepository } from './draft-pick-asset.repository';
 import { DraftPickAsset } from './draft-pick-asset.model';
 import { container, KEYS } from '../../container';
 import { runInDraftTransaction } from '../../shared/locks';
+import { runWithLock, LockDomain } from '../../shared/transaction-runner';
 import { logger } from '../../config/logger.config';
 
 // ============ Parameter Interfaces for Mutation Methods ============
@@ -247,10 +248,70 @@ export class DraftStateService {
       throw new ValidationException('Can only pause a draft that is in progress');
     }
 
-    // Check if this is a slow auction (no deadline/timer)
+    // Check auction mode
     const isSlowAuction = draft.draftType === 'auction' && draft.settings?.auctionMode !== 'fast';
+    const isFastAuction = draft.draftType === 'auction' && draft.settings?.auctionMode === 'fast';
 
-    // Calculate remaining time on the clock (only for timed drafts)
+    if (isFastAuction) {
+      // Fast auction: atomically freeze both draft AND active lot bid_deadline
+      const response = await runWithLock(this.db, LockDomain.DRAFT, draftId, async (client) => {
+        const now = new Date();
+
+        // Calculate remaining nomination timer
+        let remainingSeconds: number | null = null;
+        remainingSeconds = draft.pickDeadline
+          ? Math.max(0, Math.floor((draft.pickDeadline.getTime() - now.getTime()) / 1000))
+          : draft.pickTimeSeconds;
+
+        // Find active lot and freeze its bid_deadline
+        let pausedLotState: { lotId: number; remainingBidSeconds: number } | null = null;
+        const activeLotResult = await client.query(
+          `SELECT * FROM auction_lots WHERE draft_id = $1 AND status = 'active' LIMIT 1`,
+          [draftId]
+        );
+
+        if (activeLotResult.rows.length > 0) {
+          const lot = activeLotResult.rows[0];
+          const bidDeadline = lot.bid_deadline ? new Date(lot.bid_deadline) : null;
+          const remainingBidSeconds = bidDeadline
+            ? Math.max(0, Math.floor((bidDeadline.getTime() - now.getTime()) / 1000))
+            : 0;
+
+          // Set bid_deadline to NULL so settlement job skips this lot
+          await client.query(
+            `UPDATE auction_lots SET bid_deadline = NULL WHERE id = $1 AND status = 'active'`,
+            [lot.id]
+          );
+
+          pausedLotState = { lotId: lot.id, remainingBidSeconds };
+        }
+
+        // Update draft status
+        const updatedDraft = await this.draftRepo.updateWithClient(client, draftId, {
+          status: 'paused',
+          pickDeadline: null,
+          draftState: {
+            ...draft.draftState,
+            pausedAt: now.toISOString(),
+            pausedBy: userId,
+            remainingSeconds,
+            pausedLotState,
+          },
+        });
+
+        return draftToResponse(updatedDraft);
+      });
+
+      const eventBus = tryGetEventBus();
+      eventBus?.publish({
+        type: EventTypes.DRAFT_PAUSED,
+        payload: { draftId, draft: response },
+      });
+
+      return response;
+    }
+
+    // Non-fast-auction path (snake, linear, slow auction)
     const now = new Date();
     let remainingSeconds: number | null = null;
     if (!isSlowAuction) {
@@ -298,10 +359,70 @@ export class DraftStateService {
       throw new ValidationException('Can only resume a draft that is paused');
     }
 
-    // Check if this is a slow auction (no deadline/timer)
+    // Check auction mode
     const isSlowAuction = draft.draftType === 'auction' && draft.settings?.auctionMode !== 'fast';
+    const isFastAuction = draft.draftType === 'auction' && draft.settings?.auctionMode === 'fast';
 
-    // Calculate new deadline from remaining time (only for timed drafts)
+    if (isFastAuction) {
+      // Fast auction: atomically restore both draft AND active lot bid_deadline
+      const { response, restoredLot } = await runWithLock(this.db, LockDomain.DRAFT, draftId, async (client) => {
+        const now = new Date();
+        const remainingSeconds = draft.draftState?.remainingSeconds ?? draft.pickTimeSeconds;
+        const pickDeadline = new Date();
+        pickDeadline.setSeconds(pickDeadline.getSeconds() + remainingSeconds);
+
+        // Restore active lot bid_deadline from pausedLotState
+        const pausedLotState = draft.draftState?.pausedLotState as { lotId: number; remainingBidSeconds: number } | null;
+        let restoredLotData: any = null;
+
+        if (pausedLotState) {
+          const newBidDeadline = new Date();
+          newBidDeadline.setSeconds(newBidDeadline.getSeconds() + pausedLotState.remainingBidSeconds);
+
+          const lotUpdateResult = await client.query(
+            `UPDATE auction_lots SET bid_deadline = $1 WHERE id = $2 AND status = 'active' RETURNING *`,
+            [newBidDeadline, pausedLotState.lotId]
+          );
+
+          if (lotUpdateResult.rows.length > 0) {
+            restoredLotData = lotUpdateResult.rows[0];
+          }
+        }
+
+        // Update draft status
+        const updatedDraft = await this.draftRepo.updateWithClient(client, draftId, {
+          status: 'in_progress',
+          pickDeadline,
+          draftState: {
+            ...draft.draftState,
+            pausedAt: null,
+            pausedBy: null,
+            remainingSeconds: null,
+            pausedLotState: null,
+          },
+        });
+
+        return { response: draftToResponse(updatedDraft), restoredLot: restoredLotData, pickDeadline };
+      });
+
+      const eventBus = tryGetEventBus();
+      eventBus?.publish({
+        type: EventTypes.DRAFT_RESUMED,
+        payload: { draftId, draft: response },
+      });
+
+      // Emit lot updated event so clients recalculate countdown
+      if (restoredLot) {
+        eventBus?.publish({
+          type: EventTypes.AUCTION_BID,
+          payload: { draftId, lot: restoredLot },
+        });
+      }
+
+      return response;
+    }
+
+    // Non-fast-auction path (snake, linear, slow auction)
     let pickDeadline: Date | null = null;
     if (!isSlowAuction) {
       const remainingSeconds = draft.draftState?.remainingSeconds ?? draft.pickTimeSeconds;
