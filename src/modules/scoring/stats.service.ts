@@ -129,11 +129,12 @@ export class StatsService {
   /**
    * Get the current NFL week from configured provider
    */
-  async getCurrentNflWeek(): Promise<{ season: string; week: number }> {
+  async getCurrentNflWeek(): Promise<{ season: string; week: number; seasonType: 'preseason' | 'regular' | 'postseason' }> {
     const nflState = await this.statsProvider.fetchNflState();
     return {
       season: nflState.season.toString(),
       week: nflState.week,
+      seasonType: nflState.seasonType,
     };
   }
 

@@ -360,6 +360,14 @@ export class SocketEventSubscriber implements DomainEventSubscriber {
           );
         }
         break;
+      case EventTypes.LEAGUE_WEEK_ADVANCED:
+        if (event.leagueId) {
+          socketService.emitLeagueWeekAdvanced(
+            event.leagueId,
+            event.payload as { week: number; seasonType: string }
+          );
+        }
+        break;
 
       // Invitation events
       case EventTypes.INVITATION_RECEIVED:

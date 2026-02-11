@@ -1,3 +1,4 @@
+import { Pool } from 'pg';
 import { container, KEYS } from '../container';
 import { StatsService } from '../modules/scoring/stats.service';
 import { ScoringService } from '../modules/scoring/scoring.service';
@@ -9,6 +10,7 @@ import { LeaderLock } from '../shared/leader-lock';
 import { tryGetEventBus, EventTypes } from '../shared/events';
 import { logger } from '../config/logger.config';
 import { isInGameWindow, getOptimalSyncInterval, SYNC_INTERVALS } from '../utils/game-window';
+import { checkAndAdvanceWeek } from './week-advancement';
 
 let timeoutId: NodeJS.Timeout | null = null;
 let isRunning = false;
@@ -206,9 +208,13 @@ async function executeStatsSync(): Promise<void> {
     const matchupsRepo = container.resolve<MatchupsRepository>(KEYS.MATCHUPS_REPO);
 
     // Get current NFL week
-    const { season, week } = await statsService.getCurrentNflWeek();
+    const { season, week, seasonType } = await statsService.getCurrentNflWeek();
     const seasonNum = parseInt(season, 10);
     logger.info(`Current NFL week: ${season} week ${week}`);
+
+    // Auto-advance leagues to match NFL week/status
+    const pool = container.resolve<Pool>(KEYS.POOL);
+    await checkAndAdvanceWeek(pool, seasonNum, week, seasonType);
 
     // Sync actual stats for the current week
     const statsResult = await statsService.syncWeeklyStats(seasonNum, week);

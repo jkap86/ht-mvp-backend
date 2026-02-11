@@ -594,6 +594,11 @@ export class SocketService {
     this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.LEAGUE.SETTINGS_UPDATED, data);
   }
 
+  // Emit league week advanced event
+  emitLeagueWeekAdvanced(leagueId: number, data: { week: number; seasonType: string }): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.LEAGUE.WEEK_ADVANCED, data);
+  }
+
   // Playoff events (emitted to league room)
 
   // Emit playoff bracket generated event

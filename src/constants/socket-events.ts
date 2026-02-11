@@ -14,6 +14,7 @@ export const SOCKET_EVENTS = {
     JOIN: 'join:league',
     LEAVE: 'leave:league',
     SETTINGS_UPDATED: 'league:settings_updated',
+    WEEK_ADVANCED: 'league:week_advanced',
   },
 
   // Draft events
