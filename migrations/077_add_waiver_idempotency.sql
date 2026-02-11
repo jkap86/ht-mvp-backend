@@ -7,9 +7,8 @@ ALTER TABLE waiver_claims
 
 -- Ensure unique idempotency key per league+roster combination
 -- Prevents the same claim from being submitted twice even with different players
-ALTER TABLE waiver_claims
-  ADD CONSTRAINT waiver_claims_unique_idempotency
-  UNIQUE (league_id, roster_id, idempotency_key)
+CREATE UNIQUE INDEX IF NOT EXISTS waiver_claims_unique_idempotency
+  ON waiver_claims (league_id, roster_id, idempotency_key)
   WHERE idempotency_key IS NOT NULL;
 
 -- Add status and completion tracking to processing runs
@@ -22,4 +21,4 @@ ALTER TABLE waiver_processing_runs
 
 -- Create index for finding stale/failed runs
 CREATE INDEX IF NOT EXISTS idx_waiver_processing_runs_status
-  ON waiver_processing_runs(status, created_at);
+  ON waiver_processing_runs(status, ran_at);

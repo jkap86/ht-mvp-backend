@@ -11,7 +11,7 @@ ALTER TABLE waiver_processing_runs
 
 -- Create index for monitoring stale runs
 CREATE INDEX IF NOT EXISTS idx_waiver_processing_runs_status
-  ON waiver_processing_runs(status, created_at);
+  ON waiver_processing_runs(status, ran_at);
 
 -- Update any existing 'pending' runs to 'processing' (legacy migration)
 UPDATE waiver_processing_runs

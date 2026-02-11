@@ -24,7 +24,7 @@ CREATE INDEX idx_draft_operations_draft_id ON draft_operations(draft_id);
 CREATE TABLE IF NOT EXISTS playoff_operations (
   id SERIAL PRIMARY KEY,
   idempotency_key TEXT NOT NULL,
-  bracket_id UUID NOT NULL,
+  bracket_id INT NOT NULL,
   league_id INT NOT NULL,
   user_id UUID NOT NULL,
   operation_type TEXT NOT NULL,  -- 'generate', 'advance', 'finalize'

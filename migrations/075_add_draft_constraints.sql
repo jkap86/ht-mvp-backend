@@ -7,6 +7,6 @@ ALTER TABLE draft_picks ADD CONSTRAINT draft_picks_unique_pick
 
 -- Ensure idempotency keys are unique per draft+roster combination
 -- This allows the same idempotency key to be reused safely on retry
-ALTER TABLE draft_picks ADD CONSTRAINT draft_picks_unique_idempotency
-  UNIQUE (draft_id, roster_id, idempotency_key)
+CREATE UNIQUE INDEX IF NOT EXISTS draft_picks_unique_idempotency
+  ON draft_picks (draft_id, roster_id, idempotency_key)
   WHERE idempotency_key IS NOT NULL;

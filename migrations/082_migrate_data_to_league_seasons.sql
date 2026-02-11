@@ -8,7 +8,17 @@ INSERT INTO league_seasons (league_id, season, status, season_status, current_we
 SELECT
     id as league_id,
     CAST(season AS INTEGER) as season,
-    status,
+    -- Map league status to valid league_seasons status values
+    CASE status
+        WHEN 'pre_draft' THEN 'pre_draft'
+        WHEN 'drafting' THEN 'drafting'
+        WHEN 'regular_season' THEN 'in_season'
+        WHEN 'in_season' THEN 'in_season'
+        WHEN 'playoffs' THEN 'playoffs'
+        WHEN 'completed' THEN 'completed'
+        WHEN 'offseason' THEN 'completed'
+        ELSE 'pre_draft'
+    END as status,
     season_status,
     current_week,
     created_at,

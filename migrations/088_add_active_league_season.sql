@@ -21,11 +21,11 @@ UPDATE leagues l
 SET active_league_season_id = (
   SELECT ls.id
   FROM league_seasons ls
-  WHERE ls.league_id = l.id AND ls.season = l.season
+  WHERE ls.league_id = l.id AND ls.season = CAST(l.season AS INTEGER)
   LIMIT 1
 )
 WHERE active_league_season_id IS NULL
   AND EXISTS (
     SELECT 1 FROM league_seasons ls
-    WHERE ls.league_id = l.id AND ls.season = l.season
+    WHERE ls.league_id = l.id AND ls.season = CAST(l.season AS INTEGER)
   );

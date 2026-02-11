@@ -25,26 +25,26 @@ ALTER TABLE draft_pick_assets ALTER COLUMN league_season_id SET NOT NULL;
 -- league_chat_messages keeps league_season_id as nullable (chat can span seasons)
 
 -- Add indexes for new FK columns (performance optimization)
-CREATE INDEX idx_rosters_league_season ON rosters(league_season_id);
-CREATE INDEX idx_drafts_league_season ON drafts(league_season_id);
-CREATE INDEX idx_matchups_league_season ON matchups(league_season_id);
-CREATE INDEX idx_matchups_season_week ON matchups(league_season_id, week);
-CREATE INDEX idx_trades_league_season ON trades(league_season_id);
-CREATE INDEX idx_trades_season_status ON trades(league_season_id, status);
-CREATE INDEX idx_waiver_claims_league_season ON waiver_claims(league_season_id);
-CREATE INDEX idx_waiver_claims_season_roster ON waiver_claims(league_season_id, roster_id);
-CREATE INDEX idx_waiver_wire_league_season ON waiver_wire(league_season_id);
-CREATE INDEX idx_waiver_priority_league_season ON waiver_priority(league_season_id);
-CREATE INDEX idx_faab_budgets_league_season ON faab_budgets(league_season_id);
-CREATE INDEX idx_playoff_brackets_league_season ON playoff_brackets(league_season_id);
-CREATE INDEX idx_roster_transactions_league_season ON roster_transactions(league_season_id);
-CREATE INDEX idx_roster_lineups_league_season ON roster_lineups(league_season_id);
-CREATE INDEX idx_auction_lots_league_season ON auction_lots(league_season_id);
-CREATE INDEX idx_league_chat_season ON league_chat_messages(league_season_id) WHERE league_season_id IS NOT NULL;
-CREATE INDEX idx_league_dues_season ON league_dues(league_season_id);
-CREATE INDEX idx_dues_payments_season ON dues_payments(league_season_id);
-CREATE INDEX idx_league_invitations_season ON league_invitations(league_season_id);
-CREATE INDEX idx_draft_pick_assets_season ON draft_pick_assets(league_season_id);
+CREATE INDEX IF NOT EXISTS idx_rosters_league_season ON rosters(league_season_id);
+CREATE INDEX IF NOT EXISTS idx_drafts_league_season ON drafts(league_season_id);
+CREATE INDEX IF NOT EXISTS idx_matchups_league_season ON matchups(league_season_id);
+CREATE INDEX IF NOT EXISTS idx_matchups_season_week ON matchups(league_season_id, week);
+CREATE INDEX IF NOT EXISTS idx_trades_league_season ON trades(league_season_id);
+CREATE INDEX IF NOT EXISTS idx_trades_season_status ON trades(league_season_id, status);
+CREATE INDEX IF NOT EXISTS idx_waiver_claims_league_season ON waiver_claims(league_season_id);
+CREATE INDEX IF NOT EXISTS idx_waiver_claims_season_roster ON waiver_claims(league_season_id, roster_id);
+CREATE INDEX IF NOT EXISTS idx_waiver_wire_league_season ON waiver_wire(league_season_id);
+CREATE INDEX IF NOT EXISTS idx_waiver_priority_league_season ON waiver_priority(league_season_id);
+CREATE INDEX IF NOT EXISTS idx_faab_budgets_league_season ON faab_budgets(league_season_id);
+CREATE INDEX IF NOT EXISTS idx_playoff_brackets_league_season ON playoff_brackets(league_season_id);
+CREATE INDEX IF NOT EXISTS idx_roster_transactions_league_season ON roster_transactions(league_season_id);
+CREATE INDEX IF NOT EXISTS idx_roster_lineups_league_season ON roster_lineups(league_season_id);
+CREATE INDEX IF NOT EXISTS idx_auction_lots_league_season ON auction_lots(league_season_id);
+CREATE INDEX IF NOT EXISTS idx_league_chat_season ON league_chat_messages(league_season_id) WHERE league_season_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_league_dues_season ON league_dues(league_season_id);
+CREATE INDEX IF NOT EXISTS idx_dues_payments_season ON dues_payments(league_season_id);
+CREATE INDEX IF NOT EXISTS idx_league_invitations_season ON league_invitations(league_season_id);
+CREATE INDEX IF NOT EXISTS idx_draft_pick_assets_season ON draft_pick_assets(league_season_id);
 
 -- Update unique constraints for tables that previously used league_id + season
 -- rosters: Change from UNIQUE(league_id, user_id) to UNIQUE(league_season_id, user_id)

@@ -10,29 +10,11 @@ ALTER TABLE auction_lots
 
 -- auction_bid_history: Already has idempotency_key from initial schema
 -- Just add constraint if it doesn't exist
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname = 'auction_bid_history_unique_idempotency'
-  ) THEN
-    ALTER TABLE auction_bid_history
-      ADD CONSTRAINT auction_bid_history_unique_idempotency
-      UNIQUE (lot_id, roster_id, idempotency_key)
-      WHERE idempotency_key IS NOT NULL;
-  END IF;
-END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS auction_bid_history_unique_idempotency
+  ON auction_bid_history (lot_id, roster_id, idempotency_key)
+  WHERE idempotency_key IS NOT NULL;
 
 -- auction_lots: Ensure unique idempotency key per nomination
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname = 'auction_lots_unique_idempotency'
-  ) THEN
-    ALTER TABLE auction_lots
-      ADD CONSTRAINT auction_lots_unique_idempotency
-      UNIQUE (draft_id, idempotency_key)
-      WHERE idempotency_key IS NOT NULL;
-  END IF;
-END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS auction_lots_unique_idempotency
+  ON auction_lots (draft_id, idempotency_key)
+  WHERE idempotency_key IS NOT NULL;

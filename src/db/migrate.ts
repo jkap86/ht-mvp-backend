@@ -36,7 +36,7 @@ function loadMigrationFiles(): string[] {
 
   const files = fs
     .readdirSync(migrationsDir)
-    .filter((file) => file.endsWith('.sql'))
+    .filter((file) => file.endsWith('.sql') && /^\d+_/.test(file))
     .sort();
 
   return files;
