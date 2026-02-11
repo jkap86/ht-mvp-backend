@@ -375,8 +375,8 @@ describe('LeagueService', () => {
 
       const result = await leagueService.joinPublicLeague(2, 'user-456');
 
-      expect(mockLeagueRepo.findById).toHaveBeenCalledWith(2);
-      expect(mockRosterService.joinLeague).toHaveBeenCalledWith(2, 'user-456');
+      expect(mockLeagueRepo.findById).toHaveBeenCalledWith(2, expect.anything());
+      expect(mockRosterService.joinLeague).toHaveBeenCalledWith(2, 'user-456', expect.anything());
       expect(result.name).toBe('Public League');
     });
 

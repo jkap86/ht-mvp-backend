@@ -240,14 +240,24 @@ export class WaiverClaimsRepository {
   }
 
   /**
-   * Get pending claims for a specific player
+   * Get pending claims for a specific player in the current season
    */
   async getPendingByPlayer(
     leagueId: number,
     playerId: number,
-    client?: PoolClient
+    client?: PoolClient,
+    leagueSeasonId?: number
   ): Promise<WaiverClaim[]> {
     const conn = client || this.db;
+    if (leagueSeasonId) {
+      const result = await conn.query(
+        `SELECT * FROM waiver_claims
+         WHERE league_season_id = $1 AND player_id = $2 AND status = 'pending'
+         ORDER BY bid_amount DESC, priority_at_claim ASC, created_at ASC`,
+        [leagueSeasonId, playerId]
+      );
+      return result.rows.map(waiverClaimFromDatabase);
+    }
     const result = await conn.query(
       `SELECT * FROM waiver_claims
        WHERE league_id = $1 AND player_id = $2 AND status = 'pending'

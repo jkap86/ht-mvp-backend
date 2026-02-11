@@ -88,7 +88,13 @@ export class RolloverToNewSeasonUseCase {
         await this.initializeFAABBudgets(client, newSeason.id, league);
 
         // 10. Migrate future draft pick assets to new season
-        await this.migrateDraftPickAssets(client, params.leagueId, newSeason.id, newSeasonYear);
+        await this.migrateDraftPickAssets(client, params.leagueId, newSeason.id, newSeasonYear, currentSeason.id);
+
+        // 11. Update active season pointer on leagues table
+        await client.query(
+          'UPDATE leagues SET active_league_season_id = $1 WHERE id = $2',
+          [newSeason.id, params.leagueId]
+        );
 
       return {
         newSeason,
@@ -171,20 +177,57 @@ export class RolloverToNewSeasonUseCase {
   }
 
   /**
-   * Migrate draft pick assets for the current season year
-   * Pick assets for THIS season get league_season_id updated
+   * Migrate draft pick assets during rollover:
+   * 1. Set league_season_id for picks matching the new season year
+   * 2. Remap original_roster_id and current_owner_roster_id from old-season
+   *    roster rows to new-season roster rows for all current + future picks.
+   *    (rosters.id is SERIAL and changes each season; the stable identifier
+   *    is rosters.roster_id which is preserved across rollovers.)
    */
   private async migrateDraftPickAssets(
     client: PoolClient,
     leagueId: number,
     newSeasonId: number,
-    newSeasonYear: number
+    newSeasonYear: number,
+    _oldSeasonId: number
   ): Promise<void> {
-    // Update pick assets that match the new season year
+    // Step 1: Update league_season_id for picks matching the new season year
     await client.query(
       `UPDATE draft_pick_assets
        SET league_season_id = $1
        WHERE league_id = $2 AND season = $3`,
+      [newSeasonId, leagueId, newSeasonYear]
+    );
+
+    // Step 2: Remap original_roster_id for all current/future picks
+    // that still reference old-season rosters
+    await client.query(
+      `UPDATE draft_pick_assets dpa
+       SET original_roster_id = r_new.id
+       FROM rosters r_old
+       JOIN rosters r_new
+         ON r_new.roster_id = r_old.roster_id
+        AND r_new.league_season_id = $1
+       WHERE dpa.league_id = $2
+         AND dpa.season >= $3
+         AND dpa.original_roster_id = r_old.id
+         AND r_old.league_season_id != $1`,
+      [newSeasonId, leagueId, newSeasonYear]
+    );
+
+    // Step 3: Remap current_owner_roster_id for all current/future picks
+    // that still reference old-season rosters
+    await client.query(
+      `UPDATE draft_pick_assets dpa
+       SET current_owner_roster_id = r_new.id
+       FROM rosters r_old
+       JOIN rosters r_new
+         ON r_new.roster_id = r_old.roster_id
+        AND r_new.league_season_id = $1
+       WHERE dpa.league_id = $2
+         AND dpa.season >= $3
+         AND dpa.current_owner_roster_id = r_old.id
+         AND r_old.league_season_id != $1`,
       [newSeasonId, leagueId, newSeasonYear]
     );
   }
