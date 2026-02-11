@@ -295,26 +295,50 @@ export class SocketEventSubscriber implements DomainEventSubscriber {
       // League events
       case EventTypes.MEMBER_JOINED:
         if (event.leagueId) {
+          const joinedUserId = (event.payload as { userId?: string }).userId;
           socketService.emitMemberJoined(
             event.leagueId,
             event.payload as { rosterDbId: number; rosterSlotId: number; teamName: string; userId: string }
           );
+          if (joinedUserId) {
+            socketService.invalidateMembershipCache(event.leagueId, joinedUserId).catch((err) =>
+              logger.error('Failed to invalidate membership cache after join', { error: err })
+            );
+          }
         }
         break;
       case EventTypes.MEMBER_LEFT:
         if (event.leagueId) {
+          const leftUserId = (event.payload as { userId?: string }).userId;
           socketService.emitMemberKicked(
             event.leagueId,
             event.payload as { rosterDbId: number; rosterSlotId: number; teamName: string }
           );
+          if (leftUserId) {
+            socketService.invalidateMembershipCache(event.leagueId, leftUserId).catch((err) =>
+              logger.error('Failed to invalidate membership cache after leave', { error: err })
+            );
+          }
         }
         break;
       case EventTypes.MEMBER_KICKED:
         if (event.leagueId) {
+          const kickedUserId = (event.payload as { userId?: string }).userId;
+          // 1. Emit kick event first (user sees it while still in room)
           socketService.emitMemberKicked(
             event.leagueId,
-            event.payload as { rosterDbId: number; rosterSlotId: number; teamName: string }
+            event.payload as { rosterDbId: number; rosterSlotId: number; teamName: string; userId?: string }
           );
+          if (kickedUserId) {
+            // 2. Invalidate cache (prevents re-joining)
+            socketService.invalidateMembershipCache(event.leagueId, kickedUserId).catch((err) =>
+              logger.error('Failed to invalidate membership cache after kick', { error: err })
+            );
+            // 3. Evict from rooms (stops receiving further events)
+            socketService.evictUserFromLeagueRooms(event.leagueId, kickedUserId).catch((err) =>
+              logger.error('Failed to evict kicked user from rooms', { error: err })
+            );
+          }
         }
         break;
       case EventTypes.MEMBER_BENCHED:

@@ -543,6 +543,7 @@ async devBulkAddUsers(
         rosterDbId: targetRosterId,
         rosterSlotId,
         teamName,
+        userId: targetRoster.userId,
       },
     });
 

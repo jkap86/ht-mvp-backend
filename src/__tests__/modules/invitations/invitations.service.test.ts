@@ -51,6 +51,8 @@ const mockLeague = {
   name: 'Test League',
   season: '2026',
   totalRosters: 12,
+  status: 'pre_draft',
+  leagueSettings: {},
   toResponse: jest.fn(),
 };
 
@@ -399,7 +401,18 @@ describe('InvitationsService', () => {
       );
     });
 
-    it('should throw ForbiddenException when non-commissioner cancels', async () => {
+    it('should allow invite creator to cancel their own invitation', async () => {
+      mockInvitationsRepo.findById.mockResolvedValue(mockInvitation);
+      mockLeagueRepo.isCommissioner.mockResolvedValue(false);
+      mockInvitationsRepo.delete.mockResolvedValue(true);
+
+      // user-123 is the invitedByUserId in mockInvitation
+      await invitationsService.cancelInvitation(1, 'user-123');
+
+      expect(mockInvitationsRepo.delete).toHaveBeenCalledWith(1);
+    });
+
+    it('should throw ForbiddenException when non-creator non-commissioner cancels', async () => {
       mockInvitationsRepo.findById.mockResolvedValue(mockInvitation);
       mockLeagueRepo.isCommissioner.mockResolvedValue(false);
 
@@ -407,7 +420,7 @@ describe('InvitationsService', () => {
         ForbiddenException
       );
       await expect(invitationsService.cancelInvitation(1, 'user-999')).rejects.toThrow(
-        'Only the commissioner can cancel invitations'
+        'Only the invitation creator or commissioner can cancel invitations'
       );
     });
 
@@ -481,14 +494,28 @@ describe('InvitationsService', () => {
   });
 
   describe('getLeaguePendingInvitations', () => {
-    it('should return pending invitations for league', async () => {
+    it('should return pending invitations with invitee username for commissioner', async () => {
       mockLeagueRepo.isUserMember.mockResolvedValue(true);
-      mockInvitationsRepo.findByLeagueId.mockResolvedValue([mockInvitationWithDetails]);
+      mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      const invWithUsername = { ...mockInvitationWithDetails, invitedUsername: 'inviteduser' };
+      mockInvitationsRepo.findByLeagueId.mockResolvedValue([invWithUsername as any]);
 
       const result = await invitationsService.getLeaguePendingInvitations(1, 'user-123');
 
       expect(result).toHaveLength(1);
-      expect(mockInvitationsRepo.findByLeagueId).toHaveBeenCalledWith(1);
+      expect(result[0].invited_username).toBe('inviteduser');
+    });
+
+    it('should redact invitee username for non-commissioner members', async () => {
+      mockLeagueRepo.isUserMember.mockResolvedValue(true);
+      mockLeagueRepo.isCommissioner.mockResolvedValue(false);
+      const invWithUsername = { ...mockInvitationWithDetails, invitedUsername: 'inviteduser' };
+      mockInvitationsRepo.findByLeagueId.mockResolvedValue([invWithUsername as any]);
+
+      const result = await invitationsService.getLeaguePendingInvitations(1, 'user-789');
+
+      expect(result).toHaveLength(1);
+      expect(result[0].invited_username).toBeUndefined();
     });
 
     it('should throw ForbiddenException when non-member views', async () => {
@@ -500,6 +527,72 @@ describe('InvitationsService', () => {
       await expect(invitationsService.getLeaguePendingInvitations(1, 'user-999')).rejects.toThrow(
         'Only league members can view league invitations'
       );
+    });
+  });
+
+  describe('sendInvitation - joinability check', () => {
+    it('should throw ValidationException when league is not in pre_draft status', async () => {
+      mockLeagueRepo.isUserMember.mockResolvedValue(true);
+      mockLeagueRepo.findById.mockResolvedValue({ ...mockLeague, status: 'active' } as any);
+
+      await expect(invitationsService.sendInvitation(1, 'inviteduser', 'user-123')).rejects.toThrow(
+        ValidationException
+      );
+      await expect(invitationsService.sendInvitation(1, 'inviteduser', 'user-123')).rejects.toThrow(
+        'League is not currently accepting new members'
+      );
+    });
+  });
+
+  describe('sendInvitation - allowMemberInvites setting', () => {
+    it('should allow member to invite when allowMemberInvites is not set (defaults to true)', async () => {
+      mockLeagueRepo.isUserMember
+        .mockResolvedValueOnce(true) // sender is member
+        .mockResolvedValueOnce(false); // invited user is not member
+      mockLeagueRepo.findById.mockResolvedValue(mockLeague as any);
+      mockUserRepo.findByUsername.mockResolvedValue(mockUser as any);
+      mockInvitationsRepo.hasPendingInvite.mockResolvedValue(false);
+      mockRosterRepo.getRosterCount.mockResolvedValue(5);
+      mockInvitationsRepo.create.mockResolvedValue(mockInvitation);
+      mockInvitationsRepo.findByIdWithDetails.mockResolvedValue(mockInvitationWithDetails);
+
+      const result = await invitationsService.sendInvitation(1, 'inviteduser', 'user-123');
+      expect(result.leagueName).toBe('Test League');
+    });
+
+    it('should block non-commissioner when allowMemberInvites is false', async () => {
+      mockLeagueRepo.isUserMember.mockResolvedValue(true);
+      mockLeagueRepo.findById.mockResolvedValue({
+        ...mockLeague,
+        leagueSettings: { allowMemberInvites: false },
+      } as any);
+      mockLeagueRepo.isCommissioner.mockResolvedValue(false);
+
+      await expect(invitationsService.sendInvitation(1, 'inviteduser', 'user-789')).rejects.toThrow(
+        ForbiddenException
+      );
+      await expect(invitationsService.sendInvitation(1, 'inviteduser', 'user-789')).rejects.toThrow(
+        'Only the commissioner can send invitations for this league'
+      );
+    });
+
+    it('should allow commissioner to invite when allowMemberInvites is false', async () => {
+      mockLeagueRepo.isUserMember
+        .mockResolvedValueOnce(true) // sender is member
+        .mockResolvedValueOnce(false); // invited user is not member
+      mockLeagueRepo.findById.mockResolvedValue({
+        ...mockLeague,
+        leagueSettings: { allowMemberInvites: false },
+      } as any);
+      mockLeagueRepo.isCommissioner.mockResolvedValue(true);
+      mockUserRepo.findByUsername.mockResolvedValue(mockUser as any);
+      mockInvitationsRepo.hasPendingInvite.mockResolvedValue(false);
+      mockRosterRepo.getRosterCount.mockResolvedValue(5);
+      mockInvitationsRepo.create.mockResolvedValue(mockInvitation);
+      mockInvitationsRepo.findByIdWithDetails.mockResolvedValue(mockInvitationWithDetails);
+
+      const result = await invitationsService.sendInvitation(1, 'inviteduser', 'user-123');
+      expect(result.leagueName).toBe('Test League');
     });
   });
 });

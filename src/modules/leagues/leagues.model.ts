@@ -19,6 +19,8 @@ export interface LeagueSettings {
   maxKeepers?: number;
   keeperCostsEnabled?: boolean;
   faabBudget?: number;
+  // Invitation settings
+  allowMemberInvites?: boolean; // When false, only commissioner can send invitations. Defaults to true.
 }
 
 export class League {

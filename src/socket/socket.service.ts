@@ -563,7 +563,7 @@ export class SocketService {
   // Emit member kicked event
   emitMemberKicked(
     leagueId: number,
-    data: { rosterDbId: number; rosterSlotId: number; teamName: string }
+    data: { rosterDbId: number; rosterSlotId: number; teamName: string; userId?: string }
   ): void {
     this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.MEMBER.KICKED, data);
   }
@@ -612,6 +612,44 @@ export class SocketService {
     data: { bracketId: number; championRosterId: number }
   ): void {
     this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.PLAYOFF.CHAMPION_CROWNED, data);
+  }
+
+  /**
+   * Evict a user from all league and draft rooms for a given league.
+   * Called when a user is kicked from a league to prevent them from
+   * receiving further real-time events.
+   */
+  async evictUserFromLeagueRooms(leagueId: number, userId: string): Promise<void> {
+    try {
+      const userRoom = ROOM_NAMES.user(userId);
+      const leagueRoom = ROOM_NAMES.league(leagueId);
+
+      const sockets = await this.io.in(userRoom).fetchSockets();
+      if (sockets.length === 0) return;
+
+      // Remove from league room
+      for (const socket of sockets) {
+        socket.leave(leagueRoom);
+      }
+
+      // Remove from draft rooms belonging to this league
+      try {
+        const draftRepo = container.resolve<DraftRepository>(KEYS.DRAFT_REPO);
+        const drafts = await draftRepo.findByLeagueId(leagueId);
+        for (const draft of drafts) {
+          const draftRoom = ROOM_NAMES.draft(draft.id);
+          for (const socket of sockets) {
+            socket.leave(draftRoom);
+          }
+        }
+      } catch (draftError) {
+        logger.warn('Could not resolve draft rooms for eviction', { error: draftError, leagueId });
+      }
+
+      logger.info(`Evicted user ${userId} from league ${leagueId} rooms (${sockets.length} sockets)`);
+    } catch (error) {
+      logger.error('Failed to evict user from league rooms', { error, leagueId, userId });
+    }
   }
 
   getIO(): Server {

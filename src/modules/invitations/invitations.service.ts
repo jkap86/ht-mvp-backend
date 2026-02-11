@@ -25,7 +25,8 @@ export class InvitationsService {
   ) {}
 
   /**
-   * Send an invitation to a user (any league member can invite)
+   * Send an invitation to a user.
+   * Requires league membership. If allowMemberInvites is false, only the commissioner can invite.
    */
   async sendInvitation(
     leagueId: number,
@@ -39,10 +40,24 @@ export class InvitationsService {
       throw new ForbiddenException('Only league members can send invitations');
     }
 
-    // Get league to check capacity
+    // Get league to check capacity and joinability
     const league = await this.leagueRepo.findById(leagueId);
     if (!league) {
       throw new NotFoundException('League not found');
+    }
+
+    // Check league is accepting new members
+    if (league.status !== 'pre_draft') {
+      throw new ValidationException('League is not currently accepting new members');
+    }
+
+    // Check if member invites are allowed; if not, require commissioner
+    const allowMemberInvites = league.leagueSettings?.allowMemberInvites !== false;
+    if (!allowMemberInvites) {
+      const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, invitedByUserId);
+      if (!isCommissioner) {
+        throw new ForbiddenException('Only the commissioner can send invitations for this league');
+      }
     }
 
     // Look up user by username
@@ -201,7 +216,7 @@ export class InvitationsService {
   }
 
   /**
-   * Cancel a pending invitation (commissioner only)
+   * Cancel a pending invitation (commissioner or invite creator)
    */
   async cancelInvitation(invitationId: number, userId: string): Promise<void> {
     // Get invitation
@@ -210,10 +225,11 @@ export class InvitationsService {
       throw new NotFoundException('Invitation not found');
     }
 
-    // Verify user is commissioner of this league
+    // Verify user is the invite creator or commissioner of this league
+    const isCreator = invitation.invitedByUserId === userId;
     const isCommissioner = await this.leagueRepo.isCommissioner(invitation.leagueId, userId);
-    if (!isCommissioner) {
-      throw new ForbiddenException('Only the commissioner can cancel invitations');
+    if (!isCreator && !isCommissioner) {
+      throw new ForbiddenException('Only the invitation creator or commissioner can cancel invitations');
     }
 
     // Check invitation is still pending
@@ -237,7 +253,8 @@ export class InvitationsService {
   }
 
   /**
-   * Get pending invitations for a league (any league member can view)
+   * Get pending invitations for a league (any league member can view).
+   * Invitee identity is only visible to the commissioner.
    */
   async getLeaguePendingInvitations(leagueId: number, userId: string): Promise<any[]> {
     // Verify user is a league member
@@ -246,11 +263,16 @@ export class InvitationsService {
       throw new ForbiddenException('Only league members can view league invitations');
     }
 
+    const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
     const invitations = await this.invitationsRepo.findByLeagueId(leagueId);
-    return invitations.map((inv) => ({
-      ...invitationWithDetailsToResponse(inv),
-      invited_username: (inv as any).invitedUsername,
-    }));
+    return invitations.map((inv) => {
+      const response = invitationWithDetailsToResponse(inv);
+      if (isCommissioner) {
+        return { ...response, invited_username: (inv as any).invitedUsername };
+      }
+      // Redact invitee identity for non-commissioners
+      return { ...response, invited_username: undefined };
+    });
   }
 
   /**
