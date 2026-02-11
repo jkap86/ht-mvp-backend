@@ -140,14 +140,16 @@ export class DraftStateService {
       throw new ValidationException('Draft order must be confirmed before starting');
     }
 
-    // Determine first picker, accounting for traded picks
-    const engine = this.engineFactory.createEngine(draft.draftType);
     let firstPickerRosterId: number | null = null;
 
-    if (this.pickAssetRepo) {
-      const pickAssets = await this.pickAssetRepo.findByDraftId(draftId);
-      const actualPicker = engine.getActualPickerForPickNumber(draft, draftOrder, pickAssets, 1);
-      firstPickerRosterId = actualPicker?.rosterId ?? null;
+    if (!isAuction) {
+      // Determine first picker, accounting for traded picks (not applicable for auctions)
+      const engine = this.engineFactory.createEngine(draft.draftType);
+      if (this.pickAssetRepo) {
+        const pickAssets = await this.pickAssetRepo.findByDraftId(draftId);
+        const actualPicker = engine.getActualPickerForPickNumber(draft, draftOrder, pickAssets, 1);
+        firstPickerRosterId = actualPicker?.rosterId ?? null;
+      }
     }
 
     // Fallback to original logic if no pick assets or no actual picker found
