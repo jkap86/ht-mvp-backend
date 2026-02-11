@@ -318,6 +318,9 @@ export class SocketEventSubscriber implements DomainEventSubscriber {
             socketService.invalidateMembershipCache(event.leagueId, leftUserId).catch((err) =>
               logger.error('Failed to invalidate membership cache after leave', { error: err })
             );
+            socketService.evictUserFromLeagueRooms(event.leagueId, leftUserId).catch((err) =>
+              logger.error('Failed to evict user from rooms after leave', { error: err })
+            );
           }
         }
         break;
