@@ -61,7 +61,6 @@ async function processExpiredLots(): Promise<void> {
           // Lot passed (no bids)
           eventBus?.publish({
             type: EventTypes.AUCTION_LOT_PASSED,
-            leagueId: result.lot.draftId, // draftId is used for routing
             payload: {
               draftId: result.lot.draftId,
               lotId: result.lot.id,
@@ -72,7 +71,6 @@ async function processExpiredLots(): Promise<void> {
           // Lot won
           eventBus?.publish({
             type: EventTypes.AUCTION_LOT_SOLD,
-            leagueId: result.lot.draftId, // draftId is used for routing
             payload: {
               draftId: result.lot.draftId,
               lotId: result.lot.id,
@@ -85,7 +83,8 @@ async function processExpiredLots(): Promise<void> {
 
         // Advance nominator for fast auctions only (with retry logic)
         // Check auction mode from the lot's draft to avoid wasteful calls for slow auctions
-        const draftForLot = await client.query(
+        // Use pool.query instead of client to avoid holding the lock connection during processing
+        const draftForLot = await pool.query(
           'SELECT settings FROM drafts WHERE id = $1',
           [result.lot.draftId]
         );
@@ -249,8 +248,10 @@ export function startSlowAuctionJob(): void {
 
   intervalId = setInterval(async () => {
     try {
-      await processExpiredLots();
-      await processNominationTimeouts();
+      await Promise.all([
+        processExpiredLots(),
+        processNominationTimeouts(),
+      ]);
     } catch (error) {
       logger.error('slow-auction job error', { jobName: 'slow-auction', error });
     }

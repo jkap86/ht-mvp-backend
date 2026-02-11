@@ -6,8 +6,6 @@ import { LeagueRepository, RosterRepository } from '../../../modules/leagues/lea
 import { PlayerRepository } from '../../../modules/players/players.repository';
 import {
   AuctionLot,
-  AuctionProxyBid,
-  SlowAuctionSettings,
 } from '../../../modules/drafts/auction/auction.models';
 import { Draft } from '../../../modules/drafts/drafts.model';
 import { NotFoundException, ValidationException } from '../../../utils/exceptions';
@@ -144,15 +142,6 @@ const mockLot: AuctionLot = {
   winningBid: null,
   createdAt: new Date(),
   updatedAt: new Date(),
-};
-
-const mockSettings: SlowAuctionSettings = {
-  bidWindowSeconds: 43200,
-  maxActiveNominationsPerTeam: 2,
-  maxActiveNominationsGlobal: 25,
-  dailyNominationLimit: undefined,
-  minBid: 1,
-  minIncrement: 1,
 };
 
 // Mock repositories
@@ -301,159 +290,6 @@ describe('SlowAuctionService', () => {
 
       expect(settings.maxActiveNominationsGlobal).toBe(10);
       expect(settings.dailyNominationLimit).toBe(3);
-    });
-  });
-
-  describe('resolvePrice', () => {
-    it('should return unchanged lot when no bids exist', async () => {
-      mockLotRepo.getAllProxyBidsForLot.mockResolvedValue([]);
-
-      const result = await service.resolvePrice(mockLot, mockSettings);
-
-      expect(result.updatedLot).toEqual(mockLot);
-      expect(result.outbidNotifications).toHaveLength(0);
-    });
-
-    it('should set leader at minBid with 1 bid', async () => {
-      const proxyBid: AuctionProxyBid = {
-        id: 1,
-        lotId: 1,
-        rosterId: 2,
-        maxBid: 50,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-      mockLotRepo.getAllProxyBidsForLot.mockResolvedValue([proxyBid]);
-      mockLotRepo.updateLot.mockResolvedValue({
-        ...mockLot,
-        currentBidderRosterId: 2,
-        currentBid: 1,
-        bidCount: 1,
-      });
-
-      const result = await service.resolvePrice(mockLot, mockSettings);
-
-      expect(mockLotRepo.updateLot).toHaveBeenCalledWith(
-        1,
-        expect.objectContaining({
-          currentBidderRosterId: 2,
-          currentBid: 1,
-        }),
-        expect.anything() // expected current bid for CAS
-      );
-      expect(result.updatedLot.currentBidderRosterId).toBe(2);
-      expect(result.updatedLot.currentBid).toBe(1);
-    });
-
-    it('should resolve second-price auction with 2 bids (50, 30) -> winner at 31', async () => {
-      const proxyBids: AuctionProxyBid[] = [
-        { id: 1, lotId: 1, rosterId: 2, maxBid: 50, createdAt: new Date(), updatedAt: new Date() },
-        { id: 2, lotId: 1, rosterId: 3, maxBid: 30, createdAt: new Date(), updatedAt: new Date() },
-      ];
-      mockLotRepo.getAllProxyBidsForLot.mockResolvedValue(proxyBids);
-      mockLotRepo.updateLot.mockResolvedValue({
-        ...mockLot,
-        currentBidderRosterId: 2,
-        currentBid: 31, // secondHighest + increment
-        bidCount: 1,
-      });
-
-      const result = await service.resolvePrice(mockLot, mockSettings);
-
-      expect(mockLotRepo.updateLot).toHaveBeenCalledWith(
-        1,
-        expect.objectContaining({
-          currentBidderRosterId: 2,
-          currentBid: 31,
-        }),
-        expect.anything() // expected current bid for CAS
-      );
-      expect(result.updatedLot.currentBid).toBe(31);
-    });
-
-    it('should cap price at highest maxBid when second bid is higher', async () => {
-      const proxyBids: AuctionProxyBid[] = [
-        { id: 1, lotId: 1, rosterId: 2, maxBid: 30, createdAt: new Date(), updatedAt: new Date() },
-        { id: 2, lotId: 1, rosterId: 3, maxBid: 29, createdAt: new Date(), updatedAt: new Date() },
-      ];
-      mockLotRepo.getAllProxyBidsForLot.mockResolvedValue(proxyBids);
-      mockLotRepo.updateLot.mockResolvedValue({
-        ...mockLot,
-        currentBidderRosterId: 2,
-        currentBid: 30, // min(30, 29+1) = 30
-        bidCount: 1,
-      });
-
-      await service.resolvePrice(mockLot, mockSettings);
-
-      expect(mockLotRepo.updateLot).toHaveBeenCalledWith(
-        1,
-        expect.objectContaining({
-          currentBid: 30,
-        }),
-        expect.anything() // expected current bid for CAS
-      );
-    });
-
-    it('should reset timer when leader changes', async () => {
-      const lotWithLeader = {
-        ...mockLot,
-        currentBidderRosterId: 2,
-        currentBid: 10,
-      };
-      const proxyBids: AuctionProxyBid[] = [
-        { id: 1, lotId: 1, rosterId: 3, maxBid: 50, createdAt: new Date(), updatedAt: new Date() },
-        { id: 2, lotId: 1, rosterId: 2, maxBid: 20, createdAt: new Date(), updatedAt: new Date() },
-      ];
-      mockLotRepo.getAllProxyBidsForLot.mockResolvedValue(proxyBids);
-      mockLotRepo.updateLot.mockResolvedValue({
-        ...lotWithLeader,
-        currentBidderRosterId: 3,
-        currentBid: 21,
-        bidCount: 2,
-      });
-
-      const result = await service.resolvePrice(lotWithLeader, mockSettings);
-
-      // Should have updated bidDeadline
-      expect(mockLotRepo.updateLot).toHaveBeenCalledWith(
-        1,
-        expect.objectContaining({
-          bidDeadline: expect.any(Date),
-        }),
-        expect.anything() // expected current bid for CAS
-      );
-
-      // Should notify previous leader
-      expect(result.outbidNotifications).toHaveLength(1);
-      expect(result.outbidNotifications[0].rosterId).toBe(2);
-    });
-
-    it('should not reset timer when same leader raises bid', async () => {
-      const lotWithLeader = {
-        ...mockLot,
-        currentBidderRosterId: 2,
-        currentBid: 10,
-        bidDeadline: new Date('2025-01-01'),
-      };
-      const proxyBids: AuctionProxyBid[] = [
-        { id: 1, lotId: 1, rosterId: 2, maxBid: 50, createdAt: new Date(), updatedAt: new Date() },
-        { id: 2, lotId: 1, rosterId: 3, maxBid: 30, createdAt: new Date(), updatedAt: new Date() },
-      ];
-      mockLotRepo.getAllProxyBidsForLot.mockResolvedValue(proxyBids);
-      mockLotRepo.updateLot.mockImplementation(
-        async (id, updates) =>
-          ({
-            ...lotWithLeader,
-            ...updates,
-          }) as AuctionLot
-      );
-
-      await service.resolvePrice(lotWithLeader, mockSettings);
-
-      // bidDeadline should NOT be in the updates (timer not reset)
-      const updateCall = mockLotRepo.updateLot.mock.calls[0][1];
-      expect(updateCall.bidDeadline).toBeUndefined();
     });
   });
 

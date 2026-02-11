@@ -14,6 +14,8 @@ import { ValidationException, NotFoundException } from '../../../utils/exception
 import { resolvePriceWithClient, OutbidNotification } from './auction-price-resolver';
 import { runInTransaction, runWithLock, runWithLocks, LockDomain } from '../../../shared/transaction-runner';
 import { getLockId, LockDomain as SharedLockDomain } from '../../../shared/locks';
+import { EventTypes, tryGetEventBus } from '../../../shared/events';
+import { auctionLotToResponse } from './auction.models';
 import { logger } from '../../../config/logger.config';
 
 export interface NominationResult {
@@ -262,8 +264,9 @@ export class SlowAuctionService {
     const today = getEasternDateString();
 
     // Use runWithLocks to acquire both locks in correct order (ROSTER before DRAFT)
+    let result: NominationResult;
     try {
-      return await runWithLocks(
+      result = await runWithLocks(
         this.pool,
         [
           { domain: LockDomain.ROSTER, id: rosterId },
@@ -353,6 +356,18 @@ export class SlowAuctionService {
       }
       throw error;
     }
+
+    // Post-commit: Publish domain event for socket emission
+    const eventBus = tryGetEventBus();
+    eventBus?.publish({
+      type: EventTypes.AUCTION_LOT_STARTED,
+      payload: {
+        draftId,
+        lot: auctionLotToResponse(result.lot),
+      },
+    });
+
+    return result;
   }
 
   // SET_MAX_BID: Set or update proxy bid on a lot (transaction-safe)
@@ -363,7 +378,7 @@ export class SlowAuctionService {
     maxBid: number,
     idempotencyKey?: string
   ): Promise<SetMaxBidResult> {
-    return runInTransaction(this.pool, async (client) => {
+    const bidResult = await runInTransaction(this.pool, async (client) => {
       // 0. Acquire roster-level lock to prevent cross-lot race conditions
       // Use modern LockDomain for consistency with fast auction
       await client.query('SELECT pg_advisory_xact_lock($1)', [getLockId(SharedLockDomain.ROSTER, rosterId)]);
@@ -412,6 +427,11 @@ export class SlowAuctionService {
       }
       if (lot.draftId !== draftId) {
         throw new ValidationException('Lot does not belong to this draft');
+      }
+
+      // Check bid deadline hasn't passed (server-authoritative)
+      if (lot.bidDeadline && new Date() >= lot.bidDeadline) {
+        throw new ValidationException('Lot has expired; please refresh');
       }
 
       // 2. Get draft and league for settings/budget
@@ -495,7 +515,23 @@ export class SlowAuctionService {
       );
 
       // 6. Resolve price within transaction (don't pass deadline - we'll handle timer reset)
-      const result = await resolvePriceWithClient(client, lot, settings);
+      // Retry once on CAS failure: concurrent bids from different rosters can race
+      let result;
+      try {
+        result = await resolvePriceWithClient(client, lot, settings);
+      } catch (e) {
+        if (e instanceof ValidationException && e.message.includes('simultaneously')) {
+          // Re-read lot (FOR UPDATE ensures we see the committed state)
+          const refreshed = await client.query('SELECT * FROM auction_lots WHERE id = $1 FOR UPDATE', [lotId]);
+          const refreshedLot = auctionLotFromDatabase(refreshed.rows[0]);
+          if (refreshedLot.status !== 'active') {
+            throw new ValidationException('Lot is no longer active');
+          }
+          result = await resolvePriceWithClient(client, refreshedLot, settings);
+        } else {
+          throw e;
+        }
+      }
 
       // For slow auction, reset timer only on leader change
       let finalLot = result.updatedLot;
@@ -515,72 +551,34 @@ export class SlowAuctionService {
         message: 'Max bid set successfully',
       };
     });
-  }
 
-  // Resolve price based on proxy bids (second-price auction) - non-transactional version
-  // NOTE: This method is DEPRECATED. Prefer using resolvePriceWithClient in a transaction
-  // for better concurrency safety.
-  async resolvePrice(
-    lot: AuctionLot,
-    settings: SlowAuctionSettings
-  ): Promise<{ updatedLot: AuctionLot; outbidNotifications: OutbidNotification[] }> {
-    const proxyBids = await this.lotRepo.getAllProxyBidsForLot(lot.id);
-    const outbidNotifications: OutbidNotification[] = [];
-    let updatedLot = lot;
+    // Post-commit: Publish domain events for socket emission
+    const eventBus = tryGetEventBus();
+    eventBus?.publish({
+      type: EventTypes.AUCTION_BID,
+      payload: {
+        draftId,
+        lot: auctionLotToResponse(bidResult.lot),
+      },
+    });
 
-    if (proxyBids.length === 0) {
-      return { updatedLot, outbidNotifications };
-    }
-
-    const previousLeader = lot.currentBidderRosterId;
-    let newLeader: number;
-    let newPrice: number;
-
-    if (proxyBids.length === 1) {
-      newLeader = proxyBids[0].rosterId;
-      newPrice = settings.minBid;
-    } else {
-      const highest = proxyBids[0];
-      const secondHighest = proxyBids[1];
-      newLeader = highest.rosterId;
-      newPrice = Math.min(highest.maxBid, secondHighest.maxBid + settings.minIncrement);
-    }
-
-    const leaderChanged = newLeader !== previousLeader;
-
-    if (leaderChanged || newPrice !== lot.currentBid) {
-      // bid_count tracks price changes only (not just leader changes)
-      const priceChanged = newPrice !== lot.currentBid;
-      const updates: Partial<AuctionLot> = {
-        currentBidderRosterId: newLeader,
-        currentBid: newPrice,
-        bidCount: priceChanged ? lot.bidCount + 1 : lot.bidCount,
-      };
-
-      // Reset timer only if leader changed
-      if (leaderChanged) {
-        updates.bidDeadline = new Date(Date.now() + settings.bidWindowSeconds * 1000);
-
-        // Notify previous leader they were outbid
-        if (previousLeader) {
-          outbidNotifications.push({
-            rosterId: previousLeader,
-            lotId: lot.id,
-            previousBid: lot.currentBid,
-            newLeadingBid: newPrice,
-          });
-        }
+    // Notify outbid users via domain events
+    for (const notif of bidResult.outbidNotifications) {
+      const outbidRoster = await this.rosterRepo.findById(notif.rosterId);
+      if (outbidRoster?.userId) {
+        eventBus?.publish({
+          type: EventTypes.AUCTION_OUTBID,
+          userId: outbidRoster.userId,
+          payload: {
+            lot_id: notif.lotId,
+            player_id: bidResult.lot.playerId,
+            new_bid: notif.newLeadingBid,
+          },
+        });
       }
-
-      // Use CAS-style update to prevent race conditions
-      // If the lot's current_bid changed since we read it, this will throw
-      updatedLot = await this.lotRepo.updateLot(lot.id, updates, lot.currentBid);
-
-      // Record bid history
-      await this.lotRepo.recordBidHistory(lot.id, newLeader, newPrice, true);
     }
 
-    return { updatedLot, outbidNotifications };
+    return bidResult;
   }
 
   // Settle an expired lot (transaction-safe with draft pick creation)

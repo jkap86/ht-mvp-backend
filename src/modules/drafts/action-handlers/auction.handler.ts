@@ -75,15 +75,7 @@ export class AuctionActionHandler implements ActionHandler {
   private async handleNominate(draftId: number, rosterId: number, playerId: number, idempotencyKey?: string): Promise<any> {
     const result = await this.slowAuctionService.nominate(draftId, rosterId, playerId, idempotencyKey);
 
-    // Publish domain event for socket emission
-    const eventBus = tryGetEventBus();
-    eventBus?.publish({
-      type: EventTypes.AUCTION_LOT_STARTED,
-      payload: {
-        draftId,
-        lot: auctionLotToResponse(result.lot),
-      },
-    });
+    // Event publishing handled by SlowAuctionService (post-commit)
 
     return {
       ok: true,
@@ -115,31 +107,7 @@ export class AuctionActionHandler implements ActionHandler {
   ): Promise<any> {
     const result = await this.slowAuctionService.setMaxBid(draftId, lotId, rosterId, maxBid, idempotencyKey);
 
-    // Publish domain event for lot update
-    const eventBus = tryGetEventBus();
-    eventBus?.publish({
-      type: EventTypes.AUCTION_BID,
-      payload: {
-        draftId,
-        lot: auctionLotToResponse(result.lot),
-      },
-    });
-
-    // Notify outbid users via domain events
-    for (const notif of result.outbidNotifications) {
-      const outbidRoster = await this.rosterRepo.findById(notif.rosterId);
-      if (outbidRoster?.userId) {
-        eventBus?.publish({
-          type: EventTypes.AUCTION_OUTBID,
-          userId: outbidRoster.userId,
-          payload: {
-            lot_id: notif.lotId,
-            player_id: result.lot.playerId,
-            new_bid: notif.newLeadingBid,
-          },
-        });
-      }
-    }
+    // Event publishing handled by SlowAuctionService (post-commit)
 
     return {
       ok: true,

@@ -1,5 +1,6 @@
 import { PoolClient } from 'pg';
 import { AuctionLot, AuctionProxyBid, auctionLotFromDatabase } from './auction.models';
+import { ValidationException } from '../../../utils/exceptions';
 
 /**
  * Notification when a bidder is outbid
@@ -135,7 +136,7 @@ export async function resolvePriceWithClient(
     // If no rows updated, the lot state changed between our read and write
     // This could happen if: lot was settled, another bid changed price/leader, or lot was passed
     if (updateResult.rowCount === 0) {
-      throw new Error('Lot state changed during price resolution - stale update detected (bid/leader changed or lot settled)');
+      throw new ValidationException('Another bid was placed simultaneously — please try again');
     }
 
     updatedLot = auctionLotFromDatabase(updateResult.rows[0]);

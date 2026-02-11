@@ -79,6 +79,15 @@ export class FastAuctionService {
     private readonly pool: Pool
   ) {}
 
+  private cleanupOutbidThrottle(): void {
+    const now = Date.now();
+    for (const [key, timestamp] of this.outbidThrottle) {
+      if (now - timestamp > FastAuctionService.OUTBID_THROTTLE_MS) {
+        this.outbidThrottle.delete(key);
+      }
+    }
+  }
+
   /**
    * Get fast auction settings from draft settings with defaults
    */
@@ -488,6 +497,7 @@ export class FastAuctionService {
 
     // Handle outbid notifications via domain events
     // Batch lookup rosters to avoid N+1 queries
+    this.cleanupOutbidThrottle();
     const userOutbidNotifications: Array<{ userId: string; lotId: number; playerId: number }> = [];
     if (rawNotifications.length > 0) {
       const rosterIds = rawNotifications.map((n) => n.rosterId);
@@ -674,9 +684,9 @@ export class FastAuctionService {
         LockDomain.DRAFT,
         draftId,
         async (client) => {
-          // Get current draft state and order count
+          // Get current draft state
           const draftResult = await client.query(
-            'SELECT current_pick, settings FROM drafts WHERE id = $1 FOR UPDATE',
+            'SELECT * FROM drafts WHERE id = $1 FOR UPDATE',
             [draftId]
           );
           if (draftResult.rows.length === 0) {
@@ -684,67 +694,114 @@ export class FastAuctionService {
           }
 
           const draft = draftResult.rows[0];
-          const nominationSeconds = draft.settings?.nominationSeconds ?? 60;
+          if (draft.status !== 'in_progress') {
+            return null;
+          }
 
-          const orderCountResult = await client.query(
-            'SELECT COUNT(*) as count FROM draft_order WHERE draft_id = $1',
+          const nominationSeconds = draft.settings?.nominationSeconds ?? 60;
+          const minBid = draft.settings?.minBid ?? 1;
+
+          // Check if any eligible players remain
+          const hasEligiblePlayers = await this.playerRepo.findRandomEligiblePlayerForAuction(client, draftId);
+          if (!hasEligiblePlayers) {
+            return { auctionComplete: true, leagueId: draft.league_id } as const;
+          }
+
+          // Get draft order
+          const orderResult = await client.query(
+            'SELECT * FROM draft_order WHERE draft_id = $1 ORDER BY draft_position',
             [draftId]
           );
-          const orderCount = parseInt(orderCountResult.rows[0].count, 10);
-          if (orderCount === 0) {
+          if (orderResult.rows.length === 0) {
             return null;
           }
 
-          const nextPick = (draft.current_pick || 0) + 1;
-          const nextIndex = (nextPick - 1) % orderCount;
-          const nominationDeadline = new Date(Date.now() + nominationSeconds * 1000);
+          const order = orderResult.rows;
 
-          // Get the next nominator
-          const nextNominatorResult = await client.query(
-            `SELECT roster_id FROM draft_order
-             WHERE draft_id = $1
-             ORDER BY draft_position
-             LIMIT 1 OFFSET $2`,
-            [draftId, nextIndex]
-          );
-
-          if (nextNominatorResult.rows.length === 0) {
+          // Get league settings for budget/slot checks
+          const leagueResult = await client.query('SELECT * FROM leagues WHERE id = $1', [draft.league_id]);
+          if (leagueResult.rows.length === 0) {
             return null;
           }
+          const leagueSettings = leagueResult.rows[0].league_settings ?? {};
+          const totalBudget = leagueSettings.auctionBudget ?? 200;
+          const rosterSlots = leagueSettings.rosterSlots ?? 15;
 
-          const nextRosterId = nextNominatorResult.rows[0].roster_id;
+          // Get all roster budget data in one query
+          const rosterIds = order.map((o: any) => o.roster_id);
+          const budgetDataMap = await this.lotRepo.getAllRosterBudgetDataWithClient(client, draftId, rosterIds);
 
-          // Update draft
-          await client.query(
-            `UPDATE drafts
-             SET current_pick = $1, current_roster_id = $2, pick_deadline = $3, updated_at = NOW()
-             WHERE id = $4`,
-            [nextPick, nextRosterId, nominationDeadline, draftId]
-          );
+          // Try each team in order, starting from the next pick position
+          const currentPick = draft.current_pick || 0;
+          for (let i = 0; i < order.length; i++) {
+            const nextPick = currentPick + 1 + i;
+            const nextIndex = (nextPick - 1) % order.length;
+            const candidate = order[nextIndex];
+            const rosterId = candidate.roster_id;
 
-          return { nextRosterId, nextPick, nominationDeadline };
+            const budgetData = budgetDataMap.get(rosterId) ?? { spent: 0, wonCount: 0, leadingCommitment: 0 };
+
+            // Check roster not full
+            if (budgetData.wonCount >= rosterSlots) {
+              continue;
+            }
+
+            // Check can afford minBid
+            const remainingSlots = rosterSlots - budgetData.wonCount - 1;
+            const requiredReserve = Math.max(0, remainingSlots) * minBid;
+            const maxAffordable = totalBudget - budgetData.spent - requiredReserve - budgetData.leadingCommitment;
+            if (minBid > maxAffordable) {
+              continue;
+            }
+
+            // This team is eligible - set them as next nominator
+            const nominationDeadline = new Date(Date.now() + nominationSeconds * 1000);
+            await client.query(
+              `UPDATE drafts
+               SET current_pick = $1, current_roster_id = $2, pick_deadline = $3, updated_at = NOW()
+               WHERE id = $4`,
+              [nextPick, rosterId, nominationDeadline, draftId]
+            );
+
+            return {
+              auctionComplete: false,
+              nextRosterId: rosterId,
+              nextPick,
+              nominationDeadline,
+            } as const;
+          }
+
+          // All teams are ineligible - auction should complete
+          return { auctionComplete: true, leagueId: draft.league_id } as const;
         }
       );
 
-      if (result) {
-        // Post-commit: Publish domain event for nominator change
-        const eventBus = tryGetEventBus();
-        eventBus?.publish({
-          type: EventTypes.AUCTION_NOMINATOR_CHANGED,
-          payload: {
-            draftId,
-            nominatorRosterId: result.nextRosterId,
-            nominationNumber: result.nextPick,
-            nominationDeadline: result.nominationDeadline.toISOString(),
-          },
-        });
-
-        logger.info('Force advanced nominator', {
-          draftId,
-          nextPick: result.nextPick,
-          nextRosterId: result.nextRosterId,
-        });
+      if (!result) {
+        return;
       }
+
+      if (result.auctionComplete) {
+        await this.completeAuctionDraft(draftId, result.leagueId);
+        return;
+      }
+
+      // Post-commit: Publish domain event for nominator change
+      const eventBus = tryGetEventBus();
+      eventBus?.publish({
+        type: EventTypes.AUCTION_NOMINATOR_CHANGED,
+        payload: {
+          draftId,
+          nominatorRosterId: result.nextRosterId,
+          nominationNumber: result.nextPick,
+          nominationDeadline: result.nominationDeadline.toISOString(),
+        },
+      });
+
+      logger.info('Force advanced nominator', {
+        draftId,
+        nextPick: result.nextPick,
+        nextRosterId: result.nextRosterId,
+      });
     } catch (error) {
       logger.error('Force advance nominator failed', { draftId, error });
       throw error;
