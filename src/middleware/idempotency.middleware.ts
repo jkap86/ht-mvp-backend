@@ -24,6 +24,12 @@ export function idempotencyMiddleware(pool: Pool) {
       return next();
     }
 
+    // Reject oversized keys to prevent excessive memory consumption
+    if (idempotencyKey.length > 256) {
+      res.status(400).json({ error: 'Idempotency key must be 256 characters or fewer' });
+      return;
+    }
+
     // Only apply to mutating methods
     if (req.method === 'GET' || req.method === 'OPTIONS' || req.method === 'HEAD') {
       return next();

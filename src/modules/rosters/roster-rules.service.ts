@@ -160,7 +160,9 @@ export class RosterRulesService {
       input,
       rules,
       input.leagueId,
-      client
+      client,
+      undefined,
+      league.activeLeagueSeasonId
     );
     errors.push(...transitionErrors);
 
@@ -273,7 +275,8 @@ export class RosterRulesService {
         rules,
         leagueId,
         client,
-        playerMovements
+        playerMovements,
+        league.activeLeagueSeasonId
       );
       errors.push(...transitionErrors);
     }
@@ -290,7 +293,8 @@ export class RosterRulesService {
     rules: LeagueRules,
     leagueId: number,
     client?: PoolClient,
-    crossRosterMovements?: Map<number, { from: number | null; to: number | null }>
+    crossRosterMovements?: Map<number, { from: number | null; to: number | null }>,
+    activeLeagueSeasonId?: number
   ): Promise<ValidationError[]> {
     const errors: ValidationError[] = [];
 
@@ -325,7 +329,7 @@ export class RosterRulesService {
             // If no movement record or not being removed from another roster
             if (!movement || !movement.from || movement.from === input.rosterId) {
               // Need to check if player is owned in league by another roster
-              const owner = await this.rosterPlayersRepo.findOwner(leagueId, op.playerId, client);
+              const owner = await this.rosterPlayersRepo.findOwner(leagueId, op.playerId, client, activeLeagueSeasonId);
               if (owner && owner !== input.rosterId) {
                 errors.push({
                   code: RosterRuleErrorCode.PLAYER_ALREADY_OWNED,

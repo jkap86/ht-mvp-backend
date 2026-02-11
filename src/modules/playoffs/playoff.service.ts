@@ -825,7 +825,11 @@ export class PlayoffService {
     if (pts1 > pts2) return matchup.roster1_id;
     if (pts2 > pts1) return matchup.roster2_id;
     // Tie: higher seed (lower number) wins
-    return matchup.playoff_seed1 < matchup.playoff_seed2
+    if (matchup.playoff_seed1 < matchup.playoff_seed2) return matchup.roster1_id;
+    if (matchup.playoff_seed2 < matchup.playoff_seed1) return matchup.roster2_id;
+    // Final fallback: lower roster ID wins. This is arbitrary but deterministic,
+    // ensuring consistent results when seeds are identical (e.g. consolation bracket).
+    return matchup.roster1_id < matchup.roster2_id
       ? matchup.roster1_id
       : matchup.roster2_id;
   }
@@ -852,7 +856,11 @@ export class PlayoffService {
       return series.roster2Id;
     }
     // Tie: lower seed number wins
-    return series.roster1Seed < series.roster2Seed
+    if (series.roster1Seed < series.roster2Seed) return series.roster1Id;
+    if (series.roster2Seed < series.roster1Seed) return series.roster2Id;
+    // Final fallback: lower roster ID wins. This is arbitrary but deterministic,
+    // ensuring consistent results when seeds are identical (e.g. consolation bracket).
+    return series.roster1Id < series.roster2Id
       ? series.roster1Id
       : series.roster2Id;
   }
@@ -1315,7 +1323,20 @@ export class PlayoffService {
       if (m.is_final && playoffMatchup.team1 && playoffMatchup.team2) {
         const p1 = playoffMatchup.team1.points ?? 0;
         const p2 = playoffMatchup.team2.points ?? 0;
-        playoffMatchup.winner = p1 >= p2 ? playoffMatchup.team1 : playoffMatchup.team2;
+        if (p1 > p2) {
+          playoffMatchup.winner = playoffMatchup.team1;
+        } else if (p2 > p1) {
+          playoffMatchup.winner = playoffMatchup.team2;
+        } else if (playoffMatchup.team1.seed < playoffMatchup.team2.seed) {
+          playoffMatchup.winner = playoffMatchup.team1;
+        } else if (playoffMatchup.team2.seed < playoffMatchup.team1.seed) {
+          playoffMatchup.winner = playoffMatchup.team2;
+        } else {
+          // Final fallback: lower roster ID wins (deterministic when seeds are equal)
+          playoffMatchup.winner = playoffMatchup.team1.rosterId < playoffMatchup.team2.rosterId
+            ? playoffMatchup.team1
+            : playoffMatchup.team2;
+        }
       }
 
       const round = m.playoff_round;
@@ -1431,8 +1452,14 @@ export class PlayoffService {
         winner = team1;
       } else if (p2 > p1) {
         winner = team2;
+      } else if (team1.seed < team2.seed) {
+        winner = team1;
+      } else if (team2.seed < team1.seed) {
+        winner = team2;
       } else {
-        winner = team1.seed < team2.seed ? team1 : team2;
+        // Final fallback: lower roster ID wins. This is arbitrary but deterministic,
+        // ensuring consistent results when seeds are identical (e.g. consolation bracket).
+        winner = team1.rosterId < team2.rosterId ? team1 : team2;
       }
     }
 

@@ -17,8 +17,9 @@ let intervalId: NodeJS.Timeout | null = null;
 // Check for expired derby picks every 2 seconds
 const DERBY_INTERVAL_MS = 2000;
 
-// Use LockDomain.JOB with unique ID for derby job
-const DERBY_LOCK_ID = getLockId(LockDomain.JOB, 6);
+// Job lock ID in unified namespace (LockDomain.JOB = 900_000_000+)
+// ID 6 is used by update-trending.job.ts — do not reuse
+const DERBY_LOCK_ID = getLockId(LockDomain.JOB, 9);
 
 /**
  * Process derby timeouts with distributed lock protection.

@@ -76,27 +76,4 @@ export class LeaderLock {
       await this.release();
     }
   }
-
-  /**
-   * Check if this instance is currently the leader.
-   * Note: This is a point-in-time check and may not reflect current state.
-   */
-  async isLeader(): Promise<boolean> {
-    try {
-      // pg_try_advisory_lock_shared allows checking without blocking
-      // We try to acquire, then immediately release if successful
-      const result = await this.db.query(
-        'SELECT pg_try_advisory_lock($1) as acquired',
-        [LEADER_LOCK_ID]
-      );
-      const acquired = result.rows[0].acquired;
-      if (acquired) {
-        // We got it, release immediately (this was just a check)
-        await this.db.query('SELECT pg_advisory_unlock($1)', [LEADER_LOCK_ID]);
-      }
-      return acquired;
-    } catch (error) {
-      return false;
-    }
-  }
 }

@@ -5,6 +5,7 @@
  */
 
 import { Pool } from 'pg';
+import { createHash } from 'crypto';
 import { container, KEYS } from '../container';
 import { logger } from '../config/logger.config';
 import { getLockId, LockDomain } from '../shared/locks';
@@ -19,10 +20,38 @@ let intervalId: NodeJS.Timeout | null = null;
 const SYNC_INTERVAL_MS = 15 * 60 * 1000;
 
 // Job lock ID (in JOB domain namespace: 900_000_000+)
-const NEWS_SYNC_JOB_ID = 5; // 900_000_005
+const NEWS_SYNC_JOB_ID = 10; // 900_000_010
 
-// Cache for previous player data (for change detection)
-let previousPlayersCache: Record<string, any> | null = null;
+/**
+ * Lightweight cache for change detection.
+ * Stores an MD5 hash per player instead of the full object (~32 chars vs full JSON).
+ * Also stores a compact snapshot of the fields needed for news derivation,
+ * so derivePlayerNewsFromChanges can still produce accurate news descriptions.
+ */
+let previousHashCache: Map<string, string> | null = null;
+
+interface CompactPlayerSnapshot {
+  injury_status: string | null;
+  team: string | null;
+  active: boolean;
+  full_name: string;
+}
+let previousSnapshotCache: Map<string, CompactPlayerSnapshot> | null = null;
+
+/** Compute an MD5 hash of a player's JSON representation for change detection. */
+function hashPlayer(player: Record<string, any>): string {
+  return createHash('md5').update(JSON.stringify(player)).digest('hex');
+}
+
+/** Extract only the fields needed for news derivation from a player object. */
+function extractSnapshot(player: Record<string, any>): CompactPlayerSnapshot {
+  return {
+    injury_status: player.injury_status ?? null,
+    team: player.team ?? null,
+    active: !!player.active,
+    full_name: player.full_name ?? '',
+  };
+}
 
 /**
  * Run the player news sync from Sleeper API
@@ -61,58 +90,92 @@ export async function runPlayerNewsSync(): Promise<void> {
       let newsCount = 0;
       let breakingNewsCount = 0;
 
-      // Detect changes if we have previous data
-      if (previousPlayersCache) {
-        const newsItems = await sleeperClient.derivePlayerNewsFromChanges(
-          currentPlayers,
-          previousPlayersCache
-        );
+      // Detect changes using hash comparison if we have previous data
+      if (previousHashCache && previousSnapshotCache) {
+        // Build a filtered previousPlayers record containing only players whose hash changed.
+        // This avoids deep-comparing every player and keeps the derivePlayerNewsFromChanges
+        // contract intact — it receives only the subset of players that actually differ.
+        const changedPreviousPlayers: Record<string, any> = {};
 
-        logger.info(`Detected ${newsItems.length} player status changes`);
+        for (const [playerId, currentPlayer] of Object.entries(currentPlayers)) {
+          const previousHash = previousHashCache.get(playerId);
+          if (!previousHash) continue; // New player, no previous data to compare
 
-        // Process each news item
-        for (const newsItem of newsItems) {
-          try {
-            // Find player in our database
-            const player = await playerRepo.findBySleeperId(newsItem.player_id);
-            if (!player) {
-              logger.warn(`Player not found for sleeper_id: ${newsItem.player_id}`);
-              continue;
+          const currentHash = hashPlayer(currentPlayer);
+          if (currentHash !== previousHash) {
+            // Hash mismatch — player data changed; include compact snapshot as previous
+            const snapshot = previousSnapshotCache.get(playerId);
+            if (snapshot) {
+              changedPreviousPlayers[playerId] = snapshot;
             }
-
-            // Create news entry
-            const news = await newsRepo.createNews({
-              playerId: player.id,
-              title: newsItem.title,
-              summary: newsItem.description,
-              source: 'sleeper',
-              publishedAt: new Date(newsItem.timestamp),
-              newsType: newsItem.news_type as NewsType,
-              impactLevel: newsItem.impact_level as ImpactLevel,
-            });
-
-            newsCount++;
-
-            // Handle breaking news (critical/high impact)
-            if (news.impactLevel === 'critical' || news.impactLevel === 'high') {
-              breakingNewsCount++;
-
-              // Emit socket.io event for real-time updates
-              // TODO: Integrate with socket.io service
-              // io.emit('player:news', { news, player });
-
-              // TODO: Send push notifications to users who own this player
-              // const owners = await newsRepo.getUsersOwningPlayer(player.id);
-              // await notificationService.sendBreakingNews(owners, news, player);
-            }
-          } catch (error) {
-            logger.error(`Failed to process news for player ${newsItem.player_id}: ${error}`);
           }
+        }
+
+        // Only call derive if there are actually changed players
+        const changedPlayerCount = Object.keys(changedPreviousPlayers).length;
+        if (changedPlayerCount > 0) {
+          logger.info(`Hash comparison found ${changedPlayerCount} changed players`);
+
+          const newsItems = await sleeperClient.derivePlayerNewsFromChanges(
+            currentPlayers,
+            changedPreviousPlayers
+          );
+
+          logger.info(`Detected ${newsItems.length} player status changes`);
+
+          // Process each news item
+          for (const newsItem of newsItems) {
+            try {
+              // Find player in our database
+              const player = await playerRepo.findBySleeperId(newsItem.player_id);
+              if (!player) {
+                logger.warn(`Player not found for sleeper_id: ${newsItem.player_id}`);
+                continue;
+              }
+
+              // Create news entry
+              const news = await newsRepo.createNews({
+                playerId: player.id,
+                title: newsItem.title,
+                summary: newsItem.description,
+                source: 'sleeper',
+                publishedAt: new Date(newsItem.timestamp),
+                newsType: newsItem.news_type as NewsType,
+                impactLevel: newsItem.impact_level as ImpactLevel,
+              });
+
+              newsCount++;
+
+              // Handle breaking news (critical/high impact)
+              if (news.impactLevel === 'critical' || news.impactLevel === 'high') {
+                breakingNewsCount++;
+
+                // Emit socket.io event for real-time updates
+                // TODO: Integrate with socket.io service
+                // io.emit('player:news', { news, player });
+
+                // TODO: Send push notifications to users who own this player
+                // const owners = await newsRepo.getUsersOwningPlayer(player.id);
+                // await notificationService.sendBreakingNews(owners, news, player);
+              }
+            } catch (error) {
+              logger.error(`Failed to process news for player ${newsItem.player_id}: ${error}`);
+            }
+          }
+        } else {
+          logger.info('No player data changes detected (all hashes match)');
         }
       }
 
-      // Update cache for next run
-      previousPlayersCache = currentPlayers;
+      // Update hash and snapshot caches for next run
+      const newHashCache = new Map<string, string>();
+      const newSnapshotCache = new Map<string, CompactPlayerSnapshot>();
+      for (const [playerId, player] of Object.entries(currentPlayers)) {
+        newHashCache.set(playerId, hashPlayer(player));
+        newSnapshotCache.set(playerId, extractSnapshot(player));
+      }
+      previousHashCache = newHashCache;
+      previousSnapshotCache = newSnapshotCache;
 
       logger.info(
         `Player news sync complete: ${newsCount} news items created (${breakingNewsCount} breaking)`,

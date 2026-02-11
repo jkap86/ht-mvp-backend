@@ -1,4 +1,5 @@
-import axios, { AxiosInstance } from 'axios';
+import axios, { AxiosError, AxiosInstance } from 'axios';
+import { logger } from '../../config/logger.config';
 
 export interface SleeperNflState {
   season: string;
@@ -80,8 +81,45 @@ export interface SleeperPlayerNews {
   impact_level: 'critical' | 'high' | 'normal' | 'low';
 }
 
+/** Network error codes that indicate transient failures worth retrying */
+const TRANSIENT_NETWORK_CODES = new Set([
+  'ECONNRESET',
+  'ETIMEDOUT',
+  'ECONNABORTED',
+  'EPIPE',
+  'ENOTFOUND',
+  'ENETUNREACH',
+  'EAI_AGAIN',
+]);
+
+/**
+ * Determines if an Axios error represents a transient failure that should be retried.
+ * Returns true for 5xx server errors, timeouts, and network-level errors.
+ * Returns false for 4xx client errors (permanent failures).
+ */
+function isTransientError(error: unknown): boolean {
+  if (!axios.isAxiosError(error)) return false;
+
+  const axiosErr = error as AxiosError;
+
+  // Network-level errors (no response received)
+  if (axiosErr.code && TRANSIENT_NETWORK_CODES.has(axiosErr.code)) return true;
+
+  // Axios timeout
+  if (axiosErr.code === 'ECONNABORTED' || axiosErr.message?.includes('timeout')) return true;
+
+  // 5xx server errors are transient
+  const status = axiosErr.response?.status;
+  if (status !== undefined && status >= 500) return true;
+
+  // 4xx and other responses are not transient
+  return false;
+}
+
 export class SleeperApiClient {
   private readonly client: AxiosInstance;
+  private readonly maxRetries = 3;
+  private readonly baseDelayMs = 1000;
 
   constructor() {
     this.client = axios.create({
@@ -91,28 +129,66 @@ export class SleeperApiClient {
     });
   }
 
-  async fetchNflState(): Promise<SleeperNflState> {
-    try {
-      const response = await this.client.get('/state/nfl');
-      return response.data;
-    } catch (error) {
-      if (axios.isAxiosError(error)) {
-        throw new Error(`Sleeper NFL state API failed: ${error.message}`);
+  /**
+   * Execute a request with retry logic for transient failures.
+   * Retries on 5xx errors, timeouts, and network errors with exponential backoff (1s, 2s, 4s).
+   * Does NOT retry on 4xx client errors (permanent failures).
+   */
+  private async withRetry<T>(fn: () => Promise<T>, context: string): Promise<T> {
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      try {
+        return await fn();
+      } catch (error) {
+        if (attempt < this.maxRetries && isTransientError(error)) {
+          lastError = error as Error;
+          const delay = this.baseDelayMs * Math.pow(2, attempt);
+          logger.warn('Sleeper API transient error, retrying', {
+            context,
+            attempt: attempt + 1,
+            maxRetries: this.maxRetries,
+            delay,
+            errorMessage: (error as Error).message,
+            errorCode: axios.isAxiosError(error) ? error.code : undefined,
+            status: axios.isAxiosError(error) ? error.response?.status : undefined,
+          });
+          await new Promise(resolve => setTimeout(resolve, delay));
+        } else {
+          throw error;
+        }
       }
-      throw error;
     }
+
+    throw lastError || new Error(`Sleeper API max retries exceeded for ${context}`);
+  }
+
+  async fetchNflState(): Promise<SleeperNflState> {
+    return this.withRetry(async () => {
+      try {
+        const response = await this.client.get('/state/nfl');
+        return response.data;
+      } catch (error) {
+        if (axios.isAxiosError(error) && !isTransientError(error)) {
+          throw new Error(`Sleeper NFL state API failed: ${error.message}`);
+        }
+        throw error;
+      }
+    }, 'state/nfl');
   }
 
   async fetchNflPlayers(): Promise<Record<string, SleeperPlayer>> {
-    try {
-      const response = await this.client.get('/players/nfl');
-      return response.data;
-    } catch (error) {
-      if (axios.isAxiosError(error)) {
-        throw new Error(`Sleeper players API failed: ${error.message}`);
+    return this.withRetry(async () => {
+      try {
+        const response = await this.client.get('/players/nfl');
+        return response.data;
+      } catch (error) {
+        if (axios.isAxiosError(error) && !isTransientError(error)) {
+          throw new Error(`Sleeper players API failed: ${error.message}`);
+        }
+        throw error;
       }
-      throw error;
-    }
+    }, 'players/nfl');
   }
 
   /**
@@ -125,15 +201,17 @@ export class SleeperApiClient {
     season: string,
     week: number
   ): Promise<Record<string, SleeperPlayerStats>> {
-    try {
-      const response = await this.client.get(`/stats/nfl/regular/${season}/${week}`);
-      return response.data;
-    } catch (error) {
-      if (axios.isAxiosError(error)) {
-        throw new Error(`Sleeper stats API failed: ${error.message}`);
+    return this.withRetry(async () => {
+      try {
+        const response = await this.client.get(`/stats/nfl/regular/${season}/${week}`);
+        return response.data;
+      } catch (error) {
+        if (axios.isAxiosError(error) && !isTransientError(error)) {
+          throw new Error(`Sleeper stats API failed: ${error.message}`);
+        }
+        throw error;
       }
-      throw error;
-    }
+    }, `stats/nfl/regular/${season}/${week}`);
   }
 
   /**
@@ -146,15 +224,17 @@ export class SleeperApiClient {
     season: string,
     week: number
   ): Promise<Record<string, SleeperPlayerStats>> {
-    try {
-      const response = await this.client.get(`/projections/nfl/regular/${season}/${week}`);
-      return response.data;
-    } catch (error) {
-      if (axios.isAxiosError(error)) {
-        throw new Error(`Sleeper projections API failed: ${error.message}`);
+    return this.withRetry(async () => {
+      try {
+        const response = await this.client.get(`/projections/nfl/regular/${season}/${week}`);
+        return response.data;
+      } catch (error) {
+        if (axios.isAxiosError(error) && !isTransientError(error)) {
+          throw new Error(`Sleeper projections API failed: ${error.message}`);
+        }
+        throw error;
       }
-      throw error;
-    }
+    }, `projections/nfl/regular/${season}/${week}`);
   }
 
   /**
