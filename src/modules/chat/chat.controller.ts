@@ -1,10 +1,16 @@
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../../middleware/auth.middleware';
 import { ChatService } from './chat.service';
+import { ChatReactionRepository, groupReactions } from './chat-reaction.repository';
 import { requireUserId, requireLeagueId } from '../../utils/controller-helpers';
+import { ValidationException, ForbiddenException } from '../../utils/exceptions';
+import { EventTypes, tryGetEventBus } from '../../shared/events';
 
 export class ChatController {
-  constructor(private readonly chatService: ChatService) {}
+  constructor(
+    private readonly chatService: ChatService,
+    private readonly chatReactionRepo: ChatReactionRepository
+  ) {}
 
   getMessages = async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
@@ -15,7 +21,17 @@ export class ChatController {
       const before = req.query.before ? parseInt(req.query.before as string, 10) : undefined;
 
       const messages = await this.chatService.getMessages(leagueId, userId, limit, before);
-      res.status(200).json(messages);
+
+      // Attach reactions to messages
+      const messageIds = messages.map((m: any) => m.id);
+      const reactionsMap = await this.chatReactionRepo.getReactionsForMessages(messageIds);
+
+      const messagesWithReactions = messages.map((m: any) => ({
+        ...m,
+        reactions: groupReactions(reactionsMap.get(m.id) || [], userId),
+      }));
+
+      res.status(200).json(messagesWithReactions);
     } catch (error) {
       next(error);
     }
@@ -29,6 +45,78 @@ export class ChatController {
 
       const msg = await this.chatService.sendMessage(leagueId, userId, message);
       res.status(201).json(msg);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  addReaction = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const userId = requireUserId(req);
+      const leagueId = requireLeagueId(req);
+      const messageId = parseInt(req.params.messageId, 10);
+      if (isNaN(messageId) || messageId <= 0) {
+        throw new ValidationException('Invalid message ID');
+      }
+
+      const { emoji } = req.body;
+
+      // Verify message belongs to this league
+      const msgLeagueId = await this.chatReactionRepo.getMessageLeagueId(messageId);
+      if (msgLeagueId !== leagueId) {
+        throw new ForbiddenException('Message does not belong to this league');
+      }
+
+      const added = await this.chatReactionRepo.addReaction(messageId, userId, emoji);
+      if (!added) {
+        return res.status(200).json({ message: 'Already reacted' });
+      }
+
+      // Emit reaction event
+      const eventBus = tryGetEventBus();
+      eventBus?.publish({
+        type: EventTypes.CHAT_REACTION_ADDED,
+        leagueId,
+        payload: { messageId, userId, emoji },
+      });
+
+      res.status(201).json({ messageId, userId, emoji });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  removeReaction = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const userId = requireUserId(req);
+      const leagueId = requireLeagueId(req);
+      const messageId = parseInt(req.params.messageId, 10);
+      if (isNaN(messageId) || messageId <= 0) {
+        throw new ValidationException('Invalid message ID');
+      }
+
+      const { emoji } = req.body;
+
+      // Verify message belongs to this league
+      const msgLeagueId = await this.chatReactionRepo.getMessageLeagueId(messageId);
+      if (msgLeagueId !== leagueId) {
+        throw new ForbiddenException('Message does not belong to this league');
+      }
+
+      const removed = await this.chatReactionRepo.removeReaction(messageId, userId, emoji);
+      if (!removed) {
+        return res.status(200).json({ message: 'Reaction not found' });
+      }
+
+      // Emit reaction event
+      const eventBus = tryGetEventBus();
+      eventBus?.publish({
+        type: EventTypes.CHAT_REACTION_REMOVED,
+        leagueId,
+        payload: { messageId, userId, emoji },
+      });
+
+      res.status(200).json({ messageId, userId, emoji });
     } catch (error) {
       next(error);
     }

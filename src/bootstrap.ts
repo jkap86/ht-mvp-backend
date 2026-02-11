@@ -9,7 +9,9 @@ import { UserRepository } from './modules/auth/auth.repository';
 import { LeagueRepository, RosterRepository } from './modules/leagues/leagues.repository';
 import { DraftRepository } from './modules/drafts/drafts.repository';
 import { ChatRepository } from './modules/chat/chat.repository';
+import { ChatReactionRepository } from './modules/chat/chat-reaction.repository';
 import { DmRepository } from './modules/dm/dm.repository';
+import { DmReactionRepository } from './modules/dm/dm-reaction.repository';
 import { PlayerRepository } from './modules/players/players.repository';
 import {
   RosterPlayersRepository,
@@ -99,7 +101,9 @@ function bootstrap(): void {
   container.register(KEYS.ROSTER_REPO, () => new RosterRepository(container.resolve(KEYS.POOL)));
   container.register(KEYS.DRAFT_REPO, () => new DraftRepository(container.resolve(KEYS.POOL)));
   container.register(KEYS.CHAT_REPO, () => new ChatRepository(container.resolve(KEYS.POOL)));
+  container.register(KEYS.CHAT_REACTION_REPO, () => new ChatReactionRepository(container.resolve(KEYS.POOL)));
   container.register(KEYS.DM_REPO, () => new DmRepository(container.resolve(KEYS.POOL)));
+  container.register(KEYS.DM_REACTION_REPO, () => new DmReactionRepository(container.resolve(KEYS.POOL)));
   container.register(KEYS.PLAYER_REPO, () => new PlayerRepository(container.resolve(KEYS.POOL)));
   container.register(
     KEYS.ROSTER_PLAYERS_REPO,

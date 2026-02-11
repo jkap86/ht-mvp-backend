@@ -265,8 +265,12 @@ export const EventTypes = {
 
   // Chat events
   CHAT_MESSAGE: 'chat:message',
+  CHAT_REACTION_ADDED: 'chat:reaction_added',
+  CHAT_REACTION_REMOVED: 'chat:reaction_removed',
   DM_MESSAGE: 'dm:message',
   DM_READ: 'dm:read',
+  DM_REACTION_ADDED: 'dm:reaction_added',
+  DM_REACTION_REMOVED: 'dm:reaction_removed',
 
   // Roster events
   ROSTER_UPDATED: 'roster:updated',

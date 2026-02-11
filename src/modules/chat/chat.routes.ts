@@ -1,15 +1,17 @@
 import { Router } from 'express';
 import { ChatController } from './chat.controller';
 import { ChatService } from './chat.service';
+import { ChatReactionRepository } from './chat-reaction.repository';
 import { authMiddleware } from '../../middleware/auth.middleware';
 import { validateRequest } from '../../middleware/validation.middleware';
 import { dmMessageLimiter, dmReadLimiter } from '../../middleware/rate-limit.middleware';
 import { container, KEYS } from '../../container';
-import { sendMessageSchema, getMessagesQuerySchema } from './chat.schemas';
+import { sendMessageSchema, getMessagesQuerySchema, reactionSchema } from './chat.schemas';
 
 // Resolve dependencies from container
 const chatService = container.resolve<ChatService>(KEYS.CHAT_SERVICE);
-const chatController = new ChatController(chatService);
+const chatReactionRepo = container.resolve<ChatReactionRepository>(KEYS.CHAT_REACTION_REPO);
+const chatController = new ChatController(chatService, chatReactionRepo);
 
 const router = Router({ mergeParams: true }); // mergeParams to access :leagueId
 
@@ -21,5 +23,11 @@ router.get('/', dmReadLimiter, validateRequest(getMessagesQuerySchema, 'query'),
 
 // POST /api/leagues/:leagueId/chat
 router.post('/', dmMessageLimiter, validateRequest(sendMessageSchema), chatController.sendMessage);
+
+// POST /api/leagues/:leagueId/chat/:messageId/reactions
+router.post('/:messageId/reactions', dmMessageLimiter, validateRequest(reactionSchema), chatController.addReaction);
+
+// DELETE /api/leagues/:leagueId/chat/:messageId/reactions
+router.delete('/:messageId/reactions', dmReadLimiter, validateRequest(reactionSchema), chatController.removeReaction);
 
 export default router;

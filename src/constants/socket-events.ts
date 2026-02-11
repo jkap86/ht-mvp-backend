@@ -40,12 +40,16 @@ export const SOCKET_EVENTS = {
   // Chat events
   CHAT: {
     MESSAGE: 'chat:message',
+    REACTION_ADDED: 'chat:reaction_added',
+    REACTION_REMOVED: 'chat:reaction_removed',
   },
 
   // Direct message events
   DM: {
     MESSAGE: 'dm:message',
     READ: 'dm:read',
+    REACTION_ADDED: 'dm:reaction_added',
+    REACTION_REMOVED: 'dm:reaction_removed',
   },
 
   // Auction events

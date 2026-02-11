@@ -1,8 +1,10 @@
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../../middleware/auth.middleware';
 import { DmService } from './dm.service';
+import { DmReactionRepository, groupDmReactions } from './dm-reaction.repository';
 import { requireUserId } from '../../utils/controller-helpers';
-import { ValidationException } from '../../utils/exceptions';
+import { ValidationException, ForbiddenException } from '../../utils/exceptions';
+import { EventTypes, tryGetEventBus } from '../../shared/events';
 
 /**
  * Parse and validate conversation ID from request params
@@ -37,7 +39,10 @@ function parseBefore(value: string | undefined): number | undefined {
 }
 
 export class DmController {
-  constructor(private readonly dmService: DmService) {}
+  constructor(
+    private readonly dmService: DmService,
+    private readonly dmReactionRepo: DmReactionRepository
+  ) {}
 
   /**
    * GET /api/dm
@@ -84,7 +89,17 @@ export class DmController {
       const before = parseBefore(req.query.before as string);
 
       const messages = await this.dmService.getMessages(userId, conversationId, limit, before);
-      res.status(200).json(messages);
+
+      // Attach reactions to messages
+      const messageIds = messages.map((m: any) => m.id);
+      const reactionsMap = await this.dmReactionRepo.getReactionsForMessages(messageIds);
+
+      const messagesWithReactions = messages.map((m: any) => ({
+        ...m,
+        reactions: groupDmReactions(reactionsMap.get(m.id) || []),
+      }));
+
+      res.status(200).json(messagesWithReactions);
     } catch (error) {
       next(error);
     }
@@ -136,6 +151,98 @@ export class DmController {
       const userId = requireUserId(req);
       const count = await this.dmService.getTotalUnreadCount(userId);
       res.status(200).json({ unread_count: count });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  /**
+   * POST /api/dm/:conversationId/messages/:messageId/reactions
+   */
+  addReaction = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const userId = requireUserId(req);
+      const conversationId = requireConversationId(req);
+      const messageId = parseInt(req.params.messageId, 10);
+      if (isNaN(messageId) || messageId <= 0) {
+        throw new ValidationException('Invalid message ID');
+      }
+
+      const { emoji } = req.body;
+
+      // Verify message belongs to this conversation
+      const msgConvId = await this.dmReactionRepo.getMessageConversationId(messageId);
+      if (msgConvId !== conversationId) {
+        throw new ForbiddenException('Message does not belong to this conversation');
+      }
+
+      const added = await this.dmReactionRepo.addReaction(messageId, userId, emoji);
+      if (!added) {
+        return res.status(200).json({ message: 'Already reacted' });
+      }
+
+      // Emit reaction event to the other user
+      const conversation = await this.dmService.getConversationById(conversationId);
+      if (conversation) {
+        const otherUserId = conversation.user1Id === userId
+          ? conversation.user2Id
+          : conversation.user1Id;
+
+        const eventBus = tryGetEventBus();
+        eventBus?.publish({
+          type: EventTypes.DM_REACTION_ADDED,
+          userId: otherUserId,
+          payload: { conversationId, messageId, userId, emoji },
+        });
+      }
+
+      res.status(201).json({ messageId, userId, emoji });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  /**
+   * DELETE /api/dm/:conversationId/messages/:messageId/reactions
+   */
+  removeReaction = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const userId = requireUserId(req);
+      const conversationId = requireConversationId(req);
+      const messageId = parseInt(req.params.messageId, 10);
+      if (isNaN(messageId) || messageId <= 0) {
+        throw new ValidationException('Invalid message ID');
+      }
+
+      const { emoji } = req.body;
+
+      // Verify message belongs to this conversation
+      const msgConvId = await this.dmReactionRepo.getMessageConversationId(messageId);
+      if (msgConvId !== conversationId) {
+        throw new ForbiddenException('Message does not belong to this conversation');
+      }
+
+      const removed = await this.dmReactionRepo.removeReaction(messageId, userId, emoji);
+      if (!removed) {
+        return res.status(200).json({ message: 'Reaction not found' });
+      }
+
+      // Emit reaction event to the other user
+      const conversation = await this.dmService.getConversationById(conversationId);
+      if (conversation) {
+        const otherUserId = conversation.user1Id === userId
+          ? conversation.user2Id
+          : conversation.user1Id;
+
+        const eventBus = tryGetEventBus();
+        eventBus?.publish({
+          type: EventTypes.DM_REACTION_REMOVED,
+          userId: otherUserId,
+          payload: { conversationId, messageId, userId, emoji },
+        });
+      }
+
+      res.status(200).json({ messageId, userId, emoji });
     } catch (error) {
       next(error);
     }

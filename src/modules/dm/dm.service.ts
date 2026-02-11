@@ -152,6 +152,13 @@ export class DmService {
   }
 
   /**
+   * Get a conversation by ID (for reaction authorization)
+   */
+  async getConversationById(conversationId: number): Promise<any> {
+    return this.dmRepo.findById(conversationId);
+  }
+
+  /**
    * Get total unread message count for a user (for badge display)
    */
   async getTotalUnreadCount(userId: string): Promise<number> {

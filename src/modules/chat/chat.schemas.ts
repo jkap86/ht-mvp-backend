@@ -7,14 +7,18 @@ import { z } from 'zod';
 /** Strip HTML tags to prevent XSS in future web clients */
 const stripHtml = (val: string) => val.replace(/<[^>]*>/g, '');
 
-/** Schema for sending a chat message */
+/** Schema for sending a chat message (supports gif:: prefix for GIF URLs) */
 export const sendMessageSchema = z.object({
   message: z
     .string()
     .min(1, 'Message cannot be empty')
-    .max(1000, 'Message cannot exceed 1000 characters')
+    .max(1500, 'Message cannot exceed 1500 characters')
     .trim()
-    .transform(stripHtml),
+    .transform((val) => {
+      // Don't strip HTML from gif:: prefixed URLs
+      if (val.startsWith('gif::')) return val;
+      return stripHtml(val);
+    }),
 });
 
 /** Schema for chat message query parameters */
@@ -33,6 +37,15 @@ export const getMessagesQuerySchema = z.object({
     .optional(),
 });
 
+/** Schema for adding/removing a reaction */
+export const reactionSchema = z.object({
+  emoji: z
+    .string()
+    .min(1, 'Emoji is required')
+    .max(8, 'Emoji too long'),
+});
+
 // Type exports from Zod schemas
 export type SendMessageInput = z.infer<typeof sendMessageSchema>;
 export type GetMessagesQueryInput = z.infer<typeof getMessagesQuerySchema>;
+export type ReactionInput = z.infer<typeof reactionSchema>;
