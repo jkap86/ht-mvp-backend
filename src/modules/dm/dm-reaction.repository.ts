@@ -28,7 +28,7 @@ export class DmReactionRepository {
        RETURNING id`,
       [messageId, userId, emoji]
     );
-    return result.rowCount > 0;
+    return (result.rowCount ?? 0) > 0;
   }
 
   /**
@@ -40,7 +40,7 @@ export class DmReactionRepository {
        WHERE message_id = $1 AND user_id = $2 AND emoji = $3`,
       [messageId, userId, emoji]
     );
-    return result.rowCount > 0;
+    return (result.rowCount ?? 0) > 0;
   }
 
   /**

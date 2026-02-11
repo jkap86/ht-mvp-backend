@@ -165,7 +165,7 @@ export class DmController {
     try {
       const userId = requireUserId(req);
       const conversationId = requireConversationId(req);
-      const messageId = parseInt(req.params.messageId, 10);
+      const messageId = parseInt(req.params.messageId as string, 10);
       if (isNaN(messageId) || messageId <= 0) {
         throw new ValidationException('Invalid message ID');
       }
@@ -220,7 +220,7 @@ export class DmController {
     try {
       const userId = requireUserId(req);
       const conversationId = requireConversationId(req);
-      const messageId = parseInt(req.params.messageId, 10);
+      const messageId = parseInt(req.params.messageId as string, 10);
       if (isNaN(messageId) || messageId <= 0) {
         throw new ValidationException('Invalid message ID');
       }

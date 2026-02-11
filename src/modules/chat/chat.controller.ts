@@ -56,7 +56,7 @@ export class ChatController {
     try {
       const userId = requireUserId(req);
       const leagueId = requireLeagueId(req);
-      const messageId = parseInt(req.params.messageId, 10);
+      const messageId = parseInt(req.params.messageId as string, 10);
       if (isNaN(messageId) || messageId <= 0) {
         throw new ValidationException('Invalid message ID');
       }
@@ -101,7 +101,7 @@ export class ChatController {
     try {
       const userId = requireUserId(req);
       const leagueId = requireLeagueId(req);
-      const messageId = parseInt(req.params.messageId, 10);
+      const messageId = parseInt(req.params.messageId as string, 10);
       if (isNaN(messageId) || messageId <= 0) {
         throw new ValidationException('Invalid message ID');
       }
