@@ -46,23 +46,40 @@ async function runMigrationFile(fileName: string) {
   const migrationsDir = getMigrationsDir();
   const filePath = path.join(migrationsDir, fileName);
   const sql = fs.readFileSync(filePath, 'utf8');
+  const noTransaction = fileName.includes('.notx.');
 
-  console.log(`➡️  Running migration: ${fileName}`);
+  console.log(`➡️  Running migration: ${fileName}${noTransaction ? ' (no transaction)' : ''}`);
 
-  await pool.query('BEGIN');
-  try {
-    await pool.query(sql);
-    await pool.query(
-      `INSERT INTO ${MIGRATIONS_TABLE} (name) VALUES ($1) ON CONFLICT (name) DO NOTHING;`,
-      [fileName]
-    );
-    await pool.query('COMMIT');
-    console.log(`✅ Migration completed: ${fileName}`);
-  } catch (err) {
-    await pool.query('ROLLBACK');
-    console.error(`❌ Migration failed: ${fileName}`);
-    console.error(err);
-    throw err;
+  if (noTransaction) {
+    // Migrations like CREATE INDEX CONCURRENTLY cannot run in a transaction
+    try {
+      await pool.query(sql);
+      await pool.query(
+        `INSERT INTO ${MIGRATIONS_TABLE} (name) VALUES ($1) ON CONFLICT (name) DO NOTHING;`,
+        [fileName]
+      );
+      console.log(`✅ Migration completed: ${fileName}`);
+    } catch (err) {
+      console.error(`❌ Migration failed: ${fileName}`);
+      console.error(err);
+      throw err;
+    }
+  } else {
+    await pool.query('BEGIN');
+    try {
+      await pool.query(sql);
+      await pool.query(
+        `INSERT INTO ${MIGRATIONS_TABLE} (name) VALUES ($1) ON CONFLICT (name) DO NOTHING;`,
+        [fileName]
+      );
+      await pool.query('COMMIT');
+      console.log(`✅ Migration completed: ${fileName}`);
+    } catch (err) {
+      await pool.query('ROLLBACK');
+      console.error(`❌ Migration failed: ${fileName}`);
+      console.error(err);
+      throw err;
+    }
   }
 }
 
