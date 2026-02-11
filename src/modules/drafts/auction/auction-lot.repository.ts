@@ -561,6 +561,59 @@ export class AuctionLotRepository {
    * Get roster budget data using transaction client
    * Uses a single query to avoid race conditions between status checks
    */
+  /**
+   * Get budget data for all rosters in a draft using transaction client
+   * Uses a single query to avoid race conditions between status checks
+   */
+  async getAllRosterBudgetDataWithClient(
+    client: PoolClient,
+    draftId: number,
+    rosterIds: number[]
+  ): Promise<Map<number, RosterBudgetData>> {
+    if (rosterIds.length === 0) {
+      return new Map();
+    }
+
+    const queryResult = await client.query(
+      `WITH roster_stats AS (
+         SELECT
+           COALESCE(winning_roster_id, current_bidder_roster_id) as roster_id,
+           CASE WHEN status = 'won' THEN winning_bid ELSE 0 END as spent_amount,
+           CASE WHEN status = 'won' THEN 1 ELSE 0 END as won_flag,
+           CASE WHEN status = 'active' THEN current_bid ELSE 0 END as leading_amount
+         FROM auction_lots
+         WHERE draft_id = $1 AND (
+           (status = 'won' AND winning_roster_id = ANY($2)) OR
+           (status = 'active' AND current_bidder_roster_id = ANY($2))
+         )
+       )
+       SELECT
+         roster_id,
+         COALESCE(SUM(spent_amount), 0) as spent,
+         COALESCE(SUM(won_flag), 0) as won_count,
+         COALESCE(SUM(leading_amount), 0) as leading_commitment
+       FROM roster_stats
+       GROUP BY roster_id`,
+      [draftId, rosterIds]
+    );
+
+    const result = new Map<number, RosterBudgetData>();
+    for (const rosterId of rosterIds) {
+      result.set(rosterId, { spent: 0, wonCount: 0, leadingCommitment: 0 });
+    }
+
+    for (const row of queryResult.rows) {
+      const data = result.get(row.roster_id);
+      if (data) {
+        data.spent = parseInt(row.spent, 10);
+        data.wonCount = parseInt(row.won_count, 10);
+        data.leadingCommitment = parseInt(row.leading_commitment, 10);
+      }
+    }
+
+    return result;
+  }
+
   async getRosterBudgetDataWithClient(
     client: PoolClient,
     draftId: number,

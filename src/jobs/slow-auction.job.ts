@@ -83,53 +83,62 @@ async function processExpiredLots(): Promise<void> {
           });
         }
 
-        // Advance nominator for fast auctions with retry logic
-        const fastAuctionService = container.resolve<FastAuctionService>(
-          KEYS.FAST_AUCTION_SERVICE
+        // Advance nominator for fast auctions only (with retry logic)
+        // Check auction mode from the lot's draft to avoid wasteful calls for slow auctions
+        const draftForLot = await client.query(
+          'SELECT settings FROM drafts WHERE id = $1',
+          [result.lot.draftId]
         );
-        const MAX_ADVANCEMENT_RETRIES = 3;
-        let advancementSuccess = false;
+        const lotAuctionMode = draftForLot.rows[0]?.settings?.auctionMode ?? 'slow';
 
-        for (let attempt = 1; attempt <= MAX_ADVANCEMENT_RETRIES; attempt++) {
-          try {
-            await fastAuctionService.advanceNominator(result.lot.draftId);
-            advancementSuccess = true;
-            break;
-          } catch (error) {
-            logger.warn('Nominator advancement attempt failed', {
-              jobName: 'slow-auction',
-              draftId: result.lot.draftId,
-              attempt,
-              maxAttempts: MAX_ADVANCEMENT_RETRIES,
-              error,
-            });
-            if (attempt < MAX_ADVANCEMENT_RETRIES) {
-              // Wait 100ms before retry
-              await new Promise((resolve) => setTimeout(resolve, 100));
+        if (lotAuctionMode === 'fast') {
+          const fastAuctionService = container.resolve<FastAuctionService>(
+            KEYS.FAST_AUCTION_SERVICE
+          );
+          const MAX_ADVANCEMENT_RETRIES = 3;
+          let advancementSuccess = false;
+
+          for (let attempt = 1; attempt <= MAX_ADVANCEMENT_RETRIES; attempt++) {
+            try {
+              await fastAuctionService.advanceNominator(result.lot.draftId);
+              advancementSuccess = true;
+              break;
+            } catch (error) {
+              logger.warn('Nominator advancement attempt failed', {
+                jobName: 'slow-auction',
+                draftId: result.lot.draftId,
+                attempt,
+                maxAttempts: MAX_ADVANCEMENT_RETRIES,
+                error,
+              });
+              if (attempt < MAX_ADVANCEMENT_RETRIES) {
+                // Wait 100ms before retry
+                await new Promise((resolve) => setTimeout(resolve, 100));
+              }
             }
           }
-        }
 
-        if (!advancementSuccess) {
-          logger.error('All nominator advancement attempts failed, trying force advance', {
-            jobName: 'slow-auction',
-            draftId: result.lot.draftId,
-            maxAttempts: MAX_ADVANCEMENT_RETRIES,
-          });
-
-          // Fallback: Use forceAdvanceNominator to skip to next nominator
-          try {
-            await fastAuctionService.forceAdvanceNominator(result.lot.draftId);
-            logger.info('Force advance nominator succeeded', {
+          if (!advancementSuccess) {
+            logger.error('All nominator advancement attempts failed, trying force advance', {
               jobName: 'slow-auction',
               draftId: result.lot.draftId,
+              maxAttempts: MAX_ADVANCEMENT_RETRIES,
             });
-          } catch (fallbackError) {
-            logger.error('Force advance nominator also failed - draft may be stuck', {
-              jobName: 'slow-auction',
-              draftId: result.lot.draftId,
-              error: fallbackError,
-            });
+
+            // Fallback: Use forceAdvanceNominator to skip to next nominator
+            try {
+              await fastAuctionService.forceAdvanceNominator(result.lot.draftId);
+              logger.info('Force advance nominator succeeded', {
+                jobName: 'slow-auction',
+                draftId: result.lot.draftId,
+              });
+            } catch (fallbackError) {
+              logger.error('Force advance nominator also failed - draft may be stuck', {
+                jobName: 'slow-auction',
+                draftId: result.lot.draftId,
+                error: fallbackError,
+              });
+            }
           }
         }
       }

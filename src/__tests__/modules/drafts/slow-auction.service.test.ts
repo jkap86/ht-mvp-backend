@@ -183,6 +183,11 @@ const createMockLotRepo = (): jest.Mocked<AuctionLotRepository> =>
     getRosterBudgetData: jest.fn(),
     getRosterBudgetDataWithClient: jest.fn(),
     getAllRosterBudgetData: jest.fn(),
+    getAllRosterBudgetDataWithClient: jest.fn(),
+    hasActiveLot: jest.fn(),
+    hasActiveLotWithClient: jest.fn(),
+    findLotsByDraft: jest.fn(),
+    getNominatedPlayerIds: jest.fn(),
   }) as unknown as jest.Mocked<AuctionLotRepository>;
 
 const createMockDraftRepo = (): jest.Mocked<DraftRepository> =>
@@ -244,7 +249,14 @@ describe('SlowAuctionService', () => {
     mockLotRepo.findLotByDraftAndPlayerWithClient.mockResolvedValue(null);
     mockLotRepo.createLotWithClient.mockResolvedValue(mockLot);
 
-    // Reset the budget calculator mock to default values
+    // Set default budget data for the repo method (used inside transactions)
+    mockLotRepo.getRosterBudgetDataWithClient.mockResolvedValue({
+      spent: 50,
+      wonCount: 5,
+      leadingCommitment: 10,
+    });
+
+    // Reset the budget calculator mock to default values (legacy standalone function)
     mockedGetRosterBudgetDataWithClient.mockResolvedValue({
       spent: 50,
       wonCount: 5,
@@ -495,7 +507,7 @@ describe('SlowAuctionService', () => {
         leadingCommitment: 0,
       });
       // Also mock the WithClient version used inside the transaction
-      mockedGetRosterBudgetDataWithClient.mockResolvedValue({
+      mockLotRepo.getRosterBudgetDataWithClient.mockResolvedValue({
         spent: 180,
         wonCount: 15, // Full roster
         leadingCommitment: 0,

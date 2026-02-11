@@ -18,6 +18,7 @@ export interface AuctionSettings {
   resetOnBidSeconds: number;
   minBid: number;
   minIncrement: number;
+  maxLotDurationSeconds?: number;
 }
 
 /** Player pool options for draft eligibility */

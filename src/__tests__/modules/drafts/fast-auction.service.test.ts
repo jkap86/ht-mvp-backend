@@ -41,6 +41,21 @@ jest.mock('../../../socket/socket.service', () => ({
   })),
 }));
 
+// Mock draft completion utils
+jest.mock('../../../modules/drafts/draft-completion.utils', () => ({
+  finalizeDraftCompletion: jest.fn().mockResolvedValue(undefined),
+}));
+
+// Mock container
+jest.mock('../../../container', () => ({
+  container: {
+    resolve: jest.fn().mockReturnValue({}),
+  },
+  KEYS: {
+    ROSTER_PLAYERS_REPO: 'rosterPlayersRepo',
+  },
+}));
+
 // Mock data
 const mockFastDraft: Draft = {
   id: 1,
@@ -157,6 +172,7 @@ const mockSettings: FastAuctionSettings = {
   resetOnBidSeconds: 15,
   minBid: 1,
   minIncrement: 1,
+  maxLotDurationSeconds: null,
 };
 
 // Mock repositories
@@ -181,9 +197,17 @@ const createMockLotRepo = (): jest.Mocked<AuctionLotRepository> =>
     recordBidHistory: jest.fn(),
     getBidHistoryForLot: jest.fn(),
     getRosterBudgetData: jest.fn(),
+    getRosterBudgetDataWithClient: jest.fn(),
     getAllRosterBudgetData: jest.fn(),
+    getAllRosterBudgetDataWithClient: jest.fn(),
     getNominatedPlayerIds: jest.fn(),
     hasActiveLotWithClient: jest.fn(),
+    hasActiveLot: jest.fn(),
+    findLotByDraftAndPlayerWithClient: jest.fn(),
+    findLotsByDraft: jest.fn(),
+    countActiveLotsForRosterWithClient: jest.fn(),
+    countAllActiveLotsWithClient: jest.fn(),
+    countDailyNominationsForRosterWithClient: jest.fn(),
   }) as unknown as jest.Mocked<AuctionLotRepository>;
 
 const createMockDraftRepo = (): jest.Mocked<DraftRepository> =>
@@ -191,6 +215,8 @@ const createMockDraftRepo = (): jest.Mocked<DraftRepository> =>
     findById: jest.fn(),
     isPlayerDrafted: jest.fn(),
     getDraftedPlayerIds: jest.fn(),
+    update: jest.fn().mockResolvedValue({}),
+    getDraftPicks: jest.fn().mockResolvedValue([]),
   }) as unknown as jest.Mocked<DraftRepository>;
 
 const createMockRosterRepo = (): jest.Mocked<RosterRepository> =>
@@ -203,6 +229,7 @@ const createMockRosterRepo = (): jest.Mocked<RosterRepository> =>
 const createMockLeagueRepo = (): jest.Mocked<LeagueRepository> =>
   ({
     findById: jest.fn(),
+    update: jest.fn().mockResolvedValue({}),
   }) as unknown as jest.Mocked<LeagueRepository>;
 
 const createMockOrderService = (): jest.Mocked<DraftOrderService> =>
@@ -484,7 +511,7 @@ describe('FastAuctionService', () => {
       expect(result).toBeNull();
     });
 
-    it('should advance nominator when no players available', async () => {
+    it('should complete auction when no players available', async () => {
       mockDraftRepo.findById.mockResolvedValue(mockFastDraft);
       // Mock hasActiveLotWithClient to return false (no active lot)
       mockLotRepo.hasActiveLotWithClient.mockResolvedValue(false);
@@ -493,15 +520,20 @@ describe('FastAuctionService', () => {
 
       const { runWithLock } = require('../../../shared/transaction-runner');
 
-      // Mock both calls: first autoNominate, then advanceNominator
-      let callCount = 0;
+      // The raw draft row that advanceNominator reads from the database
+      const rawDraftRow = {
+        id: 1,
+        league_id: 1,
+        status: 'in_progress',
+        settings: { auctionMode: 'fast', nominationSeconds: 60, minBid: 1 },
+        current_pick: 1,
+      };
+
+      // Mock both calls: first autoNominate (returns skipReason), then advanceNominator (detects completion)
       runWithLock.mockImplementation(async (_pool: any, _domain: any, _id: any, fn: any) => {
-        callCount++;
         const mockClient = {
           query: jest.fn()
-            .mockResolvedValueOnce({ rows: [mockFastDraft] }) // Draft query
-            .mockResolvedValueOnce({ rows: [{ roster_id: 2, draft_position: 1 }] }) // Order query
-            .mockResolvedValueOnce({ rows: [] }), // Update query
+            .mockResolvedValueOnce({ rows: [rawDraftRow] }), // Draft query (FOR UPDATE)
         };
         return fn(mockClient);
       });
@@ -509,6 +541,8 @@ describe('FastAuctionService', () => {
       const result = await service.autoNominate(1);
 
       expect(result).toBeNull();
+      // Verify draft was marked as completed
+      expect(mockDraftRepo.update).toHaveBeenCalledWith(1, { status: 'completed' });
     });
   });
 

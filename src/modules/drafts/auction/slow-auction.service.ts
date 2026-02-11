@@ -11,7 +11,6 @@ import { Draft } from '../drafts.model';
 import { RosterRepository, LeagueRepository } from '../../leagues/leagues.repository';
 import { PlayerRepository } from '../../players/players.repository';
 import { ValidationException, NotFoundException } from '../../../utils/exceptions';
-import { getRosterBudgetDataWithClient } from './auction-budget-calculator';
 import { resolvePriceWithClient, OutbidNotification } from './auction-price-resolver';
 import { runInTransaction, runWithLock, runWithLocks, LockDomain } from '../../../shared/transaction-runner';
 import { getLockId, LockDomain as SharedLockDomain } from '../../../shared/locks';
@@ -286,7 +285,7 @@ export class SlowAuctionService {
           }
 
           // 4. Check roster has remaining slots (re-check under lock)
-          const budgetData = await getRosterBudgetDataWithClient(client, draftId, rosterId);
+          const budgetData = await this.lotRepo.getRosterBudgetDataWithClient(client, draftId, rosterId);
           if (budgetData.wonCount >= rosterSlots) {
             throw new ValidationException('Your roster is full');
           }
@@ -434,7 +433,7 @@ export class SlowAuctionService {
       }
 
       // 4. Budget validation within transaction (exclude current lot if already leading)
-      const budgetData = await getRosterBudgetDataWithClient(client, draftId, rosterId);
+      const budgetData = await this.lotRepo.getRosterBudgetDataWithClient(client, draftId, rosterId);
 
       // Guard: reject if roster is already full
       if (budgetData.wonCount >= rosterSlots) {
@@ -669,7 +668,7 @@ export class SlowAuctionService {
         // Roster already locked above - proceed with budget validation
 
         // Validate budget and slots
-        const budgetData = await getRosterBudgetDataWithClient(client, lot.draftId, candidateRosterId);
+        const budgetData = await this.lotRepo.getRosterBudgetDataWithClient(client, lot.draftId, candidateRosterId);
 
         // Check roster not full
         if (budgetData.wonCount >= rosterSlots) {
