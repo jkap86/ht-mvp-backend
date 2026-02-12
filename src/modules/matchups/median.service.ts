@@ -1,6 +1,6 @@
 import { Pool, PoolClient } from 'pg';
-import { LineupsRepository } from '../lineups/lineups.repository';
-import { LeagueRepository } from '../leagues/leagues.repository';
+import type { LineupsRepository } from '../lineups/lineups.repository';
+import type { LeagueRepository } from '../leagues/leagues.repository';
 import { MatchupsRepository } from './matchups.repository';
 import { ForbiddenException, NotFoundException, ValidationException } from '../../utils/exceptions';
 import { runInTransaction } from '../../shared/transaction-runner';

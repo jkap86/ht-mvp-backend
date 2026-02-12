@@ -14,8 +14,8 @@ import { logger } from '../../../config/logger.config';
 import type { Draft } from '../drafts.model';
 import { DraftRepository } from '../drafts.repository';
 import { DraftPickAssetRepository } from '../draft-pick-asset.repository';
-import { LeagueRepository } from '../../leagues/leagues.repository';
-import { RosterRepository } from '../../rosters/roster.repository';
+import type { LeagueRepository } from '../../leagues/leagues.repository';
+import type { RosterRepository } from '../../rosters/roster.repository';
 import { DerbyRepository } from './derby.repository';
 import type {
   DerbySettings,

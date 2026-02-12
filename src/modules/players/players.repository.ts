@@ -195,7 +195,7 @@ export class PlayerRepository {
 
   async getPlayerCount(): Promise<number> {
     const result = await this.db.query('SELECT COUNT(*) as count FROM players WHERE active = true');
-    return parseInt(result.rows[0].count, 10);
+    return Number(result.rows[0].count) || 0;
   }
 
   /**
@@ -394,7 +394,7 @@ export class PlayerRepository {
     const result = await this.db.query(
       "SELECT COUNT(*) as count FROM players WHERE active = true AND player_type = 'college'"
     );
-    return parseInt(result.rows[0].count, 10);
+    return Number(result.rows[0].count) || 0;
   }
 
   /**

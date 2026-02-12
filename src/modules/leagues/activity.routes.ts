@@ -12,6 +12,7 @@ import { RosterRepository } from '../rosters/roster.repository';
 import { authMiddleware } from '../../middleware/auth.middleware';
 import { apiReadLimiter } from '../../middleware/rate-limit.middleware';
 import { container, KEYS } from '../../container';
+import { asyncHandler } from '../../shared/async-handler';
 
 const pool = container.resolve<Pool>(KEYS.POOL);
 const activityService = new ActivityService(pool);
@@ -25,12 +26,12 @@ const router = Router();
 router.use(authMiddleware);
 
 // GET /api/leagues/:leagueId/activity - Get league activity feed
-router.get('/:leagueId/activity', apiReadLimiter, activityController.getLeagueActivity);
+router.get('/:leagueId/activity', apiReadLimiter, asyncHandler(activityController.getLeagueActivity));
 
 // GET /api/leagues/:leagueId/activity/week/:week - Get week-specific activity
-router.get('/:leagueId/activity/week/:week', apiReadLimiter, activityController.getWeekActivity);
+router.get('/:leagueId/activity/week/:week', apiReadLimiter, asyncHandler(activityController.getWeekActivity));
 
 // GET /api/rosters/:rosterId/activity - Get roster-specific activity
-router.get('/rosters/:rosterId/activity', apiReadLimiter, activityController.getRosterActivity);
+router.get('/rosters/:rosterId/activity', apiReadLimiter, asyncHandler(activityController.getRosterActivity));
 
 export default router;

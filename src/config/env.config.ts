@@ -11,7 +11,7 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
 
   // JWT
-  JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
+  JWT_SECRET: z.string().min(64, 'JWT_SECRET must be at least 64 characters'),
   JWT_EXPIRES_IN: z.string().default('7d'),
 
   // Server

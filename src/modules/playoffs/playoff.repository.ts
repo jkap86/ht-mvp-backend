@@ -393,7 +393,7 @@ export class PlayoffRepository {
        WHERE league_id = $1 AND season = $2 AND playoff_round = $3 AND bracket_type = 'WINNERS'`,
       [leagueId, season, round]
     );
-    return parseInt(result.rows[0].count, 10) > 0;
+    return (Number(result.rows[0].count) || 0) > 0;
   }
 
   /**
@@ -410,7 +410,7 @@ export class PlayoffRepository {
        WHERE league_id = $1 AND season = $2 AND playoff_round = $3 AND bracket_type = $4`,
       [leagueId, season, round, bracketType]
     );
-    return parseInt(result.rows[0].count, 10) > 0;
+    return (Number(result.rows[0].count) || 0) > 0;
   }
 
   /**
@@ -557,9 +557,9 @@ export class PlayoffRepository {
       roster2TotalPoints: parseFloat(row.roster2_total) || 0,
       roster1Seed: row.playoff_seed1,
       roster2Seed: row.playoff_seed2,
-      gamesCompleted: parseInt(row.games_completed, 10),
+      gamesCompleted: Number(row.games_completed) || 0,
       seriesLength: row.series_length || 1,
-      isComplete: parseInt(row.games_completed, 10) >= (row.series_length || 1),
+      isComplete: (Number(row.games_completed) || 0) >= (row.series_length || 1),
     };
   }
 
@@ -656,8 +656,8 @@ export class PlayoffRepository {
     );
 
     const row = result.rows[0];
-    const total = parseInt(row.total_series, 10);
-    const completed = parseInt(row.completed_series, 10);
+    const total = Number(row.total_series) || 0;
+    const completed = Number(row.completed_series) || 0;
     return total > 0 && total === completed;
   }
 

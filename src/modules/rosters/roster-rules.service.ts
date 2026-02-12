@@ -1,9 +1,9 @@
 import { PoolClient } from 'pg';
 import { RosterPlayersRepository } from './rosters.repository';
-import { LeagueRepository } from '../leagues/leagues.repository';
-import { DraftPickAssetRepository } from '../drafts/draft-pick-asset.repository';
+import type { LeagueRepository } from '../leagues/leagues.repository';
+import type { DraftPickAssetRepository } from '../drafts/draft-pick-asset.repository';
 import { AcquiredType } from './rosters.model';
-import { DraftPickAsset } from '../drafts/draft-pick-asset.model';
+import type { DraftPickAsset } from '../drafts/draft-pick-asset.model';
 import { getMaxRosterSize } from '../../shared/roster-defaults';
 
 /**

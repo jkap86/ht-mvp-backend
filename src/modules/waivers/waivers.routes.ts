@@ -3,6 +3,7 @@ import { WaiversController } from './waivers.controller';
 import { authMiddleware } from '../../middleware/auth.middleware';
 import { validateRequest } from '../../middleware/validation.middleware';
 import { apiReadLimiter, waiverLimiter } from '../../middleware/rate-limit.middleware';
+import { asyncHandler } from '../../shared/async-handler';
 import {
   submitClaimSchema,
   updateClaimSchema,
@@ -28,12 +29,12 @@ export function createWaiversRoutes(controller: WaiversController): Router {
     '/claims',
     waiverLimiter,
     validateRequest(submitClaimSchema),
-    controller.submitClaim.bind(controller)
+    asyncHandler(controller.submitClaim.bind(controller))
   );
 
   // Get user's waiver claims
   // GET /leagues/:leagueId/waivers/claims
-  router.get('/claims', apiReadLimiter, validateRequest(getClaimsSchema), controller.getClaims.bind(controller));
+  router.get('/claims', apiReadLimiter, validateRequest(getClaimsSchema), asyncHandler(controller.getClaims.bind(controller)));
 
   // Update a waiver claim
   // PUT /leagues/:leagueId/waivers/claims/:claimId
@@ -41,7 +42,7 @@ export function createWaiversRoutes(controller: WaiversController): Router {
     '/claims/:claimId',
     waiverLimiter,
     validateRequest(updateClaimSchema),
-    controller.updateClaim.bind(controller)
+    asyncHandler(controller.updateClaim.bind(controller))
   );
 
   // Cancel a waiver claim
@@ -50,7 +51,7 @@ export function createWaiversRoutes(controller: WaiversController): Router {
     '/claims/:claimId',
     waiverLimiter,
     validateRequest(cancelClaimSchema),
-    controller.cancelClaim.bind(controller)
+    asyncHandler(controller.cancelClaim.bind(controller))
   );
 
   // Reorder waiver claims
@@ -59,7 +60,7 @@ export function createWaiversRoutes(controller: WaiversController): Router {
     '/claims/reorder',
     waiverLimiter,
     validateRequest(reorderClaimsSchema),
-    controller.reorderClaims.bind(controller)
+    asyncHandler(controller.reorderClaims.bind(controller))
   );
 
   // Get waiver priority order
@@ -68,7 +69,7 @@ export function createWaiversRoutes(controller: WaiversController): Router {
     '/priority',
     apiReadLimiter,
     validateRequest(getPrioritySchema),
-    controller.getPriority.bind(controller)
+    asyncHandler(controller.getPriority.bind(controller))
   );
 
   // Get FAAB budgets
@@ -77,7 +78,7 @@ export function createWaiversRoutes(controller: WaiversController): Router {
     '/faab',
     apiReadLimiter,
     validateRequest(getFaabBudgetsSchema),
-    controller.getFaabBudgets.bind(controller)
+    asyncHandler(controller.getFaabBudgets.bind(controller))
   );
 
   // Get waiver wire players
@@ -86,7 +87,7 @@ export function createWaiversRoutes(controller: WaiversController): Router {
     '/wire',
     apiReadLimiter,
     validateRequest(getWaiverWireSchema),
-    controller.getWaiverWire.bind(controller)
+    asyncHandler(controller.getWaiverWire.bind(controller))
   );
 
   // Initialize waiver system (commissioner only)
@@ -95,7 +96,7 @@ export function createWaiversRoutes(controller: WaiversController): Router {
     '/initialize',
     waiverLimiter,
     validateRequest(initializeWaiversSchema),
-    controller.initializeWaivers.bind(controller)
+    asyncHandler(controller.initializeWaivers.bind(controller))
   );
 
   // Manually process waivers (commissioner only)
@@ -104,7 +105,7 @@ export function createWaiversRoutes(controller: WaiversController): Router {
     '/process',
     waiverLimiter,
     validateRequest(processClaimsSchema),
-    controller.processClaims.bind(controller)
+    asyncHandler(controller.processClaims.bind(controller))
   );
 
   return router;

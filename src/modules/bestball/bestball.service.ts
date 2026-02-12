@@ -6,14 +6,15 @@
  */
 
 import { Pool } from 'pg';
-import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
-import { RosterPlayersRepository } from '../rosters/rosters.repository';
-import { LineupsRepository } from '../lineups/lineups.repository';
-import { PlayerStatsRepository } from '../scoring/scoring.repository';
-import { PlayerProjectionsRepository } from '../scoring/projections.repository';
-import { PlayerRepository } from '../players/players.repository';
-import { ScoringService } from '../scoring/scoring.service';
-import { LineupSlots, PositionSlot, DEFAULT_ROSTER_CONFIG } from '../lineups/lineups.model';
+import type { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
+import type { RosterPlayersRepository } from '../rosters/rosters.repository';
+import type { LineupsRepository } from '../lineups/lineups.repository';
+import type { PlayerStatsRepository } from '../scoring/scoring.repository';
+import type { PlayerProjectionsRepository } from '../scoring/projections.repository';
+import type { PlayerRepository } from '../players/players.repository';
+import type { ScoringService } from '../scoring/scoring.service';
+import type { LineupSlots, PositionSlot } from '../lineups/lineups.model';
+import { DEFAULT_ROSTER_CONFIG } from '../lineups/lineups.model';
 import { optimizeBestballLineup, OptimizeInput } from './bestball-optimizer';
 import { logger } from '../../config/logger.config';
 

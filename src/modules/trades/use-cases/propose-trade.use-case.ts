@@ -1,9 +1,9 @@
 import { Pool, PoolClient } from 'pg';
 import { TradesRepository, TradeItemsRepository } from '../trades.repository';
-import { RosterPlayersRepository } from '../../rosters/rosters.repository';
-import { LeagueRepository, RosterRepository } from '../../leagues/leagues.repository';
-import { DraftPickAssetRepository } from '../../drafts/draft-pick-asset.repository';
-import { PlayerRepository } from '../../players/players.repository';
+import type { RosterPlayersRepository } from '../../rosters/rosters.repository';
+import type { LeagueRepository, RosterRepository } from '../../leagues/leagues.repository';
+import type { DraftPickAssetRepository } from '../../drafts/draft-pick-asset.repository';
+import type { PlayerRepository } from '../../players/players.repository';
 import { EventTypes, tryGetEventBus } from '../../../shared/events';
 import {
   TradeWithDetails,
@@ -20,14 +20,13 @@ import {
 import { runWithLock, LockDomain } from '../../../shared/transaction-runner';
 import { getMaxRosterSize } from '../../../shared/roster-defaults';
 import { batchValidateRosterPlayers } from '../../../shared/batch-queries';
-import { League } from '../../leagues/leagues.model';
-import { Roster } from '../../leagues/leagues.model';
+import type { League, Roster } from '../../leagues/leagues.model';
 import {
   validatePickTrade,
   buildPickTradeItems,
   ValidatePickTradeContext,
 } from './validate-pick-trade.use-case';
-import { EventListenerService } from '../../chat/event-listener.service';
+import type { EventListenerService } from '../../chat/event-listener.service';
 import { logger } from '../../../config/logger.config';
 import { getEffectiveLeagueChatMode } from '../trade-notification.utils';
 import { LeagueChatMode } from '../trades.model';
@@ -52,6 +51,11 @@ export interface ProposeTradeContextWithPool extends ProposeTradeContext {
 /**
  * Propose a new trade (standalone version - manages its own transaction)
  * Use this when proposing a trade as a standalone operation.
+ *
+ * LOCK CONTRACT:
+ * - Acquires TRADE lock (300M + leagueId) via runWithLock — serializes trade proposals per league
+ *
+ * Only one lock domain (TRADE) is acquired. No nested cross-domain advisory locks.
  */
 export async function proposeTradeStandalone(
   ctx: ProposeTradeContextWithPool,

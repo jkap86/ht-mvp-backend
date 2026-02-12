@@ -1,10 +1,10 @@
 import { Pool, PoolClient } from 'pg';
 import { AuctionLotRepository } from './auction-lot.repository';
 import { DraftRepository } from '../drafts.repository';
-import { RosterRepository, LeagueRepository } from '../../leagues/leagues.repository';
+import type { RosterRepository, LeagueRepository } from '../../leagues/leagues.repository';
 import { DraftOrderService } from '../draft-order.service';
 import { EventTypes, tryGetEventBus } from '../../../shared/events';
-import { PlayerRepository } from '../../players/players.repository';
+import type { PlayerRepository } from '../../players/players.repository';
 import {
   AuctionLot,
   AuctionProxyBid,
@@ -22,7 +22,7 @@ import { Draft } from '../drafts.model';
 import { resolvePriceWithClient } from './auction-price-resolver';
 import { calculateMaxAffordableBid, canAffordMinBid } from './auction-budget-calculator';
 import { finalizeDraftCompletion } from '../draft-completion.utils';
-import { RosterPlayersRepository } from '../../rosters/rosters.repository';
+import type { RosterPlayersRepository } from '../../rosters/rosters.repository';
 import { container, KEYS } from '../../../container';
 
 export interface NominationResult {

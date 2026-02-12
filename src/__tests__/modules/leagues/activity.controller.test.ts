@@ -1,10 +1,10 @@
-import { Response, NextFunction } from 'express';
+import { Response } from 'express';
 import { AuthRequest } from '../../../middleware/auth.middleware';
 import { ActivityController } from '../../../modules/leagues/activity.controller';
 import { ActivityService } from '../../../modules/leagues/activity.service';
 import { AuthorizationService } from '../../../modules/auth/authorization.service';
 import { RosterRepository } from '../../../modules/rosters/roster.repository';
-import { ForbiddenException, ValidationException } from '../../../utils/exceptions';
+import { ForbiddenException } from '../../../utils/exceptions';
 
 // Minimal mocks
 const mockActivityService = {
@@ -42,17 +42,15 @@ beforeEach(() => jest.clearAllMocks());
 
 describe('ActivityController authorization', () => {
   describe('getLeagueActivity', () => {
-    it('returns 403 when user is not a league member', async () => {
+    it('throws ForbiddenException when user is not a league member', async () => {
       (mockAuthService.ensureLeagueMember as jest.Mock).mockRejectedValueOnce(
         new ForbiddenException('You are not a member of this league')
       );
       const req = mockReq({ params: { leagueId: '1' } } as any);
       const res = mockRes();
-      const next = jest.fn() as NextFunction;
 
-      await controller.getLeagueActivity(req, res, next);
+      await expect(controller.getLeagueActivity(req, res)).rejects.toThrow(ForbiddenException);
 
-      expect(next).toHaveBeenCalledWith(expect.any(ForbiddenException));
       expect(mockActivityService.getLeagueActivity).not.toHaveBeenCalled();
     });
 
@@ -62,9 +60,8 @@ describe('ActivityController authorization', () => {
 
       const req = mockReq({ params: { leagueId: '1' } } as any);
       const res = mockRes();
-      const next = jest.fn() as NextFunction;
 
-      await controller.getLeagueActivity(req, res, next);
+      await controller.getLeagueActivity(req, res);
 
       expect(mockAuthService.ensureLeagueMember).toHaveBeenCalledWith(1, 'user-1');
       expect(res.status).toHaveBeenCalledWith(200);
@@ -73,36 +70,32 @@ describe('ActivityController authorization', () => {
   });
 
   describe('getWeekActivity', () => {
-    it('returns 403 when user is not a league member', async () => {
+    it('throws ForbiddenException when user is not a league member', async () => {
       (mockAuthService.ensureLeagueMember as jest.Mock).mockRejectedValueOnce(
         new ForbiddenException('You are not a member of this league')
       );
       const req = mockReq({ params: { leagueId: '1', week: '3' } } as any);
       const res = mockRes();
-      const next = jest.fn() as NextFunction;
 
-      await controller.getWeekActivity(req, res, next);
+      await expect(controller.getWeekActivity(req, res)).rejects.toThrow(ForbiddenException);
 
-      expect(next).toHaveBeenCalledWith(expect.any(ForbiddenException));
       expect(mockActivityService.getLeagueActivity).not.toHaveBeenCalled();
     });
   });
 
   describe('getRosterActivity', () => {
-    it('returns 403 when roster does not exist (no info leak)', async () => {
+    it('throws ForbiddenException when roster does not exist (no info leak)', async () => {
       (mockRosterRepo.findById as jest.Mock).mockResolvedValueOnce(null);
 
       const req = mockReq({ params: { rosterId: '999' } } as any);
       const res = mockRes();
-      const next = jest.fn() as NextFunction;
 
-      await controller.getRosterActivity(req, res, next);
+      await expect(controller.getRosterActivity(req, res)).rejects.toThrow(ForbiddenException);
 
-      expect(next).toHaveBeenCalledWith(expect.any(ForbiddenException));
       expect(mockAuthService.ensureLeagueMember).not.toHaveBeenCalled();
     });
 
-    it('returns 403 when user is not in the roster league', async () => {
+    it('throws ForbiddenException when user is not in the roster league', async () => {
       (mockRosterRepo.findById as jest.Mock).mockResolvedValueOnce({ id: 10, leagueId: 5 });
       (mockAuthService.ensureLeagueMember as jest.Mock).mockRejectedValueOnce(
         new ForbiddenException('You are not a member of this league')
@@ -110,12 +103,10 @@ describe('ActivityController authorization', () => {
 
       const req = mockReq({ params: { rosterId: '10' } } as any);
       const res = mockRes();
-      const next = jest.fn() as NextFunction;
 
-      await controller.getRosterActivity(req, res, next);
+      await expect(controller.getRosterActivity(req, res)).rejects.toThrow(ForbiddenException);
 
       expect(mockAuthService.ensureLeagueMember).toHaveBeenCalledWith(5, 'user-1');
-      expect(next).toHaveBeenCalledWith(expect.any(ForbiddenException));
       expect(mockActivityService.getRosterActivity).not.toHaveBeenCalled();
     });
 
@@ -125,9 +116,8 @@ describe('ActivityController authorization', () => {
 
       const req = mockReq({ params: { rosterId: '10' } } as any);
       const res = mockRes();
-      const next = jest.fn() as NextFunction;
 
-      await controller.getRosterActivity(req, res, next);
+      await controller.getRosterActivity(req, res);
 
       expect(mockAuthService.ensureLeagueMember).toHaveBeenCalledWith(1, 'user-1');
       expect(res.status).toHaveBeenCalledWith(200);
@@ -137,9 +127,8 @@ describe('ActivityController authorization', () => {
     it('returns 400 for invalid rosterId', async () => {
       const req = mockReq({ params: { rosterId: 'abc' } } as any);
       const res = mockRes();
-      const next = jest.fn() as NextFunction;
 
-      await controller.getRosterActivity(req, res, next);
+      await controller.getRosterActivity(req, res);
 
       expect(res.status).toHaveBeenCalledWith(400);
       expect(mockRosterRepo.findById).not.toHaveBeenCalled();

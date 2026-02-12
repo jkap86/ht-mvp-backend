@@ -5,14 +5,14 @@ import {
   WaiverClaimsRepository,
   WaiverWireRepository,
 } from './waivers.repository';
-import {
+import type {
   RosterPlayersRepository,
   RosterTransactionsRepository,
 } from '../rosters/rosters.repository';
-import { RosterMutationService } from '../rosters/roster-mutation.service';
-import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
-import { TradesRepository } from '../trades/trades.repository';
-import { EventListenerService } from '../chat/event-listener.service';
+import type { RosterMutationService } from '../rosters/roster-mutation.service';
+import type { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
+import type { TradesRepository } from '../trades/trades.repository';
+import type { EventListenerService } from '../chat/event-listener.service';
 import {
   WaiverClaimWithDetails,
   WaiverPriorityWithDetails,

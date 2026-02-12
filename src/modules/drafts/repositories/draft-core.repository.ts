@@ -87,7 +87,7 @@ export class DraftCoreRepository {
     draftType: string,
     rounds: number,
     pickTimeSeconds: number,
-    settings?: DraftSettings | Record<string, any>,
+    settings?: DraftSettings,
     scheduledStart?: Date
   ): Promise<Draft> {
     const result = await this.db.query(

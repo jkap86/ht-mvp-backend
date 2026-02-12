@@ -2,7 +2,7 @@ import { randomBytes } from 'crypto';
 import { Pool } from 'pg';
 import { DraftRepository } from './drafts.repository';
 import { DraftPickAssetRepository } from './draft-pick-asset.repository';
-import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
+import type { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import { ForbiddenException, NotFoundException, ValidationException } from '../../utils/exceptions';
 import { EventTypes, tryGetEventBus } from '../../shared/events';
 import { runWithLock, LockDomain } from '../../shared/transaction-runner';

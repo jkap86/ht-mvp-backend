@@ -1,6 +1,6 @@
 import { ChatRepository } from './chat.repository';
 import { messageToResponse } from './chat.model';
-import { LeagueRepository } from '../leagues/leagues.repository';
+import type { LeagueRepository } from '../leagues/leagues.repository';
 import { ForbiddenException, ValidationException } from '../../utils/exceptions';
 import { EventTypes, tryGetEventBus } from '../../shared/events';
 

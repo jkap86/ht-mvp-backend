@@ -6,6 +6,17 @@ import { logger } from '../config/logger.config';
 import { ValidationException } from '../utils/exceptions';
 import { getLockId, LockDomain } from '../shared/locks';
 
+/**
+ * LOCK CONTRACT:
+ * - processAutopicks() acquires JOB lock (900M + 1) via pg_try_advisory_lock — singleton job execution
+ *   Then delegates to engine.tick() which acquires DRAFT lock (700M + draftId) per draft
+ *   JOB lock is session-level (not transactional); released explicitly after processing
+ *
+ * Lock ordering: JOB (priority 9) is the outermost lock, then DRAFT (priority 7) inside.
+ * Although JOB > DRAFT in priority number, there is no deadlock risk because the JOB lock
+ * is session-level (pg_try_advisory_lock) while DRAFT is transactional (pg_advisory_xact_lock).
+ */
+
 let intervalId: NodeJS.Timeout | null = null;
 
 // Check for expired picks every 2 seconds for better UX (reduced from 5s)

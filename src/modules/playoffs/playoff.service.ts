@@ -1,7 +1,7 @@
 import { Pool, PoolClient } from 'pg';
 import { PlayoffRepository } from './playoff.repository';
-import { MatchupsRepository } from '../matchups/matchups.repository';
-import { LeagueRepository } from '../leagues/leagues.repository';
+import type { MatchupsRepository } from '../matchups/matchups.repository';
+import type { LeagueRepository } from '../leagues/leagues.repository';
 import {
   PlayoffBracketView,
   PlayoffMatchup,

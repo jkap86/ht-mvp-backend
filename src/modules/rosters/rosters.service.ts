@@ -1,8 +1,8 @@
 import { Pool, PoolClient } from 'pg';
 import { RosterPlayersRepository, RosterTransactionsRepository } from './rosters.repository';
-import { RosterRepository, LeagueRepository } from '../leagues/leagues.repository';
+import type { RosterRepository, LeagueRepository } from '../leagues/leagues.repository';
 import { RosterPlayer, RosterPlayerWithDetails, RosterTransaction } from './rosters.model';
-import { WaiverWireRepository } from '../waivers/waivers.repository';
+import type { WaiverWireRepository } from '../waivers/waivers.repository';
 import { parseWaiverSettings } from '../waivers/waivers.model';
 import { RosterMutationService } from './roster-mutation.service';
 import { runWithLock, LockDomain } from '../../shared/transaction-runner';
@@ -13,6 +13,16 @@ import {
 } from '../../utils/exceptions';
 import { getMaxRosterSize } from '../../shared/roster-defaults';
 
+/**
+ * LOCK CONTRACT:
+ * - addPlayer() acquires LEAGUE lock (100M + leagueId) via runWithLock — prevents concurrent free agent claims
+ * - dropPlayer() acquires LEAGUE lock (100M + leagueId) via runWithLock — prevents race with waiver claims
+ * - addDropPlayer() acquires LEAGUE lock (100M + leagueId) via runWithLock — prevents concurrent free agent claims
+ *
+ * All methods acquire only LEAGUE lock. No nested cross-domain advisory locks.
+ * Note: Uses LEAGUE (not ROSTER) because free agent operations need league-wide exclusion
+ * to prevent two rosters from claiming the same player simultaneously.
+ */
 export class RosterService {
   constructor(
     private readonly db: Pool,

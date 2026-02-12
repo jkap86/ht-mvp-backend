@@ -1,5 +1,5 @@
-import { RosterRepository, LeagueRepository } from '../leagues/leagues.repository';
-import { Roster } from '../leagues/leagues.model';
+import type { RosterRepository, LeagueRepository } from '../leagues/leagues.repository';
+import type { Roster } from '../leagues/leagues.model';
 import { ForbiddenException } from '../../utils/exceptions';
 
 /**

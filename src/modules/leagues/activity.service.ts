@@ -169,7 +169,7 @@ export class ActivityService {
         proposerTeamName: row.proposer_team_name || `Team ${row.proposer_roster_num}`,
         recipientRosterId: row.recipient_roster_num,
         recipientTeamName: row.recipient_team_name || `Team ${row.recipient_roster_num}`,
-        playerCount: parseInt(row.item_count),
+        playerCount: Number(row.item_count) || 0,
         pickCount: 0, // TODO: Calculate from trade_items
       },
     }));

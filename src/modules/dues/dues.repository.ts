@@ -174,8 +174,8 @@ export class DuesRepository {
     );
 
     return {
-      paidCount: parseInt(result.rows[0].paid_count, 10) || 0,
-      totalCount: parseInt(result.rows[0].total_count, 10) || 0,
+      paidCount: Number(result.rows[0].paid_count) || 0,
+      totalCount: Number(result.rows[0].total_count) || 0,
     };
   }
 }

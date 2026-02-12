@@ -31,6 +31,27 @@ function buildAllowlist(): string[] {
 const allowlist = buildAllowlist();
 
 /**
+ * Environment guard: warn when dev CORS origins are active and prevent
+ * accidental use in a production-like environment.
+ */
+if (env.NODE_ENV !== 'production') {
+  const dbUrl = process.env.DATABASE_URL ?? '';
+  const hostname = process.env.HOSTNAME ?? '';
+
+  if (dbUrl.includes('production') || hostname.includes('prod')) {
+    throw new Error(
+      'NODE_ENV is not "production" but DATABASE_URL or HOSTNAME suggests a production environment. ' +
+        'Refusing to start with permissive development CORS origins. ' +
+        'Set NODE_ENV="production" or fix the environment configuration.'
+    );
+  }
+
+  console.warn(
+    '[CORS] Development CORS origins are active — broad local-network IP ranges (192.168.*, 10.*, 172.16-31.*) will be allowed.'
+  );
+}
+
+/**
  * Check if a production origin is in the allowlist.
  */
 export function isAllowedOrigin(origin: string): boolean {

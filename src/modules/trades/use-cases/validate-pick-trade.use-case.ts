@@ -1,5 +1,5 @@
-import { DraftPickAssetRepository } from '../../drafts/draft-pick-asset.repository';
-import { DraftPickAssetWithDetails } from '../../drafts/draft-pick-asset.model';
+import type { DraftPickAssetRepository } from '../../drafts/draft-pick-asset.repository';
+import type { DraftPickAssetWithDetails } from '../../drafts/draft-pick-asset.model';
 import {
   ValidationException,
   ConflictException,

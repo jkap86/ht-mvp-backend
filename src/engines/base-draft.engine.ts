@@ -5,19 +5,20 @@ import {
   ActualPickerInfo,
   PickDeadlineContext,
 } from './draft-engine.interface';
-import { Draft, DraftOrderEntry, DraftPick, DraftSettings, draftToResponse } from '../modules/drafts/drafts.model';
-import { DraftRepository } from '../modules/drafts/drafts.repository';
-import { DraftPickAsset } from '../modules/drafts/draft-pick-asset.model';
-import { PlayerRepository } from '../modules/players/players.repository';
-import { RosterPlayersRepository } from '../modules/rosters/rosters.repository';
-import { LeagueRepository, RosterRepository } from '../modules/leagues/leagues.repository';
+import type { Draft, DraftOrderEntry, DraftPick, DraftSettings } from '../modules/drafts/drafts.model';
+import { draftToResponse } from '../modules/drafts/drafts.model';
+import type { DraftRepository } from '../modules/drafts/drafts.repository';
+import type { DraftPickAsset } from '../modules/drafts/draft-pick-asset.model';
+import type { PlayerRepository } from '../modules/players/players.repository';
+import type { RosterPlayersRepository } from '../modules/rosters/rosters.repository';
+import type { LeagueRepository, RosterRepository } from '../modules/leagues/leagues.repository';
 import { EventTypes, tryGetEventBus } from '../shared/events';
 import { logger } from '../config/logger.config';
 import { finalizeDraftCompletion } from '../modules/drafts/draft-completion.utils';
 import { computeNextPickState as computeNextPickStateShared, NextPickState } from '../modules/drafts/draft-pick-state.utils';
 import { container, KEYS } from '../container';
-import { DraftPickAssetRepository } from '../modules/drafts/draft-pick-asset.repository';
-import { VetDraftPickSelectionRepository } from '../modules/drafts/vet-draft-pick-selection.repository';
+import type { DraftPickAssetRepository } from '../modules/drafts/draft-pick-asset.repository';
+import type { VetDraftPickSelectionRepository } from '../modules/drafts/vet-draft-pick-selection.repository';
 import { Pool, PoolClient } from 'pg';
 import { runInDraftTransaction } from '../shared/locks';
 
@@ -25,6 +26,15 @@ import { runInDraftTransaction } from '../shared/locks';
  * Abstract base class for draft engines.
  * Provides shared logic for pick calculation and autopick.
  * Subclasses implement getPickerForPickNumber for draft-type-specific order.
+ *
+ * LOCK CONTRACT:
+ * - tick() acquires DRAFT lock (700M + draftId) via runWithLock for stale-state recovery
+ * - performAutoPick() acquires DRAFT lock (700M + draftId) via runInDraftTransaction
+ *   All queue reads and pick writes happen atomically inside this transaction
+ * - performAutoPickPlayer() / performAutoPickAsset() run inside the caller's DRAFT lock
+ *   (either performAutoPick's transaction or engine.tick's recovery path)
+ *
+ * Only one lock domain (DRAFT) is acquired at a time. No nested cross-domain locks.
  */
 export abstract class BaseDraftEngine implements IDraftEngine {
   abstract readonly draftType: string;

@@ -4,7 +4,7 @@ import {
   messageToResponse,
   ConversationWithDetails,
 } from './dm.model';
-import { UserRepository } from '../auth/auth.repository';
+import type { UserRepository } from '../auth/auth.repository';
 import { ForbiddenException, ValidationException, NotFoundException } from '../../utils/exceptions';
 import { EventTypes, tryGetEventBus } from '../../shared/events';
 import { logger } from '../../config/logger.config';

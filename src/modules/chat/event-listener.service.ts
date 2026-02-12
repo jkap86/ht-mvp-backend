@@ -1,9 +1,9 @@
 import { SystemMessageService } from './system-message.service';
-import { TradesRepository } from '../trades/trades.repository';
-import { RosterRepository, LeagueRepository } from '../leagues/leagues.repository';
-import { DmService } from '../dm/dm.service';
+import type { TradesRepository } from '../trades/trades.repository';
+import type { RosterRepository, LeagueRepository } from '../leagues/leagues.repository';
+import type { DmService } from '../dm/dm.service';
 import { MessageType } from './chat.model';
-import { LeagueChatMode, TradeWithDetails } from '../trades/trades.model';
+import type { LeagueChatMode, TradeWithDetails } from '../trades/trades.model';
 import {
   formatTradeForNotifications,
   getEffectiveLeagueChatMode,

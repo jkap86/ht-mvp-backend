@@ -1,5 +1,5 @@
 import { MatchupsRepository } from './matchups.repository';
-import { LeagueRepository } from '../leagues/leagues.repository';
+import type { LeagueRepository } from '../leagues/leagues.repository';
 import { Matchup, Standing } from './matchups.model';
 import { NotFoundException, ForbiddenException } from '../../utils/exceptions';
 

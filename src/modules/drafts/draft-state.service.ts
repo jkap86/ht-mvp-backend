@@ -2,15 +2,15 @@ import { Pool, PoolClient } from 'pg';
 import { DraftRepository } from './drafts.repository';
 import { Draft, DraftOrderEntry, DraftSettings, draftToResponse } from './drafts.model';
 import { validatePlayerPoolEligibility } from './draft-validation.utils';
-import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
-import { RosterPlayersRepository } from '../rosters/rosters.repository';
-import { PlayerRepository } from '../players/players.repository';
-import { Player } from '../players/players.model';
+import type { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
+import type { RosterPlayersRepository } from '../rosters/rosters.repository';
+import type { PlayerRepository } from '../players/players.repository';
+import type { Player } from '../players/players.model';
 import { DraftEngineFactory, IDraftEngine } from '../../engines';
 import { NotFoundException, ForbiddenException, ValidationException, ErrorCode } from '../../utils/exceptions';
 import { EventTypes, tryGetEventBus } from '../../shared/events';
 import { finalizeDraftCompletion } from './draft-completion.utils';
-import { ScheduleGeneratorService } from '../matchups/schedule-generator.service';
+import type { ScheduleGeneratorService } from '../matchups/schedule-generator.service';
 import { DraftPickAssetRepository } from './draft-pick-asset.repository';
 import { DraftPickAsset } from './draft-pick-asset.model';
 import { computeNextPickState as computeNextPickStateShared, NextPickState } from './draft-pick-state.utils';
@@ -68,6 +68,21 @@ export interface ApplyPickResult {
 
 // NextPickState is now defined in './draft-pick-state.utils' and imported above.
 
+/**
+ * LOCK CONTRACT:
+ * - startDraft() uses updateWithLock (conditional SQL update, no advisory lock)
+ * - pauseDraft() acquires DRAFT lock (700M + draftId) via runWithLock for fast auctions
+ *   (freezes both draft and active lot atomically); non-fast uses conditional SQL update
+ * - resumeDraft() acquires DRAFT lock (700M + draftId) via runWithLock for fast auctions
+ *   (restores both draft and active lot atomically); non-fast uses conditional SQL update
+ * - completeDraft() uses updateWithLock (conditional SQL update, no advisory lock)
+ * - undoPick() acquires DRAFT lock (700M + draftId) via runInDraftTransaction — atomic undo
+ * - applyPick() acquires DRAFT lock (700M + draftId) via runInDraftTransaction — atomic pick + state advance
+ * - applyAutoPick() acquires DRAFT lock (700M + draftId) via runInDraftTransaction — decision + pick
+ * - advanceTurn() acquires DRAFT lock (700M + draftId) via runInDraftTransaction — state advance without pick
+ *
+ * Only one lock domain (DRAFT) is acquired at a time. No nested cross-domain advisory locks.
+ */
 export class DraftStateService {
   constructor(
     private readonly db: Pool,

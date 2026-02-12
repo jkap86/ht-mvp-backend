@@ -4,6 +4,15 @@ import { TradesService } from '../modules/trades/trades.service';
 import { getLockId, LockDomain } from '../shared/locks';
 import { logger } from '../config/logger.config';
 
+/**
+ * LOCK CONTRACT:
+ * - processTradeExpirations() acquires JOB lock (900M + 5) via pg_try_advisory_lock — singleton job execution
+ *   Then delegates to TradesService methods which use conditional status updates (no advisory locks)
+ *   JOB lock is session-level (not transactional); released explicitly after processing
+ *
+ * Only a single JOB lock is acquired. No nested advisory locks within this job.
+ */
+
 let intervalId: NodeJS.Timeout | null = null;
 
 const TRADE_CHECK_INTERVAL_MS = 60000; // 60 seconds (1 minute)

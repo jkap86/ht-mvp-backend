@@ -8,8 +8,8 @@ import {
 } from './auction.models';
 import { DraftRepository } from '../drafts.repository';
 import { Draft } from '../drafts.model';
-import { RosterRepository, LeagueRepository } from '../../leagues/leagues.repository';
-import { PlayerRepository } from '../../players/players.repository';
+import type { RosterRepository, LeagueRepository } from '../../leagues/leagues.repository';
+import type { PlayerRepository } from '../../players/players.repository';
 import { ValidationException, NotFoundException } from '../../../utils/exceptions';
 import { resolvePriceWithClient, OutbidNotification } from './auction-price-resolver';
 import { runInTransaction, runWithLock, runWithLocks, LockDomain } from '../../../shared/transaction-runner';
@@ -52,6 +52,18 @@ function getEasternDateString(): string {
   }).format(new Date());
 }
 
+/**
+ * LOCK CONTRACT:
+ * - nominate() locks ROSTER(rosterId) + DRAFT(draftId) — serializes nominations per roster and draft
+ *   Lock ordering: ROSTER (priority 2) before DRAFT (priority 7), per shared/locks.ts
+ * - setMaxBid() locks ROSTER(rosterId) via pg_advisory_xact_lock(200M + rosterId) — serializes bids per roster
+ *   Also acquires row-level FOR UPDATE lock on the lot
+ * - settleLot() locks ROSTER(rosterId) for all bidders (sorted by ID) + DRAFT(draftId) — serializes settlement
+ *   Lock ordering: ROSTER (priority 2) before DRAFT (priority 7), per shared/locks.ts
+ *
+ * nominate() holds both ROSTER and DRAFT simultaneously (safe: ROSTER < DRAFT in priority).
+ * settleLot() holds multiple ROSTER locks + DRAFT simultaneously (safe: all ROSTER before DRAFT).
+ */
 export class SlowAuctionService {
   constructor(
     private readonly lotRepo: AuctionLotRepository,

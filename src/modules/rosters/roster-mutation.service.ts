@@ -1,6 +1,6 @@
 import { PoolClient } from 'pg';
 import { RosterPlayersRepository } from './rosters.repository';
-import { LeagueRepository } from '../leagues/leagues.repository';
+import type { LeagueRepository } from '../leagues/leagues.repository';
 import { RosterPlayer, AcquiredType } from './rosters.model';
 import { ValidationException, ConflictException, NotFoundException } from '../../utils/exceptions';
 import { getMaxRosterSize } from '../../shared/roster-defaults';

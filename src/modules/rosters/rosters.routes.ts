@@ -4,6 +4,7 @@ import { RosterService } from './rosters.service';
 import { LineupService } from '../lineups/lineups.service';
 import { apiReadLimiter, rosterModifyLimiter } from '../../middleware/rate-limit.middleware';
 import { container, KEYS } from '../../container';
+import { asyncHandler } from '../../shared/async-handler';
 
 // Resolve dependencies from container
 const rosterService = container.resolve<RosterService>(KEYS.ROSTER_PLAYER_SERVICE);
@@ -15,24 +16,24 @@ const router = Router({ mergeParams: true });
 // All routes require authentication (handled by parent router)
 
 // GET /api/leagues/:leagueId/rosters/:rosterId/players
-router.get('/:rosterId/players', apiReadLimiter, rostersController.getRosterPlayers);
+router.get('/:rosterId/players', apiReadLimiter, asyncHandler(rostersController.getRosterPlayers));
 
 // POST /api/leagues/:leagueId/rosters/:rosterId/players
-router.post('/:rosterId/players', rosterModifyLimiter, rostersController.addPlayer);
+router.post('/:rosterId/players', rosterModifyLimiter, asyncHandler(rostersController.addPlayer));
 
 // DELETE /api/leagues/:leagueId/rosters/:rosterId/players/:playerId
-router.delete('/:rosterId/players/:playerId', rosterModifyLimiter, rostersController.dropPlayer);
+router.delete('/:rosterId/players/:playerId', rosterModifyLimiter, asyncHandler(rostersController.dropPlayer));
 
 // POST /api/leagues/:leagueId/rosters/:rosterId/players/add-drop
-router.post('/:rosterId/players/add-drop', rosterModifyLimiter, rostersController.addDropPlayer);
+router.post('/:rosterId/players/add-drop', rosterModifyLimiter, asyncHandler(rostersController.addDropPlayer));
 
 // GET /api/leagues/:leagueId/rosters/:rosterId/lineup
-router.get('/:rosterId/lineup', apiReadLimiter, rostersController.getLineup);
+router.get('/:rosterId/lineup', apiReadLimiter, asyncHandler(rostersController.getLineup));
 
 // PUT /api/leagues/:leagueId/rosters/:rosterId/lineup
-router.put('/:rosterId/lineup', rosterModifyLimiter, rostersController.setLineup);
+router.put('/:rosterId/lineup', rosterModifyLimiter, asyncHandler(rostersController.setLineup));
 
 // POST /api/leagues/:leagueId/rosters/:rosterId/lineup/move
-router.post('/:rosterId/lineup/move', rosterModifyLimiter, rostersController.movePlayer);
+router.post('/:rosterId/lineup/move', rosterModifyLimiter, asyncHandler(rostersController.movePlayer));
 
 export default router;

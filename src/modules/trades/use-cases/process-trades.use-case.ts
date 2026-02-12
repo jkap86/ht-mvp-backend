@@ -2,7 +2,7 @@ import { TradesRepository, TradeVotesRepository } from '../trades.repository';
 import { EventTypes, tryGetEventBus } from '../../../shared/events';
 import { runWithLock, LockDomain } from '../../../shared/transaction-runner';
 import { executeTrade, AcceptTradeContext, PickTradedEvent } from './accept-trade.use-case';
-import { EventListenerService } from '../../chat/event-listener.service';
+import type { EventListenerService } from '../../chat/event-listener.service';
 import { logger } from '../../../config/logger.config';
 
 const DEFAULT_VETO_COUNT = 4;
@@ -15,6 +15,11 @@ export interface ProcessTradesContext extends AcceptTradeContext {
 /**
  * Invalidate pending trades containing a dropped player
  * Uses TRADE lock to prevent race conditions during invalidation
+ *
+ * LOCK CONTRACT:
+ * - Acquires TRADE lock (300M + leagueId) via runWithLock — serializes trade invalidation per league
+ *
+ * Only one lock domain (TRADE) is acquired. No nested cross-domain advisory locks.
  */
 export async function invalidateTradesWithPlayer(
   ctx: { tradesRepo: TradesRepository; db: import('pg').Pool },
@@ -59,6 +64,11 @@ export async function invalidateTradesWithPlayer(
  * Invalidate pending trades containing a pick asset that is no longer tradeable
  * (e.g., pick was used, round passed)
  * Uses TRADE lock to prevent race conditions during invalidation
+ *
+ * LOCK CONTRACT:
+ * - Acquires TRADE lock (300M + leagueId) via runWithLock — serializes trade invalidation per league
+ *
+ * Only one lock domain (TRADE) is acquired. No nested cross-domain advisory locks.
  */
 export async function invalidateTradesWithPick(
   ctx: { tradesRepo: TradesRepository; db: import('pg').Pool },
@@ -102,6 +112,10 @@ export async function invalidateTradesWithPick(
 /**
  * Process expired trades (called by job)
  * Uses conditional update to prevent overwriting trades that were accepted/rejected concurrently
+ *
+ * LOCK CONTRACT:
+ * - No advisory locks acquired. Uses conditional SQL updates (WHERE status = 'pending')
+ *   for optimistic concurrency control instead of advisory locks.
  */
 export async function processExpiredTrades(ctx: { tradesRepo: TradesRepository }): Promise<number> {
   const expired = await ctx.tradesRepo.findExpiredTrades();
@@ -128,6 +142,12 @@ export async function processExpiredTrades(ctx: { tradesRepo: TradesRepository }
 
 /**
  * Process trades with completed review period (called by job)
+ *
+ * LOCK CONTRACT:
+ * - Acquires TRADE lock (300M + leagueId) via runWithLock per trade — serializes trade completion
+ * - executeTrade() runs inside the same TRADE lock (no additional advisory locks)
+ *
+ * Only one lock domain (TRADE) is acquired per trade. No nested cross-domain advisory locks.
  */
 export async function processReviewCompleteTrades(ctx: ProcessTradesContext): Promise<number> {
   const trades = await ctx.tradesRepo.findReviewCompleteTrades();

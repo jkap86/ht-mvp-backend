@@ -35,9 +35,9 @@ export async function getRosterBudgetDataWithClient(
     [draftId, rosterId]
   );
   return {
-    spent: parseInt(wonResult.rows[0].spent, 10),
-    wonCount: parseInt(wonResult.rows[0].won_count, 10),
-    leadingCommitment: parseInt(leadingResult.rows[0].leading_commitment, 10),
+    spent: Number(wonResult.rows[0].spent) || 0,
+    wonCount: Number(wonResult.rows[0].won_count) || 0,
+    leadingCommitment: Number(leadingResult.rows[0].leading_commitment) || 0,
   };
 }
 

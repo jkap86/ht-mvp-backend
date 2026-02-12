@@ -16,6 +16,7 @@ import {
   unregisterDeviceSchema,
   updatePreferencesSchema,
 } from './notification.schemas';
+import { asyncHandler } from '../../shared/async-handler';
 
 const pool = container.resolve<Pool>(KEYS.POOL);
 const notificationService = new NotificationService(pool);
@@ -27,20 +28,20 @@ const router = Router();
 router.use(authMiddleware);
 
 // GET /api/notifications/preferences - Get user preferences
-router.get('/preferences', apiReadLimiter, notificationController.getPreferences);
+router.get('/preferences', apiReadLimiter, asyncHandler(notificationController.getPreferences));
 
 // PUT /api/notifications/preferences - Update preferences
-router.put('/preferences', apiWriteLimiter, validateRequest(updatePreferencesSchema), notificationController.updatePreferences);
+router.put('/preferences', apiWriteLimiter, validateRequest(updatePreferencesSchema), asyncHandler(notificationController.updatePreferences));
 
 // POST /api/notifications/register-device - Register FCM token
-router.post('/register-device', apiWriteLimiter, validateRequest(registerDeviceSchema), notificationController.registerDevice);
+router.post('/register-device', apiWriteLimiter, validateRequest(registerDeviceSchema), asyncHandler(notificationController.registerDevice));
 
 // DELETE /api/notifications/unregister-device - Unregister FCM token
-router.delete('/unregister-device', apiWriteLimiter, validateRequest(unregisterDeviceSchema), notificationController.unregisterDevice);
+router.delete('/unregister-device', apiWriteLimiter, validateRequest(unregisterDeviceSchema), asyncHandler(notificationController.unregisterDevice));
 
 // POST /api/notifications/test - Send test notification (development)
 if (process.env.NODE_ENV !== 'production') {
-  router.post('/test', apiWriteLimiter, notificationController.sendTestNotification);
+  router.post('/test', apiWriteLimiter, asyncHandler(notificationController.sendTestNotification));
 }
 
 export default router;

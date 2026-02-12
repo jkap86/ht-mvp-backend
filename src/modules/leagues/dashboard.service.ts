@@ -119,7 +119,7 @@ export class DashboardService {
     }
 
     const row = result.rows[0];
-    const rosterCount = parseInt(row.roster_count, 10);
+    const rosterCount = Number(row.roster_count) || 0;
     const totalPicks = row.rounds * rosterCount;
 
     let status: DashboardSummary['draft']['status'] = null;
@@ -180,10 +180,10 @@ export class DashboardService {
 
     const stats = statsResult.rows[0];
     return {
-      activeLots: parseInt(stats.active_lots, 10) || 0,
-      endingSoonCount: parseInt(stats.ending_soon, 10) || 0,
-      userLeadingCount: parseInt(stats.user_leading, 10) || 0,
-      userOutbidCount: parseInt(stats.user_outbid, 10) || 0,
+      activeLots: Number(stats.active_lots) || 0,
+      endingSoonCount: Number(stats.ending_soon) || 0,
+      userLeadingCount: Number(stats.user_leading) || 0,
+      userOutbidCount: Number(stats.user_outbid) || 0,
     };
   }
 
@@ -202,7 +202,7 @@ export class DashboardService {
     // For now return null, actual implementation would check waiver schedule
     return {
       nextProcessingTime: null,
-      userClaimsCount: parseInt(claimsResult.rows[0].count, 10) || 0,
+      userClaimsCount: Number(claimsResult.rows[0].count) || 0,
     };
   }
 
@@ -253,7 +253,7 @@ export class DashboardService {
          AND recipient_roster_id = $2`,
       [leagueId, userRosterId]
     );
-    return parseInt(result.rows[0].count, 10) || 0;
+    return Number(result.rows[0].count) || 0;
   }
 
   private async getAnnouncements(

@@ -2,7 +2,7 @@ import { IStatsProvider } from '../../integrations/shared/stats-provider.interfa
 import { PlayerStatLine } from '../../integrations/shared/stats-provider.types';
 import { PlayerStatsRepository } from './scoring.repository';
 import { PlayerProjectionsRepository } from './projections.repository';
-import { ExternalIdRepository } from '../players/external-ids.repository';
+import type { ExternalIdRepository } from '../players/external-ids.repository';
 import { PlayerStats } from './scoring.model';
 import { logger } from '../../config/logger.config';
 

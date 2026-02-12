@@ -3,7 +3,7 @@
  * Stream C: Push Notifications (C1.5)
  */
 
-import { Response, NextFunction } from 'express';
+import { Response } from 'express';
 import { AuthRequest } from '../../middleware/auth.middleware';
 import { NotificationService } from './notification.service';
 
@@ -14,87 +14,67 @@ export class NotificationController {
    * GET /api/notifications/preferences
    * Get user's notification preferences
    */
-  getPreferences = async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const userId = req.user!.userId;
-      const prefs = await this.notificationService.getNotificationPreferences(userId);
-      res.status(200).json(prefs);
-    } catch (error) {
-      next(error);
-    }
+  getPreferences = async (req: AuthRequest, res: Response) => {
+    const userId = req.user!.userId;
+    const prefs = await this.notificationService.getNotificationPreferences(userId);
+    res.status(200).json(prefs);
   };
 
   /**
    * PUT /api/notifications/preferences
    * Update user's notification preferences
    */
-  updatePreferences = async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const userId = req.user!.userId;
-      const updates = req.body;
+  updatePreferences = async (req: AuthRequest, res: Response) => {
+    const userId = req.user!.userId;
+    const updates = req.body;
 
-      const prefs = await this.notificationService.updateNotificationPreferences(userId, updates);
-      res.status(200).json(prefs);
-    } catch (error) {
-      next(error);
-    }
+    const prefs = await this.notificationService.updateNotificationPreferences(userId, updates);
+    res.status(200).json(prefs);
   };
 
   /**
    * POST /api/notifications/register-device
    * Register a device token for push notifications
    */
-  registerDevice = async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const userId = req.user!.userId;
-      const { token, device_type, device_name } = req.body;
+  registerDevice = async (req: AuthRequest, res: Response) => {
+    const userId = req.user!.userId;
+    const { token, device_type, device_name } = req.body;
 
-      await this.notificationService.registerDeviceToken(
-        userId,
-        token,
-        device_type,
-        device_name
-      );
+    await this.notificationService.registerDeviceToken(
+      userId,
+      token,
+      device_type,
+      device_name
+    );
 
-      res.status(200).json({ message: 'Device registered successfully' });
-    } catch (error) {
-      next(error);
-    }
+    res.status(200).json({ message: 'Device registered successfully' });
   };
 
   /**
    * DELETE /api/notifications/unregister-device
    * Unregister a device token (scoped to the authenticated user)
    */
-  unregisterDevice = async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const userId = req.user!.userId;
-      const { token } = req.body;
+  unregisterDevice = async (req: AuthRequest, res: Response) => {
+    const userId = req.user!.userId;
+    const { token } = req.body;
 
-      await this.notificationService.unregisterDeviceToken(userId, token);
-      res.status(204).send();
-    } catch (error) {
-      next(error);
-    }
+    await this.notificationService.unregisterDeviceToken(userId, token);
+    res.status(204).send();
   };
 
   /**
    * POST /api/notifications/test
    * Send a test notification (development only)
    */
-  sendTestNotification = async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const userId = req.user!.userId;
+  sendTestNotification = async (req: AuthRequest, res: Response) => {
+    const userId = req.user!.userId;
 
-      const result = await this.notificationService.sendPushNotification(userId, {
-        title: 'Test Notification',
-        body: 'This is a test notification from HypeTrainFF',
-        data: { type: 'test' },
-      });
+    const result = await this.notificationService.sendPushNotification(userId, {
+      title: 'Test Notification',
+      body: 'This is a test notification from HypeTrainFF',
+      data: { type: 'test' },
+    });
 
-      res.status(200).json(result);
-    } catch (error) {
-      next(error);
-    }
+    res.status(200).json(result);
   };
 }

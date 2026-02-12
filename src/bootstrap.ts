@@ -213,7 +213,9 @@ function bootstrap(): void {
         container.resolve(KEYS.USER_REPO),
         container.resolve(KEYS.ROSTER_PLAYERS_REPO),
         container.resolve(KEYS.EVENT_LISTENER_SERVICE),
-        container.resolve(KEYS.DUES_REPO)
+        container.resolve(KEYS.DUES_REPO),
+        container.resolve(KEYS.WAIVER_PRIORITY_REPO),
+        container.resolve(KEYS.FAAB_BUDGET_REPO)
       )
   );
 

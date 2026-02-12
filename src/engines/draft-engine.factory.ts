@@ -1,10 +1,10 @@
 import { IDraftEngine } from './draft-engine.interface';
 import { SnakeDraftEngine } from './snake-draft.engine';
 import { LinearDraftEngine } from './linear-draft.engine';
-import { DraftRepository } from '../modules/drafts/drafts.repository';
-import { PlayerRepository } from '../modules/players/players.repository';
-import { RosterPlayersRepository } from '../modules/rosters/rosters.repository';
-import { LeagueRepository, RosterRepository } from '../modules/leagues/leagues.repository';
+import type { DraftRepository } from '../modules/drafts/drafts.repository';
+import type { PlayerRepository } from '../modules/players/players.repository';
+import type { RosterPlayersRepository } from '../modules/rosters/rosters.repository';
+import type { LeagueRepository, RosterRepository } from '../modules/leagues/leagues.repository';
 import { ValidationException, NotFoundException } from '../utils/exceptions';
 
 /**

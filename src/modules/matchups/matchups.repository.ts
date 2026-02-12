@@ -367,22 +367,22 @@ export class MatchupsRepository {
       teamName: row.team_name,
       userId: row.user_id,
       // Total record (H2H + Median)
-      wins: parseInt(row.total_wins, 10),
-      losses: parseInt(row.total_losses, 10),
-      ties: parseInt(row.total_ties, 10),
+      wins: Number(row.total_wins) || 0,
+      losses: Number(row.total_losses) || 0,
+      ties: Number(row.total_ties) || 0,
       // H2H breakdown
-      h2hWins: parseInt(row.h2h_wins, 10),
-      h2hLosses: parseInt(row.h2h_losses, 10),
-      h2hTies: parseInt(row.h2h_ties, 10),
+      h2hWins: Number(row.h2h_wins) || 0,
+      h2hLosses: Number(row.h2h_losses) || 0,
+      h2hTies: Number(row.h2h_ties) || 0,
       // Median breakdown (null if no median data exists)
-      medianWins: row.median_wins != null ? parseInt(row.median_wins, 10) : null,
-      medianLosses: row.median_losses != null ? parseInt(row.median_losses, 10) : null,
-      medianTies: row.median_ties != null ? parseInt(row.median_ties, 10) : null,
+      medianWins: row.median_wins != null ? Number(row.median_wins) || 0 : null,
+      medianLosses: row.median_losses != null ? Number(row.median_losses) || 0 : null,
+      medianTies: row.median_ties != null ? Number(row.median_ties) || 0 : null,
       // Other stats
       pointsFor: roundPoints(parseFloat(row.points_for) || 0),
       pointsAgainst: roundPoints(parseFloat(row.points_against) || 0),
       streak: '', // Calculated separately in StandingsService
-      rank: parseInt(row.rank, 10),
+      rank: Number(row.rank) || 0,
     }));
   }
 
@@ -394,7 +394,7 @@ export class MatchupsRepository {
       'SELECT COUNT(*) as count FROM matchups WHERE league_id = $1 AND season = $2 AND is_playoff = false',
       [leagueId, season]
     );
-    return parseInt(result.rows[0].count, 10);
+    return Number(result.rows[0].count) || 0;
   }
 
   /**

@@ -129,7 +129,7 @@ export class WaiverPriorityRepository {
       'SELECT COALESCE(MAX(priority), 0) as max_priority FROM waiver_priority WHERE league_id = $1 AND season = $2',
       [leagueId, season]
     );
-    const maxPriority = parseInt(maxResult.rows[0].max_priority, 10);
+    const maxPriority = Number(maxResult.rows[0].max_priority) || 0;
 
     // Insert with ON CONFLICT DO NOTHING for idempotency
     await conn.query(

@@ -1,4 +1,4 @@
-import { Response, NextFunction } from 'express';
+import { Response } from 'express';
 import { AuthRequest } from '../../middleware/auth.middleware';
 import { RosterService } from './rosters.service';
 import { LineupService } from '../lineups/lineups.service';
@@ -34,212 +34,172 @@ export class RostersController {
   }
 
   // GET /api/leagues/:leagueId/rosters/:rosterId/players
-  async getRosterPlayers(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const leagueId = requireLeagueId(req);
-      const rosterId = this.requireRosterId(req);
-      const userId = requireUserId(req);
+  async getRosterPlayers(req: AuthRequest, res: Response): Promise<void> {
+    const leagueId = requireLeagueId(req);
+    const rosterId = this.requireRosterId(req);
+    const userId = requireUserId(req);
 
-      const players = await this.rosterService.getRosterPlayers(leagueId, rosterId, userId);
-      res.json({ players: players.map(rosterPlayerWithDetailsToResponse) });
-    } catch (error) {
-      next(error);
-    }
+    const players = await this.rosterService.getRosterPlayers(leagueId, rosterId, userId);
+    res.json({ players: players.map(rosterPlayerWithDetailsToResponse) });
   }
 
   // POST /api/leagues/:leagueId/rosters/:rosterId/players
-  async addPlayer(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const leagueId = requireLeagueId(req);
-      const rosterId = this.requireRosterId(req);
-      const userId = requireUserId(req);
-      const { playerId } = req.body;
-      if (typeof playerId !== 'number' || !Number.isInteger(playerId)) {
-        throw new ValidationException('playerId must be an integer');
-      }
-
-      const rosterPlayer = await this.rosterService.addPlayer(leagueId, rosterId, playerId, userId);
-      res.status(201).json({ player: rosterPlayer });
-    } catch (error) {
-      next(error);
+  async addPlayer(req: AuthRequest, res: Response): Promise<void> {
+    const leagueId = requireLeagueId(req);
+    const rosterId = this.requireRosterId(req);
+    const userId = requireUserId(req);
+    const { playerId } = req.body;
+    if (typeof playerId !== 'number' || !Number.isInteger(playerId)) {
+      throw new ValidationException('playerId must be an integer');
     }
+
+    const rosterPlayer = await this.rosterService.addPlayer(leagueId, rosterId, playerId, userId);
+    res.status(201).json({ player: rosterPlayer });
   }
 
   // DELETE /api/leagues/:leagueId/rosters/:rosterId/players/:playerId
-  async dropPlayer(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const leagueId = requireLeagueId(req);
-      const rosterId = this.requireRosterId(req);
-      const playerId = parseIntParam(req.params.playerId);
-      const userId = requireUserId(req);
+  async dropPlayer(req: AuthRequest, res: Response): Promise<void> {
+    const leagueId = requireLeagueId(req);
+    const rosterId = this.requireRosterId(req);
+    const playerId = parseIntParam(req.params.playerId);
+    const userId = requireUserId(req);
 
-      if (isNaN(playerId)) throw new ValidationException('Invalid player ID');
+    if (isNaN(playerId)) throw new ValidationException('Invalid player ID');
 
-      await this.rosterService.dropPlayer(leagueId, rosterId, playerId, userId);
-      res.status(204).send();
-    } catch (error) {
-      next(error);
-    }
+    await this.rosterService.dropPlayer(leagueId, rosterId, playerId, userId);
+    res.status(204).send();
   }
 
   // POST /api/leagues/:leagueId/rosters/:rosterId/players/add-drop
-  async addDropPlayer(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const leagueId = requireLeagueId(req);
-      const rosterId = this.requireRosterId(req);
-      const userId = requireUserId(req);
-      const { addPlayerId, dropPlayerId } = req.body;
-      if (typeof addPlayerId !== 'number' || !Number.isInteger(addPlayerId)) {
-        throw new ValidationException('addPlayerId must be an integer');
-      }
-      if (typeof dropPlayerId !== 'number' || !Number.isInteger(dropPlayerId)) {
-        throw new ValidationException('dropPlayerId must be an integer');
-      }
-
-      const rosterPlayer = await this.rosterService.addDropPlayer(
-        leagueId,
-        rosterId,
-        addPlayerId,
-        dropPlayerId,
-        userId
-      );
-      res.status(201).json({ player: rosterPlayer });
-    } catch (error) {
-      next(error);
+  async addDropPlayer(req: AuthRequest, res: Response): Promise<void> {
+    const leagueId = requireLeagueId(req);
+    const rosterId = this.requireRosterId(req);
+    const userId = requireUserId(req);
+    const { addPlayerId, dropPlayerId } = req.body;
+    if (typeof addPlayerId !== 'number' || !Number.isInteger(addPlayerId)) {
+      throw new ValidationException('addPlayerId must be an integer');
     }
+    if (typeof dropPlayerId !== 'number' || !Number.isInteger(dropPlayerId)) {
+      throw new ValidationException('dropPlayerId must be an integer');
+    }
+
+    const rosterPlayer = await this.rosterService.addDropPlayer(
+      leagueId,
+      rosterId,
+      addPlayerId,
+      dropPlayerId,
+      userId
+    );
+    res.status(201).json({ player: rosterPlayer });
   }
 
   // GET /api/leagues/:leagueId/free-agents
-  async getFreeAgents(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const leagueId = requireLeagueId(req);
-      const userId = requireUserId(req);
-      const position = req.query.position as string | undefined;
-      const search = req.query.search as string | undefined;
-      const limit = Math.min(parseInt(req.query.limit as string, 10) || 50, 100);
-      const offset = Math.max(parseInt(req.query.offset as string, 10) || 0, 0);
+  async getFreeAgents(req: AuthRequest, res: Response): Promise<void> {
+    const leagueId = requireLeagueId(req);
+    const userId = requireUserId(req);
+    const position = req.query.position as string | undefined;
+    const search = req.query.search as string | undefined;
+    const limit = Math.min(parseInt(req.query.limit as string, 10) || 50, 100);
+    const offset = Math.max(parseInt(req.query.offset as string, 10) || 0, 0);
 
-      const players = await this.rosterService.getFreeAgents(
-        leagueId,
-        userId,
-        position,
-        search,
-        limit,
-        offset
-      );
-      res.json({ players: players.map(playerToResponse) });
-    } catch (error) {
-      next(error);
-    }
+    const players = await this.rosterService.getFreeAgents(
+      leagueId,
+      userId,
+      position,
+      search,
+      limit,
+      offset
+    );
+    res.json({ players: players.map(playerToResponse) });
   }
 
   // GET /api/leagues/:leagueId/transactions
-  async getTransactions(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const leagueId = requireLeagueId(req);
-      const userId = requireUserId(req);
-      const limit = Math.min(parseInt(req.query.limit as string, 10) || 50, 100);
-      const offset = Math.max(parseInt(req.query.offset as string, 10) || 0, 0);
+  async getTransactions(req: AuthRequest, res: Response): Promise<void> {
+    const leagueId = requireLeagueId(req);
+    const userId = requireUserId(req);
+    const limit = Math.min(parseInt(req.query.limit as string, 10) || 50, 100);
+    const offset = Math.max(parseInt(req.query.offset as string, 10) || 0, 0);
 
-      const transactions = await this.rosterService.getLeagueTransactions(
-        leagueId,
-        userId,
-        limit,
-        offset
-      );
-      res.json({ transactions: transactions.map(rosterTransactionToResponse) });
-    } catch (error) {
-      next(error);
-    }
+    const transactions = await this.rosterService.getLeagueTransactions(
+      leagueId,
+      userId,
+      limit,
+      offset
+    );
+    res.json({ transactions: transactions.map(rosterTransactionToResponse) });
   }
 
   // GET /api/leagues/:leagueId/rosters/:rosterId/lineup
-  async getLineup(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const leagueId = requireLeagueId(req);
-      const rosterId = this.requireRosterId(req);
-      const userId = requireUserId(req);
-      const week = parseInt(req.query.week as string, 10) || 1;
+  async getLineup(req: AuthRequest, res: Response): Promise<void> {
+    const leagueId = requireLeagueId(req);
+    const rosterId = this.requireRosterId(req);
+    const userId = requireUserId(req);
+    const week = parseInt(req.query.week as string, 10) || 1;
 
-      const lineup = await this.lineupService.getLineup(leagueId, rosterId, week, userId);
-      res.json({ lineup: rosterLineupToResponse(lineup) });
-    } catch (error) {
-      next(error);
-    }
+    const lineup = await this.lineupService.getLineup(leagueId, rosterId, week, userId);
+    res.json({ lineup: rosterLineupToResponse(lineup) });
   }
 
   // PUT /api/leagues/:leagueId/rosters/:rosterId/lineup
-  async setLineup(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const leagueId = requireLeagueId(req);
-      const rosterId = this.requireRosterId(req);
-      const userId = requireUserId(req);
-      const { week, lineup } = req.body;
-      if (typeof week !== 'number' || !Number.isInteger(week) || week < 1) {
-        throw new ValidationException('week must be a positive integer');
-      }
-      if (!lineup || typeof lineup !== 'object') {
-        throw new ValidationException('lineup must be an object');
-      }
-
-      const updatedLineup = await this.lineupService.setLineup(
-        leagueId,
-        rosterId,
-        week,
-        lineup,
-        userId
-      );
-      res.json({ lineup: rosterLineupToResponse(updatedLineup) });
-    } catch (error) {
-      next(error);
+  async setLineup(req: AuthRequest, res: Response): Promise<void> {
+    const leagueId = requireLeagueId(req);
+    const rosterId = this.requireRosterId(req);
+    const userId = requireUserId(req);
+    const { week, lineup } = req.body;
+    if (typeof week !== 'number' || !Number.isInteger(week) || week < 1) {
+      throw new ValidationException('week must be a positive integer');
     }
+    if (!lineup || typeof lineup !== 'object') {
+      throw new ValidationException('lineup must be an object');
+    }
+
+    const updatedLineup = await this.lineupService.setLineup(
+      leagueId,
+      rosterId,
+      week,
+      lineup,
+      userId
+    );
+    res.json({ lineup: rosterLineupToResponse(updatedLineup) });
   }
 
   // POST /api/leagues/:leagueId/rosters/:rosterId/lineup/move
-  async movePlayer(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const leagueId = requireLeagueId(req);
-      const rosterId = this.requireRosterId(req);
-      const userId = requireUserId(req);
-      const { week, playerId, toSlot } = req.body;
+  async movePlayer(req: AuthRequest, res: Response): Promise<void> {
+    const leagueId = requireLeagueId(req);
+    const rosterId = this.requireRosterId(req);
+    const userId = requireUserId(req);
+    const { week, playerId, toSlot } = req.body;
 
-      // Validate week range (1-18)
-      if (typeof week !== 'number' || !Number.isInteger(week) || week < 1 || week > 18) {
-        throw new ValidationException('Week must be between 1 and 18');
-      }
-
-      if (typeof playerId !== 'number' || !Number.isInteger(playerId)) {
-        throw new ValidationException('playerId must be an integer');
-      }
-      if (typeof toSlot !== 'string' || !toSlot.trim()) {
-        throw new ValidationException('toSlot must be a non-empty string');
-      }
-
-      const lineup = await this.lineupService.movePlayer(
-        leagueId,
-        rosterId,
-        week,
-        playerId,
-        toSlot,
-        userId
-      );
-      res.json({ lineup: rosterLineupToResponse(lineup) });
-    } catch (error) {
-      next(error);
+    // Validate week range (1-18)
+    if (typeof week !== 'number' || !Number.isInteger(week) || week < 1 || week > 18) {
+      throw new ValidationException('Week must be between 1 and 18');
     }
+
+    if (typeof playerId !== 'number' || !Number.isInteger(playerId)) {
+      throw new ValidationException('playerId must be an integer');
+    }
+    if (typeof toSlot !== 'string' || !toSlot.trim()) {
+      throw new ValidationException('toSlot must be a non-empty string');
+    }
+
+    const lineup = await this.lineupService.movePlayer(
+      leagueId,
+      rosterId,
+      week,
+      playerId,
+      toSlot,
+      userId
+    );
+    res.json({ lineup: rosterLineupToResponse(lineup) });
   }
 
   // POST /api/leagues/:leagueId/lineups/lock
-  async lockLineups(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const leagueId = requireLeagueId(req);
-      const userId = requireUserId(req);
-      const { week } = req.body;
+  async lockLineups(req: AuthRequest, res: Response): Promise<void> {
+    const leagueId = requireLeagueId(req);
+    const userId = requireUserId(req);
+    const { week } = req.body;
 
-      await this.lineupService.lockLineups(leagueId, week, userId);
-      res.json({ success: true });
-    } catch (error) {
-      next(error);
-    }
+    await this.lineupService.lockLineups(leagueId, week, userId);
+    res.json({ success: true });
   }
 }

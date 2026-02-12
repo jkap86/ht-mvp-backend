@@ -3,12 +3,10 @@
  * Stream C: Push Notifications (C1.4)
  */
 
-import { Pool, PoolClient } from 'pg';
+import { Pool } from 'pg';
 import { logger } from '../../config/logger.config';
 
-// Firebase Admin SDK types (install with: npm install firebase-admin)
-// import * as admin from 'firebase-admin';
-// For now, we'll use placeholder types until Firebase is configured
+// TODO: Implement Firebase Cloud Messaging push notifications (import firebase-admin)
 
 export interface PushNotificationPayload {
   title: string;
@@ -37,20 +35,8 @@ export interface NotificationPreferences {
 }
 
 export class NotificationService {
-  // private firebaseApp: admin.app.App;
-
   constructor(private readonly db: Pool) {
-    // Initialize Firebase Admin SDK
-    // TODO: Configure Firebase credentials
-    /*
-    this.firebaseApp = admin.initializeApp({
-      credential: admin.credential.cert({
-        projectId: process.env.FIREBASE_PROJECT_ID,
-        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-      }),
-    });
-    */
+    // TODO: Implement Firebase Cloud Messaging push notifications (initialize Firebase Admin SDK)
   }
 
   /**
@@ -93,21 +79,64 @@ export class NotificationService {
 
   /**
    * Send push notification to multiple users (batch)
+   *
+   * Uses batched queries for device tokens and notification preferences
+   * to avoid N+1 query patterns when sending to many users.
    */
   async sendBatchNotifications(
     userIds: string[],
     notification: PushNotificationPayload
   ): Promise<{ successCount: number; failureCount: number }> {
+    if (userIds.length === 0) {
+      return { successCount: 0, failureCount: 0 };
+    }
+
     let successCount = 0;
     let failureCount = 0;
 
-    // Process in batches to avoid overwhelming FCM
+    // Batch fetch preferences and tokens for all users (2 queries instead of 2N)
+    const [prefsMap, tokenMap] = await Promise.all([
+      this.getNotificationPreferencesForUsers(userIds),
+      this.getActiveDeviceTokensForUsers(userIds),
+    ]);
+
+    // Process FCM sends in batches to avoid overwhelming FCM
     const BATCH_SIZE = 500;
     for (let i = 0; i < userIds.length; i += BATCH_SIZE) {
       const batch = userIds.slice(i, i + BATCH_SIZE);
 
       const results = await Promise.allSettled(
-        batch.map((userId) => this.sendPushNotification(userId, notification))
+        batch.map(async (userId) => {
+          try {
+            // Check user preferences (from batch-fetched map)
+            const prefs = prefsMap.get(userId);
+            if (!prefs || !prefs.enabledPush) {
+              logger.debug(`Push notifications disabled for user ${userId}`);
+              return { success: false, error: 'Push notifications disabled' };
+            }
+
+            // Get tokens from batch-fetched map
+            const tokens = tokenMap.get(userId) || [];
+            if (tokens.length === 0) {
+              logger.warn(`No active device tokens for user ${userId}`);
+              return { success: false, error: 'No device tokens registered' };
+            }
+
+            // Send to all user's devices
+            const sendResults = await this.sendToTokens(tokens, notification);
+
+            // Clean up invalid tokens
+            await this.removeInvalidTokens(sendResults.invalidTokens);
+
+            return {
+              success: sendResults.successCount > 0,
+              messageId: sendResults.messageIds[0],
+            };
+          } catch (error) {
+            logger.error(`Failed to send push notification to user ${userId}: ${error}`);
+            return { success: false, error: String(error) };
+          }
+        })
       );
 
       results.forEach((result) => {
@@ -131,24 +160,8 @@ export class NotificationService {
     notification: PushNotificationPayload
   ): Promise<{ success: boolean; messageId?: string }> {
     try {
-      // TODO: Implement Firebase topic messaging
-      /*
-      const message: admin.messaging.Message = {
-        notification: {
-          title: notification.title,
-          body: notification.body,
-          imageUrl: notification.imageUrl,
-        },
-        data: notification.data || {},
-        topic,
-      };
-
-      const messageId = await admin.messaging(this.firebaseApp).send(message);
-      logger.info(`Notification sent to topic ${topic}: ${messageId}`);
-      return { success: true, messageId };
-      */
-
-      logger.info(`[PLACEHOLDER] Would send notification to topic ${topic}`);
+      // TODO: Implement Firebase Cloud Messaging push notifications (topic messaging)
+      logger.info(`Notification to topic ${topic} not yet implemented (FCM pending)`);
       return { success: true, messageId: 'placeholder-id' };
     } catch (error) {
       logger.error(`Failed to send notification to topic ${topic}: ${error}`);
@@ -206,6 +219,80 @@ export class NotificationService {
       playerNews: row.player_news,
       breakingNews: row.breaking_news,
     };
+  }
+
+  /**
+   * Batch fetch notification preferences for multiple users.
+   *
+   * Replaces N individual getNotificationPreferences calls with a single query.
+   * Users without stored preferences receive defaults (all enabled).
+   */
+  private async getNotificationPreferencesForUsers(
+    userIds: string[]
+  ): Promise<Map<string, NotificationPreferences>> {
+    if (userIds.length === 0) {
+      return new Map();
+    }
+
+    const result = await this.db.query(
+      'SELECT * FROM notification_preferences WHERE user_id = ANY($1)',
+      [userIds]
+    );
+
+    const prefsMap = new Map<string, NotificationPreferences>();
+
+    // Map rows by user_id for quick lookup
+    const rowMap = new Map<string, any>();
+    for (const row of result.rows) {
+      rowMap.set(row.user_id, row);
+    }
+
+    // Build preferences for all requested users
+    for (const userId of userIds) {
+      const row = rowMap.get(userId);
+      if (!row) {
+        // Return default preferences for users without stored prefs
+        prefsMap.set(userId, {
+          userId,
+          enabledPush: true,
+          draftStart: true,
+          draftYourTurn: true,
+          draftCompleted: true,
+          tradeOffers: true,
+          tradeAccepted: true,
+          tradeCountered: true,
+          tradeVoted: true,
+          tradeCompleted: true,
+          waiverResults: true,
+          waiverProcessing: true,
+          waiverEndingSoon: true,
+          lineupLocks: true,
+          playerNews: true,
+          breakingNews: true,
+        });
+      } else {
+        prefsMap.set(userId, {
+          userId: row.user_id,
+          enabledPush: row.enabled_push,
+          draftStart: row.draft_start,
+          draftYourTurn: row.draft_your_turn,
+          draftCompleted: row.draft_completed,
+          tradeOffers: row.trade_offers,
+          tradeAccepted: row.trade_accepted,
+          tradeCountered: row.trade_countered,
+          tradeVoted: row.trade_voted,
+          tradeCompleted: row.trade_completed,
+          waiverResults: row.waiver_results,
+          waiverProcessing: row.waiver_processing,
+          waiverEndingSoon: row.waiver_ending_soon,
+          lineupLocks: row.lineup_locks,
+          playerNews: row.player_news,
+          breakingNews: row.breaking_news,
+        });
+      }
+    }
+
+    return prefsMap;
   }
 
   /**
@@ -314,50 +401,57 @@ export class NotificationService {
   }
 
   /**
+   * Batch fetch active device tokens for multiple users.
+   *
+   * Replaces N individual getActiveDeviceTokens calls with a single query.
+   * Returns a Map of userId to their active tokens (ordered by last_used_at DESC).
+   */
+  private async getActiveDeviceTokensForUsers(userIds: string[]): Promise<Map<string, string[]>> {
+    if (userIds.length === 0) {
+      return new Map();
+    }
+
+    const result = await this.db.query(
+      `SELECT user_id, token FROM device_tokens
+       WHERE user_id = ANY($1) AND is_active = true
+       ORDER BY user_id, last_used_at DESC`,
+      [userIds]
+    );
+
+    const tokenMap = new Map<string, string[]>();
+
+    // Initialize all requested userIds with empty arrays
+    for (const userId of userIds) {
+      tokenMap.set(userId, []);
+    }
+
+    // Populate with query results
+    for (const row of result.rows) {
+      const tokens = tokenMap.get(row.user_id);
+      if (tokens) {
+        tokens.push(row.token);
+      }
+    }
+
+    return tokenMap;
+  }
+
+  /**
    * Send notification to multiple tokens
-   * TODO: Implement actual FCM sending
    */
   private async sendToTokens(
     tokens: string[],
     notification: PushNotificationPayload
   ): Promise<{ successCount: number; messageIds: string[]; invalidTokens: string[] }> {
-    // Placeholder implementation
-    logger.info(`[PLACEHOLDER] Would send notification to ${tokens.length} tokens`);
-    logger.info(`Title: ${notification.title}, Body: ${notification.body}`);
+    // TODO: Implement Firebase Cloud Messaging push notifications (multicast send)
+    logger.info(`Sending notification to ${tokens.length} tokens not yet implemented (FCM pending)`);
+    logger.debug(`Notification: ${notification.title} - ${notification.body}`);
 
     return {
       successCount: tokens.length,
       messageIds: tokens.map((_, i) => `msg-${i}`),
       invalidTokens: [],
     };
-
-    /* TODO: Real FCM implementation
-    const messaging = admin.messaging(this.firebaseApp);
-    const message: admin.messaging.MulticastMessage = {
-      tokens,
-      notification: {
-        title: notification.title,
-        body: notification.body,
-        imageUrl: notification.imageUrl,
-      },
-      data: notification.data || {},
-    };
-
-    const response = await messaging.sendMulticast(message);
-    const invalidTokens: string[] = [];
-
-    response.responses.forEach((resp, idx) => {
-      if (!resp.success && resp.error?.code === 'messaging/invalid-registration-token') {
-        invalidTokens.push(tokens[idx]);
-      }
-    });
-
-    return {
-      successCount: response.successCount,
-      messageIds: response.responses.filter(r => r.success).map(r => r.messageId!),
-      invalidTokens,
-    };
-    */
   }
 
   /**

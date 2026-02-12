@@ -55,7 +55,7 @@ export function invitationWithDetailsFromDatabase(row: any): InvitationWithDetai
     leagueSeason: row.league_season,
     leagueMode: row.league_mode || 'redraft',
     invitedByUsername: row.invited_by_username,
-    memberCount: parseInt(row.member_count, 10) || 0,
+    memberCount: Number(row.member_count) || 0,
     totalRosters: row.total_rosters,
   };
 }

@@ -1,6 +1,6 @@
 import { Pool } from 'pg';
 import { MatchupsRepository } from './matchups.repository';
-import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
+import type { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import { NotFoundException, ForbiddenException, ValidationException, ConflictException } from '../../utils/exceptions';
 import { runInTransaction } from '../../shared/transaction-runner';
 
@@ -58,7 +58,10 @@ export class ScheduleGeneratorService {
       throw new ValidationException('Need at least 2 teams to generate schedule');
     }
 
-    const season = parseInt(league.season, 10);
+    const season = Number(league.season) || 0;
+    if (!season) {
+      throw new ValidationException('Invalid league season');
+    }
 
     // Generate round-robin matchups
     const rosterIds = rosters.map((r) => r.id);
@@ -72,7 +75,7 @@ export class ScheduleGeneratorService {
         'SELECT COUNT(*) as count FROM matchups WHERE league_id = $1 AND season = $2 AND is_playoff = false',
         [leagueId, season]
       );
-      if (parseInt(existingResult.rows[0].count, 10) > 0) {
+      if ((Number(existingResult.rows[0].count) || 0) > 0) {
         throw new ConflictException(
           'Schedule already exists for this season. Delete existing schedule first.'
         );
@@ -104,7 +107,10 @@ export class ScheduleGeneratorService {
       throw new ValidationException('Need at least 2 teams to generate schedule');
     }
 
-    const season = parseInt(league.season, 10);
+    const season = Number(league.season) || 0;
+    if (!season) {
+      throw new ValidationException('Invalid league season');
+    }
 
     // Generate round-robin matchups
     const rosterIds = rosters.map((r) => r.id);
@@ -118,7 +124,7 @@ export class ScheduleGeneratorService {
         'SELECT COUNT(*) as count FROM matchups WHERE league_id = $1 AND season = $2 AND is_playoff = false',
         [leagueId, season]
       );
-      if (parseInt(existingResult.rows[0].count, 10) > 0) {
+      if ((Number(existingResult.rows[0].count) || 0) > 0) {
         return; // Schedule already exists
       }
 

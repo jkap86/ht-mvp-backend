@@ -1,5 +1,5 @@
 import { TradesRepository } from '../trades.repository';
-import { LeagueRepository, RosterRepository } from '../../leagues/leagues.repository';
+import type { LeagueRepository, RosterRepository } from '../../leagues/leagues.repository';
 import { TradeWithDetails } from '../trades.model';
 import { NotFoundException, ForbiddenException } from '../../../utils/exceptions';
 

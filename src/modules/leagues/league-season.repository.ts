@@ -249,7 +249,7 @@ export class LeagueSeasonRepository {
        WHERE league_id = $1 AND status IN ('pre_draft', 'drafting', 'in_season', 'playoffs')`,
       [leagueId]
     );
-    return parseInt(result.rows[0].count, 10) > 0;
+    return (Number(result.rows[0].count) || 0) > 0;
   }
 
   /**

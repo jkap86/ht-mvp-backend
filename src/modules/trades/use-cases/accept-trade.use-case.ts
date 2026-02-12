@@ -1,12 +1,12 @@
 import { Pool, PoolClient } from 'pg';
 import { TradesRepository, TradeItemsRepository } from '../trades.repository';
-import {
+import type {
   RosterPlayersRepository,
   RosterTransactionsRepository,
 } from '../../rosters/rosters.repository';
-import { RosterMutationService } from '../../rosters/roster-mutation.service';
-import { LeagueRepository, RosterRepository } from '../../leagues/leagues.repository';
-import { DraftPickAssetRepository } from '../../drafts/draft-pick-asset.repository';
+import type { RosterMutationService } from '../../rosters/roster-mutation.service';
+import type { LeagueRepository, RosterRepository } from '../../leagues/leagues.repository';
+import type { DraftPickAssetRepository } from '../../drafts/draft-pick-asset.repository';
 import { DomainEventBus, EventTypes, tryGetEventBus } from '../../../shared/events';
 import { Trade, TradeWithDetails } from '../trades.model';
 import {
@@ -17,7 +17,7 @@ import {
 } from '../../../utils/exceptions';
 import { runWithLock, LockDomain } from '../../../shared/transaction-runner';
 import { batchValidateRosterPlayers } from '../../../shared/batch-queries';
-import { EventListenerService } from '../../chat/event-listener.service';
+import type { EventListenerService } from '../../chat/event-listener.service';
 import { logger } from '../../../config/logger.config';
 
 const DEFAULT_REVIEW_HOURS = 24;
@@ -37,6 +37,13 @@ export interface AcceptTradeContext {
 
 /**
  * Accept a trade
+ *
+ * LOCK CONTRACT:
+ * - Acquires TRADE lock (300M + leagueId) via runWithLock — serializes trade state changes per league
+ * - When executing immediately (no review), executeTrade() runs inside the same TRADE lock
+ *   (no additional advisory locks; uses row-level mutations only)
+ *
+ * Only one lock domain (TRADE) is acquired. No nested cross-domain advisory locks.
  */
 export async function acceptTrade(
   ctx: AcceptTradeContext,

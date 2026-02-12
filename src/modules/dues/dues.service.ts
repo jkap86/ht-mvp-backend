@@ -1,5 +1,5 @@
 import { DuesRepository } from './dues.repository';
-import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
+import type { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import {
   LeagueDues,
   DuesPayment,
@@ -11,7 +11,7 @@ import {
   ForbiddenException,
   ValidationException,
 } from '../../utils/exceptions';
-import { SystemMessageService } from '../chat/system-message.service';
+import type { SystemMessageService } from '../chat/system-message.service';
 import { logger } from '../../config/logger.config';
 
 export interface DuesConfigInput {

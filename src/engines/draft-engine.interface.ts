@@ -1,5 +1,5 @@
-import { Draft, DraftOrderEntry, DraftPick } from '../modules/drafts/drafts.model';
-import { DraftPickAsset } from '../modules/drafts/draft-pick-asset.model';
+import type { Draft, DraftOrderEntry, DraftPick } from '../modules/drafts/drafts.model';
+import type { DraftPickAsset } from '../modules/drafts/draft-pick-asset.model';
 
 /**
  * Info about who actually picks at a given pick number,

@@ -141,6 +141,6 @@ export class ApplyKeepersToRostersUseCase {
       [leagueSeasonId]
     );
 
-    return parseInt(result.rows[0].count, 10) > 0;
+    return (Number(result.rows[0].count) || 0) > 0;
   }
 }

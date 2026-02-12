@@ -48,10 +48,10 @@ export class PublicLeagueMapper {
    * Convert a database row to a PublicLeagueSummary.
    */
   static fromRow(row: any): PublicLeagueSummary {
-    const memberCount = parseInt(row.member_count, 10);
+    const memberCount = Number(row.member_count) || 0;
     const totalRosters = row.total_rosters;
     const hasDues = row.has_dues;
-    const paidCount = parseInt(row.paid_count, 10);
+    const paidCount = Number(row.paid_count) || 0;
 
     return {
       id: row.id,

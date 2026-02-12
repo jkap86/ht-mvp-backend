@@ -1,6 +1,6 @@
 import { Pool } from 'pg';
 import { TradesRepository, TradeVotesRepository } from '../trades.repository';
-import { LeagueRepository, RosterRepository } from '../../leagues/leagues.repository';
+import type { LeagueRepository, RosterRepository } from '../../leagues/leagues.repository';
 import { EventTypes, tryGetEventBus } from '../../../shared/events';
 import { TradeWithDetails } from '../trades.model';
 import {
@@ -10,7 +10,7 @@ import {
   ConflictException,
 } from '../../../utils/exceptions';
 import { runWithLock, LockDomain } from '../../../shared/transaction-runner';
-import { EventListenerService } from '../../chat/event-listener.service';
+import type { EventListenerService } from '../../chat/event-listener.service';
 import { logger } from '../../../config/logger.config';
 
 const DEFAULT_VETO_COUNT = 4;
@@ -27,6 +27,12 @@ export interface VoteTradeContext {
 /**
  * Vote on a trade during review period
  * Uses transaction with advisory lock to prevent race conditions in vote counting
+ *
+ * LOCK CONTRACT:
+ * - Acquires TRADE lock (300M + leagueId) via runWithLock — serializes vote counting per league
+ *   May also update trade status to 'vetoed' if veto threshold is reached (inside same lock)
+ *
+ * Only one lock domain (TRADE) is acquired. No nested cross-domain advisory locks.
  */
 export async function voteTrade(
   ctx: VoteTradeContext,

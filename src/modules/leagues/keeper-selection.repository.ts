@@ -212,7 +212,7 @@ export class KeeperSelectionRepository {
       'SELECT COUNT(*) as count FROM keeper_selections WHERE roster_id = $1 AND league_season_id = $2',
       [rosterId, leagueSeasonId]
     );
-    return parseInt(result.rows[0].count, 10);
+    return Number(result.rows[0].count) || 0;
   }
 
   /**
@@ -228,7 +228,7 @@ export class KeeperSelectionRepository {
       'SELECT COUNT(*) as count FROM keeper_selections WHERE player_id = $1 AND league_season_id = $2',
       [playerId, leagueSeasonId]
     );
-    return parseInt(result.rows[0].count, 10) > 0;
+    return (Number(result.rows[0].count) || 0) > 0;
   }
 
   /**

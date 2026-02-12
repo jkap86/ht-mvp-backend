@@ -44,6 +44,9 @@ export const ErrorCode = {
 
   // Lock errors
   LOCK_TIMEOUT: 'LOCK_TIMEOUT',
+
+  // Service availability errors
+  SERVICE_UNAVAILABLE: 'SERVICE_UNAVAILABLE',
 } as const;
 
 export type ErrorCodeType = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -159,6 +162,15 @@ export class LockTimeoutError extends AppException {
     );
     this.lockId = lockId;
     this.timeoutMs = timeoutMs;
+  }
+}
+
+/**
+ * Thrown when a service or subsystem is not available (e.g., not initialized).
+ */
+export class ServiceUnavailableException extends AppException {
+  constructor(message: string, errorCode: ErrorCodeType = ErrorCode.SERVICE_UNAVAILABLE) {
+    super(message, 503, errorCode);
   }
 }
 

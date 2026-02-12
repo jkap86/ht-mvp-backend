@@ -6,6 +6,7 @@ import { RosterRepository } from '../leagues/leagues.repository';
 import { authMiddleware } from '../../middleware/auth.middleware';
 import { apiReadLimiter } from '../../middleware/rate-limit.middleware';
 import { container, KEYS } from '../../container';
+import { asyncHandler } from '../../shared/async-handler';
 
 // Resolve dependencies from container
 const pickAssetRepo = container.resolve<DraftPickAssetRepository>(KEYS.PICK_ASSET_REPO);
@@ -23,10 +24,10 @@ leagueRouter.use(authMiddleware);
 leagueRouter.use(apiReadLimiter);
 
 // GET /api/leagues/:leagueId/pick-assets
-leagueRouter.get('/', pickAssetsController.getLeaguePickAssets);
+leagueRouter.get('/', asyncHandler(pickAssetsController.getLeaguePickAssets));
 
 // GET /api/leagues/:leagueId/pick-assets/:season
-leagueRouter.get('/:season', pickAssetsController.getSeasonPickAssets);
+leagueRouter.get('/:season', asyncHandler(pickAssetsController.getSeasonPickAssets));
 
 // Roster-level routes (mounted under /api/rosters/:rosterId/pick-assets)
 const rosterRouter = Router({ mergeParams: true });
@@ -36,7 +37,7 @@ rosterRouter.use(authMiddleware);
 rosterRouter.use(apiReadLimiter);
 
 // GET /api/rosters/:rosterId/pick-assets
-rosterRouter.get('/', pickAssetsController.getRosterPickAssets);
+rosterRouter.get('/', asyncHandler(pickAssetsController.getRosterPickAssets));
 
 export const leaguePickAssetsRoutes = leagueRouter;
 export const rosterPickAssetsRoutes = rosterRouter;

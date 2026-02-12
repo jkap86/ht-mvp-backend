@@ -6,6 +6,7 @@ import { LeagueService } from '../leagues/leagues.service';
 import { MedianService } from './median.service';
 import { apiReadLimiter, draftModifyLimiter } from '../../middleware/rate-limit.middleware';
 import { container, KEYS } from '../../container';
+import { asyncHandler } from '../../shared/async-handler';
 
 // Resolve dependencies from container
 const matchupService = container.resolve<MatchupService>(KEYS.MATCHUP_SERVICE);
@@ -26,19 +27,19 @@ const router = Router({ mergeParams: true });
 // All routes require authentication (handled by parent router)
 
 // GET /api/leagues/:leagueId/matchups
-router.get('/', apiReadLimiter, matchupsController.getMatchups);
+router.get('/', apiReadLimiter, asyncHandler(matchupsController.getMatchups));
 
 // GET /api/leagues/:leagueId/matchups/:matchupId
-router.get('/:matchupId', apiReadLimiter, matchupsController.getMatchup);
+router.get('/:matchupId', apiReadLimiter, asyncHandler(matchupsController.getMatchup));
 
 // GET /api/leagues/:leagueId/matchups/:matchupId/detail
-router.get('/:matchupId/detail', apiReadLimiter, matchupsController.getMatchupWithLineups);
+router.get('/:matchupId/detail', apiReadLimiter, asyncHandler(matchupsController.getMatchupWithLineups));
 
 // POST /api/leagues/:leagueId/matchups/finalize
-router.post('/finalize', draftModifyLimiter, matchupsController.finalizeMatchups);
+router.post('/finalize', draftModifyLimiter, asyncHandler(matchupsController.finalizeMatchups));
 
 // POST /api/leagues/:leagueId/matchups/median/recalculate
-router.post('/median/recalculate', draftModifyLimiter, matchupsController.recalculateMedian);
+router.post('/median/recalculate', draftModifyLimiter, asyncHandler(matchupsController.recalculateMedian));
 
 // GET /api/leagues/:leagueId/standings
 // (Mounted separately on leagues router)

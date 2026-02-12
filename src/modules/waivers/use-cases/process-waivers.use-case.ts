@@ -4,12 +4,12 @@ import {
   WaiverClaimWithCurrentPriority,
   WaiverProcessingRunsRepository,
 } from '../waivers.repository';
-import {
+import type {
   RosterPlayersRepository,
   RosterTransactionsRepository,
 } from '../../rosters/rosters.repository';
-import { RosterMutationService } from '../../rosters/roster-mutation.service';
-import { TradesRepository } from '../../trades/trades.repository';
+import type { RosterMutationService } from '../../rosters/roster-mutation.service';
+import type { TradesRepository } from '../../trades/trades.repository';
 import { EventTypes, tryGetEventBus } from '../../../shared/events';
 import { container, KEYS } from '../../../container';
 import { getMaxRosterSize } from '../../../shared/roster-defaults';
@@ -25,7 +25,7 @@ import {
 import { NotFoundException, ConflictException } from '../../../utils/exceptions';
 import { runWithLock, LockDomain } from '../../../shared/transaction-runner';
 import { addToWaiverWire, WaiverInfoContext } from './waiver-info.use-case';
-import { EventListenerService } from '../../chat/event-listener.service';
+import type { EventListenerService } from '../../chat/event-listener.service';
 import { logger } from '../../../config/logger.config';
 
 /**
@@ -63,6 +63,13 @@ export interface ProcessWaiversContext extends WaiverInfoContext {
  *
  * This allows chained claims: if a roster's #1 claim wins, their #2 claim
  * uses updated budget/priority/roster composition.
+ *
+ * LOCK CONTRACT:
+ * - Acquires WAIVER lock (400M + leagueId) via runWithLock — serializes all waiver processing per league
+ * - All claim resolution, roster mutations, and trade invalidation happen inside this single lock
+ * - Trade invalidation uses conditional SQL updates (no TRADE advisory lock) to avoid cross-domain nesting
+ *
+ * Only one lock domain (WAIVER) is acquired. No nested cross-domain advisory locks.
  */
 export async function processLeagueClaims(
   ctx: ProcessWaiversContext,

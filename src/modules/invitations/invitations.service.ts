@@ -1,7 +1,7 @@
 import { InvitationsRepository } from './invitations.repository';
-import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
-import { UserRepository } from '../auth/auth.repository';
-import { RosterService } from '../leagues/roster.service';
+import type { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
+import type { UserRepository } from '../auth/auth.repository';
+import type { RosterService } from '../leagues/roster.service';
 import { EventTypes, tryGetEventBus } from '../../shared/events';
 import {
   InvitationWithDetails,

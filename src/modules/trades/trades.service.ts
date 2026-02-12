@@ -1,15 +1,15 @@
 import { Pool } from 'pg';
 import { TradesRepository, TradeItemsRepository, TradeVotesRepository } from './trades.repository';
-import {
+import type {
   RosterPlayersRepository,
   RosterTransactionsRepository,
 } from '../rosters/rosters.repository';
-import { RosterMutationService } from '../rosters/roster-mutation.service';
-import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
-import { PlayerRepository } from '../players/players.repository';
-import { DraftPickAssetRepository } from '../drafts/draft-pick-asset.repository';
+import type { RosterMutationService } from '../rosters/roster-mutation.service';
+import type { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
+import type { PlayerRepository } from '../players/players.repository';
+import type { DraftPickAssetRepository } from '../drafts/draft-pick-asset.repository';
 import { TradeWithDetails, ProposeTradeRequest, CounterTradeRequest } from './trades.model';
-import { EventListenerService } from '../chat/event-listener.service';
+import type { EventListenerService } from '../chat/event-listener.service';
 
 // Import use-cases
 import {

@@ -260,7 +260,7 @@ export class RankingsRepository {
 
     return result.rows.map((row) => ({
       position: row.position,
-      count: parseInt(row.count),
+      count: Number(row.count) || 0,
     }));
   }
 }

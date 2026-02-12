@@ -4,7 +4,7 @@ import {
   FaabBudgetRepository,
   WaiverWireRepository,
 } from '../waivers.repository';
-import { LeagueRepository, RosterRepository } from '../../leagues/leagues.repository';
+import type { LeagueRepository, RosterRepository } from '../../leagues/leagues.repository';
 import {
   WaiverPriorityWithDetails,
   FaabBudgetWithDetails,

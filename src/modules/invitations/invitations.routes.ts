@@ -4,6 +4,7 @@ import { authMiddleware } from '../../middleware/auth.middleware';
 import { container, KEYS } from '../../container';
 import { InvitationsService } from './invitations.service';
 import { apiReadLimiter, tradeLimiter, searchLimiter } from '../../middleware/rate-limit.middleware';
+import { asyncHandler } from '../../shared/async-handler';
 
 // Resolve dependencies from container
 const invitationsService = container.resolve<InvitationsService>(KEYS.INVITATIONS_SERVICE);
@@ -15,16 +16,16 @@ const router = Router();
 router.use(authMiddleware);
 
 // GET /api/invitations/pending - Get my pending invitations
-router.get('/pending', apiReadLimiter, invitationsController.getMyInvitations);
+router.get('/pending', apiReadLimiter, asyncHandler(invitationsController.getMyInvitations));
 
 // POST /api/invitations/:id/accept - Accept invitation
-router.post('/:id/accept', tradeLimiter, invitationsController.acceptInvitation);
+router.post('/:id/accept', tradeLimiter, asyncHandler(invitationsController.acceptInvitation));
 
 // POST /api/invitations/:id/decline - Decline invitation
-router.post('/:id/decline', tradeLimiter, invitationsController.declineInvitation);
+router.post('/:id/decline', tradeLimiter, asyncHandler(invitationsController.declineInvitation));
 
 // DELETE /api/invitations/:id - Cancel invitation (commissioner only)
-router.delete('/:id', tradeLimiter, invitationsController.cancelInvitation);
+router.delete('/:id', tradeLimiter, asyncHandler(invitationsController.cancelInvitation));
 
 export default router;
 
@@ -36,10 +37,10 @@ export function createLeagueInvitationRoutes(): Router {
   const leagueRouter = Router({ mergeParams: true });
 
   // POST /api/leagues/:leagueId/invitations - Send invitation (commissioner only)
-  leagueRouter.post('/', tradeLimiter, invitationsController.sendInvitation);
+  leagueRouter.post('/', tradeLimiter, asyncHandler(invitationsController.sendInvitation));
 
   // GET /api/leagues/:leagueId/invitations - Get league invitations (commissioner only)
-  leagueRouter.get('/', apiReadLimiter, invitationsController.getLeagueInvitations);
+  leagueRouter.get('/', apiReadLimiter, asyncHandler(invitationsController.getLeagueInvitations));
 
   return leagueRouter;
 }
@@ -51,7 +52,7 @@ export function createUserSearchRoutes(): Router {
   const searchRouter = Router({ mergeParams: true });
 
   // GET /api/leagues/:leagueId/users/search?q=query - Search users for inviting
-  searchRouter.get('/search', searchLimiter, invitationsController.searchUsersForInvite);
+  searchRouter.get('/search', searchLimiter, asyncHandler(invitationsController.searchUsersForInvite));
 
   return searchRouter;
 }

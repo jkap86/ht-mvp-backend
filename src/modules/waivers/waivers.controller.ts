@@ -1,4 +1,4 @@
-import { Response, NextFunction } from 'express';
+import { Response } from 'express';
 import { AuthRequest } from '../../middleware/auth.middleware';
 import { WaiversService } from './waivers.service';
 import { AuthorizationService } from '../auth/authorization.service';
@@ -16,216 +16,132 @@ export class WaiversController {
     private readonly authService: AuthorizationService
   ) {}
 
-  /**
-   * Submit a waiver claim
-   * POST /leagues/:leagueId/waivers/claims
-   */
-  submitClaim = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
-    try {
-      const leagueId = requireLeagueId(req);
-      const userId = requireUserId(req);
-      const { player_id, drop_player_id, bid_amount } = req.body;
-      const idempotencyKey = req.headers['x-idempotency-key'] as string | undefined;
+  submitClaim = async (req: AuthRequest, res: Response): Promise<void> => {
+    const leagueId = requireLeagueId(req);
+    const userId = requireUserId(req);
+    const { player_id, drop_player_id, bid_amount } = req.body;
+    const idempotencyKey = req.headers['x-idempotency-key'] as string | undefined;
 
-      const claim = await this.waiversService.submitClaim(
-        leagueId,
-        userId,
-        {
-          playerId: player_id,
-          dropPlayerId: drop_player_id || null,
-          bidAmount: bid_amount || 0,
-        },
-        idempotencyKey
-      );
+    const claim = await this.waiversService.submitClaim(
+      leagueId,
+      userId,
+      {
+        playerId: player_id,
+        dropPlayerId: drop_player_id || null,
+        bidAmount: bid_amount || 0,
+      },
+      idempotencyKey
+    );
 
-      res.status(201).json(waiverClaimToResponse(claim));
-    } catch (error) {
-      next(error);
-    }
+    res.status(201).json(waiverClaimToResponse(claim));
   };
 
-  /**
-   * Get user's waiver claims
-   * GET /leagues/:leagueId/waivers/claims
-   */
-  getClaims = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
-    try {
-      const leagueId = requireLeagueId(req);
-      const userId = requireUserId(req);
+  getClaims = async (req: AuthRequest, res: Response): Promise<void> => {
+    const leagueId = requireLeagueId(req);
+    const userId = requireUserId(req);
 
-      const claims = await this.waiversService.getMyClaims(leagueId, userId);
+    const claims = await this.waiversService.getMyClaims(leagueId, userId);
 
-      res.status(200).json({
-        claims: claims.map(waiverClaimToResponse),
-      });
-    } catch (error) {
-      next(error);
-    }
+    res.status(200).json({
+      claims: claims.map(waiverClaimToResponse),
+    });
   };
 
-  /**
-   * Update a waiver claim
-   * PUT /leagues/:leagueId/waivers/claims/:claimId
-   */
-  updateClaim = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
-    try {
-      const claimId = parseInt(req.params.claimId as string, 10);
-      const userId = requireUserId(req);
-      const { drop_player_id, bid_amount } = req.body;
+  updateClaim = async (req: AuthRequest, res: Response): Promise<void> => {
+    const claimId = parseInt(req.params.claimId as string, 10);
+    const userId = requireUserId(req);
+    const { drop_player_id, bid_amount } = req.body;
 
-      const claim = await this.waiversService.updateClaim(claimId, userId, {
-        dropPlayerId: drop_player_id,
-        bidAmount: bid_amount,
-      });
+    const claim = await this.waiversService.updateClaim(claimId, userId, {
+      dropPlayerId: drop_player_id,
+      bidAmount: bid_amount,
+    });
 
-      res.status(200).json(waiverClaimToResponse(claim));
-    } catch (error) {
-      next(error);
-    }
+    res.status(200).json(waiverClaimToResponse(claim));
   };
 
-  /**
-   * Cancel a waiver claim
-   * DELETE /leagues/:leagueId/waivers/claims/:claimId
-   */
-  cancelClaim = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
-    try {
-      const claimId = parseInt(req.params.claimId as string, 10);
-      const userId = requireUserId(req);
+  cancelClaim = async (req: AuthRequest, res: Response): Promise<void> => {
+    const claimId = parseInt(req.params.claimId as string, 10);
+    const userId = requireUserId(req);
 
-      await this.waiversService.cancelClaim(claimId, userId);
+    await this.waiversService.cancelClaim(claimId, userId);
 
-      res.status(200).json({ success: true });
-    } catch (error) {
-      next(error);
-    }
+    res.status(200).json({ success: true });
   };
 
-  /**
-   * Get waiver priority order
-   * GET /leagues/:leagueId/waivers/priority
-   */
-  getPriority = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
-    try {
-      const leagueId = requireLeagueId(req);
-      const userId = requireUserId(req);
+  getPriority = async (req: AuthRequest, res: Response): Promise<void> => {
+    const leagueId = requireLeagueId(req);
+    const userId = requireUserId(req);
 
-      const priorities = await this.waiversService.getPriorityOrder(leagueId, userId);
+    const priorities = await this.waiversService.getPriorityOrder(leagueId, userId);
 
-      res.status(200).json({
-        priorities: priorities.map(waiverPriorityToResponse),
-      });
-    } catch (error) {
-      next(error);
-    }
+    res.status(200).json({
+      priorities: priorities.map(waiverPriorityToResponse),
+    });
   };
 
-  /**
-   * Get FAAB budgets
-   * GET /leagues/:leagueId/waivers/faab
-   */
-  getFaabBudgets = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
-    try {
-      const leagueId = requireLeagueId(req);
-      const userId = requireUserId(req);
+  getFaabBudgets = async (req: AuthRequest, res: Response): Promise<void> => {
+    const leagueId = requireLeagueId(req);
+    const userId = requireUserId(req);
 
-      const budgets = await this.waiversService.getFaabBudgets(leagueId, userId);
+    const budgets = await this.waiversService.getFaabBudgets(leagueId, userId);
 
-      res.status(200).json({
-        budgets: budgets.map(faabBudgetToResponse),
-      });
-    } catch (error) {
-      next(error);
-    }
+    res.status(200).json({
+      budgets: budgets.map(faabBudgetToResponse),
+    });
   };
 
-  /**
-   * Get waiver wire players
-   * GET /leagues/:leagueId/waivers/wire
-   */
-  getWaiverWire = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
-    try {
-      const leagueId = requireLeagueId(req);
-      const userId = requireUserId(req);
+  getWaiverWire = async (req: AuthRequest, res: Response): Promise<void> => {
+    const leagueId = requireLeagueId(req);
+    const userId = requireUserId(req);
 
-      // Verify user is in league
-      await this.authService.ensureLeagueMember(leagueId, userId);
+    // Verify user is in league
+    await this.authService.ensureLeagueMember(leagueId, userId);
 
-      const players = await this.waiversService.getWaiverWirePlayers(leagueId);
+    const players = await this.waiversService.getWaiverWirePlayers(leagueId);
 
-      res.status(200).json({
-        players: players.map(waiverWirePlayerToResponse),
-      });
-    } catch (error) {
-      next(error);
-    }
+    res.status(200).json({
+      players: players.map(waiverWirePlayerToResponse),
+    });
   };
 
-  /**
-   * Initialize waiver system for league (commissioner only)
-   * POST /leagues/:leagueId/waivers/initialize
-   */
-  initializeWaivers = async (
-    req: AuthRequest,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> => {
-    try {
-      const leagueId = requireLeagueId(req);
-      const userId = requireUserId(req);
+  initializeWaivers = async (req: AuthRequest, res: Response): Promise<void> => {
+    const leagueId = requireLeagueId(req);
+    const userId = requireUserId(req);
 
-      // Verify user is commissioner
-      await this.authService.ensureCommissioner(leagueId, userId);
+    // Verify user is commissioner
+    await this.authService.ensureCommissioner(leagueId, userId);
 
-      await this.waiversService.initializeForSeason(leagueId);
+    await this.waiversService.initializeForSeason(leagueId);
 
-      res.status(200).json({ success: true, message: 'Waivers initialized' });
-    } catch (error) {
-      next(error);
-    }
+    res.status(200).json({ success: true, message: 'Waivers initialized' });
   };
 
-  /**
-   * Manually trigger waiver processing (commissioner/admin only)
-   * POST /leagues/:leagueId/waivers/process
-   */
-  processClaims = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
-    try {
-      const leagueId = requireLeagueId(req);
-      const userId = requireUserId(req);
+  processClaims = async (req: AuthRequest, res: Response): Promise<void> => {
+    const leagueId = requireLeagueId(req);
+    const userId = requireUserId(req);
 
-      // Verify user is commissioner
-      await this.authService.ensureCommissioner(leagueId, userId);
+    // Verify user is commissioner
+    await this.authService.ensureCommissioner(leagueId, userId);
 
-      const result = await this.waiversService.processLeagueClaims(leagueId);
+    const result = await this.waiversService.processLeagueClaims(leagueId);
 
-      res.status(200).json({
-        success: true,
-        processed: result.processed,
-        successful: result.successful,
-      });
-    } catch (error) {
-      next(error);
-    }
+    res.status(200).json({
+      success: true,
+      processed: result.processed,
+      successful: result.successful,
+    });
   };
 
-  /**
-   * Reorder waiver claims
-   * PATCH /leagues/:leagueId/waivers/claims/reorder
-   */
-  reorderClaims = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
-    try {
-      const leagueId = requireLeagueId(req);
-      const userId = requireUserId(req);
-      const { claim_ids } = req.body;
+  reorderClaims = async (req: AuthRequest, res: Response): Promise<void> => {
+    const leagueId = requireLeagueId(req);
+    const userId = requireUserId(req);
+    const { claim_ids } = req.body;
 
-      const claims = await this.waiversService.reorderClaims(leagueId, userId, claim_ids);
+    const claims = await this.waiversService.reorderClaims(leagueId, userId, claim_ids);
 
-      res.status(200).json({
-        claims: claims.map(waiverClaimToResponse),
-      });
-    } catch (error) {
-      next(error);
-    }
+    res.status(200).json({
+      claims: claims.map(waiverClaimToResponse),
+    });
   };
 }

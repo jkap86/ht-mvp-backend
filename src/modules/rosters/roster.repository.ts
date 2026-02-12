@@ -160,7 +160,7 @@ export class RosterRepository {
       'SELECT COUNT(*) as count FROM rosters WHERE league_id = $1 AND is_benched = false AND user_id IS NOT NULL',
       [leagueId]
     );
-    return parseInt(result.rows[0].count, 10);
+    return Number(result.rows[0].count) || 0;
   }
 
   /**
@@ -171,7 +171,7 @@ export class RosterRepository {
     const result = await db.query('SELECT COUNT(*) as count FROM rosters WHERE league_id = $1', [
       leagueId,
     ]);
-    return parseInt(result.rows[0].count, 10);
+    return Number(result.rows[0].count) || 0;
   }
 
   /**

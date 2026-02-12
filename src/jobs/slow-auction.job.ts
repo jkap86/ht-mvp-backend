@@ -7,6 +7,18 @@ import { tryGetEventBus, EventTypes } from '../shared/events';
 import { getLockId, LockDomain } from '../shared/locks';
 import { logger } from '../config/logger.config';
 
+/**
+ * LOCK CONTRACT:
+ * - processExpiredLots() acquires JOB lock (900M + 7) via pg_try_advisory_lock — singleton job execution
+ *   Then delegates to SlowAuctionService.settleLot() which acquires ROSTER + DRAFT locks per lot
+ *   JOB lock is session-level (not transactional); released explicitly after processing
+ * - processNominationTimeouts() acquires JOB lock (900M + 8) via pg_try_advisory_lock — singleton job execution
+ *   Then delegates to FastAuctionService.autoNominate() which acquires DRAFT lock per draft
+ *   JOB lock is session-level; released explicitly after processing
+ *
+ * Neither function holds both JOB locks simultaneously. Each is independent.
+ */
+
 let intervalId: NodeJS.Timeout | null = null;
 
 const SETTLEMENT_INTERVAL_MS = 5000; // 5 seconds for faster settlement

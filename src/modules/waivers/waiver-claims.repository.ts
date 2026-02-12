@@ -64,7 +64,7 @@ export class WaiverClaimsRepository {
        WHERE roster_id = $1 AND season = $2 AND week = $3 AND status = 'pending'`,
       [rosterId, season, week]
     );
-    return parseInt(result.rows[0].next_order, 10);
+    return Number(result.rows[0].next_order) || 1;
   }
 
   /**

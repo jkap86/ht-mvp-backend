@@ -4,8 +4,8 @@ import {
   FaabBudgetRepository,
   WaiverClaimsRepository,
 } from '../waivers.repository';
-import { RosterPlayersRepository } from '../../rosters/rosters.repository';
-import { LeagueRepository, RosterRepository } from '../../leagues/leagues.repository';
+import type { RosterPlayersRepository } from '../../rosters/rosters.repository';
+import type { LeagueRepository, RosterRepository } from '../../leagues/leagues.repository';
 import { EventTypes, tryGetEventBus } from '../../../shared/events';
 import {
   WaiverClaimWithDetails,
@@ -34,6 +34,12 @@ export interface SubmitClaimContext {
 
 /**
  * Submit a waiver claim
+ *
+ * LOCK CONTRACT:
+ * - Acquires WAIVER lock (400M + leagueId) via runWithLock — serializes claim submissions per league
+ *   Prevents duplicate claims and ensures consistent budget/priority reads
+ *
+ * Only one lock domain (WAIVER) is acquired. No nested cross-domain advisory locks.
  */
 export async function submitClaim(
   ctx: SubmitClaimContext,

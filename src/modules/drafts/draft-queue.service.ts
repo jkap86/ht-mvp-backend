@@ -1,8 +1,8 @@
 import { DraftRepository, QueueEntry } from './drafts.repository';
-import { Player } from '../players/players.model';
-import { PlayerRepository } from '../players/players.repository';
-import { RosterRepository } from '../leagues/leagues.repository';
-import { Roster } from '../leagues/leagues.model';
+import type { Player } from '../players/players.model';
+import type { PlayerRepository } from '../players/players.repository';
+import type { RosterRepository } from '../leagues/leagues.repository';
+import type { Roster } from '../leagues/leagues.model';
 import { ValidationException, ForbiddenException, NotFoundException } from '../../utils/exceptions';
 
 /**

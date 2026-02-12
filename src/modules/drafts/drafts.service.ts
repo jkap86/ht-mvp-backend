@@ -1,6 +1,7 @@
 import { DraftRepository } from './drafts.repository';
-import { draftToResponse, DraftType, DraftOrderEntry } from './drafts.model';
-import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
+import { draftToResponse, DraftType, DraftOrderEntry, DraftSettings, AuctionSettings } from './drafts.model';
+import type { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
+import type { LeagueSettings } from '../leagues/leagues.model';
 import { NotFoundException, ForbiddenException, ValidationException } from '../../utils/exceptions';
 import { DraftOrderService } from './draft-order.service';
 import { DraftPickService } from './draft-pick.service';
@@ -23,8 +24,8 @@ function mapAuctionSettingsToStorage(apiSettings: {
   reset_on_bid_seconds?: number;
   min_bid?: number;
   min_increment?: number;
-}): Record<string, any> {
-  const mapped: Record<string, any> = {};
+}): Partial<AuctionSettings> {
+  const mapped: Partial<AuctionSettings> = {};
   // Auction mode (slow/fast)
   if (apiSettings.auction_mode !== undefined) {
     mapped.auctionMode = apiSettings.auction_mode;
@@ -70,8 +71,8 @@ export class DraftService {
     private readonly pickAssetRepo?: DraftPickAssetRepository
   ) {}
 
-  private calculateTotalRosterSlots(leagueSettings: any): number {
-    const rosterConfig = leagueSettings?.roster_config;
+  private calculateTotalRosterSlots(leagueSettings: LeagueSettings | Record<string, unknown> | undefined): number {
+    const rosterConfig = (leagueSettings as Record<string, unknown>)?.roster_config as Record<string, number> | undefined;
     if (!rosterConfig) return 15; // fallback default
 
     return Object.values(rosterConfig).reduce(
@@ -145,7 +146,7 @@ export class DraftService {
     }
 
     // Transform auction settings from snake_case (API) to camelCase (storage)
-    const settings: Record<string, any> = {};
+    const settings: DraftSettings = {};
     if (options.auctionSettings) {
       Object.assign(settings, mapAuctionSettingsToStorage(options.auctionSettings));
     }
@@ -545,7 +546,7 @@ export class DraftService {
 
     // 5. Transform and merge auction settings
     const existingSettings = draft.settings || {};
-    const mergedSettings: Record<string, any> = { ...existingSettings };
+    const mergedSettings: DraftSettings = { ...existingSettings };
 
     if (updates.auctionSettings) {
       Object.assign(mergedSettings, mapAuctionSettingsToStorage(updates.auctionSettings));

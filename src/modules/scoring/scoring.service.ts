@@ -1,14 +1,14 @@
 import { Pool } from 'pg';
 import { PlayerStatsRepository } from './scoring.repository';
 import { PlayerProjectionsRepository } from './projections.repository';
-import { LineupsRepository } from '../lineups/lineups.repository';
-import { LeagueRepository } from '../leagues/leagues.repository';
-import { League } from '../leagues/leagues.model';
-import { PlayerRepository } from '../players/players.repository';
+import type { LineupsRepository } from '../lineups/lineups.repository';
+import type { LeagueRepository } from '../leagues/leagues.repository';
+import type { League } from '../leagues/leagues.model';
+import type { PlayerRepository } from '../players/players.repository';
 import { GameProgressService, TeamGameStatus } from './game-progress.service';
 import { PlayerStats, ScoringRules, ScoringType, DEFAULT_SCORING_RULES } from './scoring.model';
 import { normalizeLeagueScoringSettings } from './scoring-settings-normalizer';
-import { LineupSlots, RosterLineup } from '../lineups/lineups.model';
+import type { LineupSlots, RosterLineup } from '../lineups/lineups.model';
 import { NotFoundException, ForbiddenException } from '../../utils/exceptions';
 import {
   calculatePlayerPoints as calculatePlayerPointsPure,

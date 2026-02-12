@@ -1,6 +1,6 @@
 import { Pool } from 'pg';
 import { TradesRepository } from '../trades.repository';
-import { RosterRepository } from '../../leagues/leagues.repository';
+import type { RosterRepository } from '../../leagues/leagues.repository';
 import { EventTypes, tryGetEventBus } from '../../../shared/events';
 import { TradeWithDetails } from '../trades.model';
 import {
@@ -9,7 +9,7 @@ import {
   ValidationException,
 } from '../../../utils/exceptions';
 import { runWithLock, LockDomain } from '../../../shared/transaction-runner';
-import { EventListenerService } from '../../chat/event-listener.service';
+import type { EventListenerService } from '../../chat/event-listener.service';
 import { logger } from '../../../config/logger.config';
 
 export interface CancelTradeContext {
@@ -21,6 +21,11 @@ export interface CancelTradeContext {
 
 /**
  * Cancel a trade (proposer only)
+ *
+ * LOCK CONTRACT:
+ * - Acquires TRADE lock (300M + leagueId) via runWithLock — serializes trade state changes per league
+ *
+ * Only one lock domain (TRADE) is acquired. No nested cross-domain advisory locks.
  */
 export async function cancelTrade(
   ctx: CancelTradeContext,

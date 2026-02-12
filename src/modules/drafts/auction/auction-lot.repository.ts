@@ -121,7 +121,7 @@ export class AuctionLotRepository {
        WHERE draft_id = $1 AND nominator_roster_id = $2 AND status = 'active'`,
       [draftId, rosterId]
     );
-    return parseInt(result.rows[0].count, 10);
+    return Number(result.rows[0].count) || 0;
   }
 
   /**
@@ -133,7 +133,7 @@ export class AuctionLotRepository {
        WHERE draft_id = $1 AND status = 'active'`,
       [draftId]
     );
-    return parseInt(result.rows[0].count, 10);
+    return Number(result.rows[0].count) || 0;
   }
 
   /**
@@ -149,7 +149,7 @@ export class AuctionLotRepository {
        WHERE draft_id = $1 AND nominator_roster_id = $2 AND nomination_date = $3`,
       [draftId, rosterId, date]
     );
-    return parseInt(result.rows[0].count, 10);
+    return Number(result.rows[0].count) || 0;
   }
 
   /**
@@ -409,9 +409,9 @@ export class AuctionLotRepository {
     );
 
     return {
-      spent: parseInt(result.rows[0].spent, 10),
-      wonCount: parseInt(result.rows[0].won_count, 10),
-      leadingCommitment: parseInt(result.rows[0].leading_commitment, 10),
+      spent: Number(result.rows[0].spent) || 0,
+      wonCount: Number(result.rows[0].won_count) || 0,
+      leadingCommitment: Number(result.rows[0].leading_commitment) || 0,
     };
   }
 
@@ -462,9 +462,9 @@ export class AuctionLotRepository {
     for (const row of queryResult.rows) {
       const data = result.get(row.roster_id);
       if (data) {
-        data.spent = parseInt(row.spent, 10);
-        data.wonCount = parseInt(row.won_count, 10);
-        data.leadingCommitment = parseInt(row.leading_commitment, 10);
+        data.spent = Number(row.spent) || 0;
+        data.wonCount = Number(row.won_count) || 0;
+        data.leadingCommitment = Number(row.leading_commitment) || 0;
       }
     }
 
@@ -512,7 +512,7 @@ export class AuctionLotRepository {
        WHERE draft_id = $1 AND nominator_roster_id = $2 AND status = 'active'`,
       [draftId, rosterId]
     );
-    return parseInt(result.rows[0].count, 10);
+    return Number(result.rows[0].count) || 0;
   }
 
   /**
@@ -524,7 +524,7 @@ export class AuctionLotRepository {
        WHERE draft_id = $1 AND status = 'active'`,
       [draftId]
     );
-    return parseInt(result.rows[0].count, 10);
+    return Number(result.rows[0].count) || 0;
   }
 
   /**
@@ -541,7 +541,7 @@ export class AuctionLotRepository {
        WHERE draft_id = $1 AND nominator_roster_id = $2 AND nomination_date = $3`,
       [draftId, rosterId, date]
     );
-    return parseInt(result.rows[0].count, 10);
+    return Number(result.rows[0].count) || 0;
   }
 
   /**
@@ -607,9 +607,9 @@ export class AuctionLotRepository {
     for (const row of queryResult.rows) {
       const data = result.get(row.roster_id);
       if (data) {
-        data.spent = parseInt(row.spent, 10);
-        data.wonCount = parseInt(row.won_count, 10);
-        data.leadingCommitment = parseInt(row.leading_commitment, 10);
+        data.spent = Number(row.spent) || 0;
+        data.wonCount = Number(row.won_count) || 0;
+        data.leadingCommitment = Number(row.leading_commitment) || 0;
       }
     }
 
@@ -635,9 +635,9 @@ export class AuctionLotRepository {
     );
 
     return {
-      spent: parseInt(result.rows[0].spent, 10),
-      wonCount: parseInt(result.rows[0].won_count, 10),
-      leadingCommitment: parseInt(result.rows[0].leading_commitment, 10),
+      spent: Number(result.rows[0].spent) || 0,
+      wonCount: Number(result.rows[0].won_count) || 0,
+      leadingCommitment: Number(result.rows[0].leading_commitment) || 0,
     };
   }
 }

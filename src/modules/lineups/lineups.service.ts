@@ -1,7 +1,7 @@
 import { Pool } from 'pg';
 import { LineupsRepository } from './lineups.repository';
-import { RosterPlayersRepository } from '../rosters/rosters.repository';
-import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
+import type { RosterPlayersRepository } from '../rosters/rosters.repository';
+import type { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import {
   RosterLineup,
   LineupSlots,

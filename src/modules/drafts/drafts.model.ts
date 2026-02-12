@@ -63,7 +63,7 @@ export interface Draft {
   scheduledStart: Date | null;
   startedAt: Date | null;
   completedAt: Date | null;
-  settings: AuctionSettings | Record<string, any>;
+  settings: DraftSettings;
   draftState: Record<string, any>;
   orderConfirmed: boolean;
   createdAt: Date;
@@ -142,8 +142,7 @@ export function computeDraftLabel(playerPool?: PlayerPoolType[]): string {
 }
 
 export function draftToResponse(draft: Draft) {
-  const draftSettings = draft.settings as DraftSettings | undefined;
-  const playerPool = draftSettings?.playerPool;
+  const playerPool = draft.settings?.playerPool;
 
   return {
     id: draft.id,

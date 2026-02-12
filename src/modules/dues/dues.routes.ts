@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { DuesController } from './dues.controller';
 import { DuesService } from './dues.service';
 import { container, KEYS } from '../../container';
+import { asyncHandler } from '../../shared/async-handler';
 
 /**
  * Creates dues routes that are mounted under /api/leagues/:leagueId/dues
@@ -15,19 +16,19 @@ export function createDuesRoutes(): Router {
   const router = Router({ mergeParams: true });
 
   // GET /api/leagues/:leagueId/dues - Get dues overview
-  router.get('/', duesController.getDuesOverview);
+  router.get('/', asyncHandler(duesController.getDuesOverview));
 
   // PUT /api/leagues/:leagueId/dues - Create/update dues config
-  router.put('/', duesController.upsertDuesConfig);
+  router.put('/', asyncHandler(duesController.upsertDuesConfig));
 
   // DELETE /api/leagues/:leagueId/dues - Delete dues config
-  router.delete('/', duesController.deleteDuesConfig);
+  router.delete('/', asyncHandler(duesController.deleteDuesConfig));
 
   // GET /api/leagues/:leagueId/dues/payments - Get all payment statuses
-  router.get('/payments', duesController.getPaymentStatuses);
+  router.get('/payments', asyncHandler(duesController.getPaymentStatuses));
 
   // PATCH /api/leagues/:leagueId/dues/payments/:rosterId - Mark payment status
-  router.patch('/payments/:rosterId', duesController.markPaymentStatus);
+  router.patch('/payments/:rosterId', asyncHandler(duesController.markPaymentStatus));
 
   return router;
 }

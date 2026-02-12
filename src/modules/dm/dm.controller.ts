@@ -1,4 +1,4 @@
-import { Response, NextFunction } from 'express';
+import { Response } from 'express';
 import { AuthRequest } from '../../middleware/auth.middleware';
 import { DmService } from './dm.service';
 import { DmRepository } from './dm.repository';
@@ -46,225 +46,163 @@ export class DmController {
     private readonly dmRepo: DmRepository
   ) {}
 
-  /**
-   * GET /api/dm
-   * List all conversations for the authenticated user
-   */
-  getConversations = async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const userId = requireUserId(req);
-      const conversations = await this.dmService.getConversations(userId);
-      res.status(200).json(conversations);
-    } catch (error) {
-      next(error);
-    }
+  getConversations = async (req: AuthRequest, res: Response) => {
+    const userId = requireUserId(req);
+    const conversations = await this.dmService.getConversations(userId);
+    res.status(200).json(conversations);
   };
 
-  /**
-   * POST /api/dm/user/:otherUserId
-   * Get or create a conversation with another user
-   */
-  getOrCreateConversation = async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const userId = requireUserId(req);
-      const rawOtherUserId = req.params.otherUserId;
-      const otherUserId = Array.isArray(rawOtherUserId) ? rawOtherUserId[0] : rawOtherUserId;
-      if (!otherUserId || otherUserId.trim() === '') {
-        throw new ValidationException('Other user ID is required');
-      }
-      const conversation = await this.dmService.getOrCreateConversation(userId, otherUserId);
-      res.status(201).json(conversation);
-    } catch (error) {
-      next(error);
+  getOrCreateConversation = async (req: AuthRequest, res: Response) => {
+    const userId = requireUserId(req);
+    const rawOtherUserId = req.params.otherUserId;
+    const otherUserId = Array.isArray(rawOtherUserId) ? rawOtherUserId[0] : rawOtherUserId;
+    if (!otherUserId || otherUserId.trim() === '') {
+      throw new ValidationException('Other user ID is required');
     }
+    const conversation = await this.dmService.getOrCreateConversation(userId, otherUserId);
+    res.status(201).json(conversation);
   };
 
-  /**
-   * GET /api/dm/:conversationId/messages
-   * Get messages for a conversation with pagination
-   */
-  getMessages = async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const userId = requireUserId(req);
-      const conversationId = requireConversationId(req);
-      const limit = parseLimit(req.query.limit as string);
-      const before = parseBefore(req.query.before as string);
+  getMessages = async (req: AuthRequest, res: Response) => {
+    const userId = requireUserId(req);
+    const conversationId = requireConversationId(req);
+    const limit = parseLimit(req.query.limit as string);
+    const before = parseBefore(req.query.before as string);
 
-      const messages = await this.dmService.getMessages(userId, conversationId, limit, before);
+    const messages = await this.dmService.getMessages(userId, conversationId, limit, before);
 
-      // Attach reactions to messages
-      const messageIds = messages.map((m: any) => m.id);
-      const reactionsMap = await this.dmReactionRepo.getReactionsForMessages(messageIds);
+    // Attach reactions to messages
+    const messageIds = messages.map((m: any) => m.id);
+    const reactionsMap = await this.dmReactionRepo.getReactionsForMessages(messageIds);
 
-      const messagesWithReactions = messages.map((m: any) => ({
-        ...m,
-        reactions: groupDmReactions(reactionsMap.get(m.id) || [], userId),
-      }));
+    const messagesWithReactions = messages.map((m: any) => ({
+      ...m,
+      reactions: groupDmReactions(reactionsMap.get(m.id) || [], userId),
+    }));
 
-      res.status(200).json(messagesWithReactions);
-    } catch (error) {
-      next(error);
-    }
+    res.status(200).json(messagesWithReactions);
   };
 
-  /**
-   * POST /api/dm/:conversationId/messages
-   * Send a message in a conversation
-   */
-  sendMessage = async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const userId = requireUserId(req);
-      const conversationId = requireConversationId(req);
-      const { message } = req.body;
+  sendMessage = async (req: AuthRequest, res: Response) => {
+    const userId = requireUserId(req);
+    const conversationId = requireConversationId(req);
+    const { message } = req.body;
 
-      if (typeof message !== 'string') {
-        throw new ValidationException('Message must be a string');
-      }
-
-      const msg = await this.dmService.sendMessage(userId, conversationId, message);
-      res.status(201).json(msg);
-    } catch (error) {
-      next(error);
+    if (typeof message !== 'string') {
+      throw new ValidationException('Message must be a string');
     }
+
+    const msg = await this.dmService.sendMessage(userId, conversationId, message);
+    res.status(201).json(msg);
   };
 
-  /**
-   * PUT /api/dm/:conversationId/read
-   * Mark a conversation as read
-   */
-  markAsRead = async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const userId = requireUserId(req);
-      const conversationId = requireConversationId(req);
+  markAsRead = async (req: AuthRequest, res: Response) => {
+    const userId = requireUserId(req);
+    const conversationId = requireConversationId(req);
 
-      await this.dmService.markAsRead(userId, conversationId);
-      res.status(204).send();
-    } catch (error) {
-      next(error);
-    }
+    await this.dmService.markAsRead(userId, conversationId);
+    res.status(204).send();
   };
 
-  /**
-   * GET /api/dm/unread-count
-   * Get total unread message count for badge display
-   */
-  getUnreadCount = async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const userId = requireUserId(req);
-      const count = await this.dmService.getTotalUnreadCount(userId);
-      res.status(200).json({ unread_count: count });
-    } catch (error) {
-      next(error);
-    }
+  getUnreadCount = async (req: AuthRequest, res: Response) => {
+    const userId = requireUserId(req);
+    const count = await this.dmService.getTotalUnreadCount(userId);
+    res.status(200).json({ unread_count: count });
   };
 
-  /**
-   * POST /api/dm/:conversationId/messages/:messageId/reactions
-   */
-  addReaction = async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const userId = requireUserId(req);
-      const conversationId = requireConversationId(req);
-      const messageId = parseInt(req.params.messageId as string, 10);
-      if (isNaN(messageId) || messageId <= 0) {
-        throw new ValidationException('Invalid message ID');
-      }
-
-      const { emoji } = req.body;
-
-      // Verify user is a participant of this conversation
-      const isParticipant = await this.dmRepo.isUserParticipant(conversationId, userId);
-      if (!isParticipant) {
-        throw new ForbiddenException('You are not a participant in this conversation');
-      }
-
-      // Verify message belongs to this conversation
-      const msgConvId = await this.dmReactionRepo.getMessageConversationId(messageId);
-      if (msgConvId === null) {
-        throw new NotFoundException('Message not found');
-      }
-      if (msgConvId !== conversationId) {
-        throw new ForbiddenException('Message does not belong to this conversation');
-      }
-
-      const added = await this.dmReactionRepo.addReaction(messageId, userId, emoji);
-      if (!added) {
-        return res.status(200).json({ message: 'Already reacted' });
-      }
-
-      // Emit reaction event to the other user
-      const conversation = await this.dmService.getConversationById(conversationId);
-      if (conversation) {
-        const otherUserId = conversation.user1Id === userId
-          ? conversation.user2Id
-          : conversation.user1Id;
-
-        const eventBus = tryGetEventBus();
-        eventBus?.publish({
-          type: EventTypes.DM_REACTION_ADDED,
-          userId: otherUserId,
-          payload: { conversationId, messageId, userId, emoji },
-        });
-      }
-
-      res.status(201).json({ messageId, userId, emoji });
-    } catch (error) {
-      next(error);
+  addReaction = async (req: AuthRequest, res: Response) => {
+    const userId = requireUserId(req);
+    const conversationId = requireConversationId(req);
+    const messageId = parseInt(req.params.messageId as string, 10);
+    if (isNaN(messageId) || messageId <= 0) {
+      throw new ValidationException('Invalid message ID');
     }
+
+    const { emoji } = req.body;
+
+    // Verify user is a participant of this conversation
+    const isParticipant = await this.dmRepo.isUserParticipant(conversationId, userId);
+    if (!isParticipant) {
+      throw new ForbiddenException('You are not a participant in this conversation');
+    }
+
+    // Verify message belongs to this conversation
+    const msgConvId = await this.dmReactionRepo.getMessageConversationId(messageId);
+    if (msgConvId === null) {
+      throw new NotFoundException('Message not found');
+    }
+    if (msgConvId !== conversationId) {
+      throw new ForbiddenException('Message does not belong to this conversation');
+    }
+
+    const added = await this.dmReactionRepo.addReaction(messageId, userId, emoji);
+    if (!added) {
+      return res.status(200).json({ message: 'Already reacted' });
+    }
+
+    // Emit reaction event to the other user
+    const conversation = await this.dmService.getConversationById(conversationId);
+    if (conversation) {
+      const otherUserId = conversation.user1Id === userId
+        ? conversation.user2Id
+        : conversation.user1Id;
+
+      const eventBus = tryGetEventBus();
+      eventBus?.publish({
+        type: EventTypes.DM_REACTION_ADDED,
+        userId: otherUserId,
+        payload: { conversationId, messageId, userId, emoji },
+      });
+    }
+
+    res.status(201).json({ messageId, userId, emoji });
   };
 
-  /**
-   * DELETE /api/dm/:conversationId/messages/:messageId/reactions
-   */
-  removeReaction = async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const userId = requireUserId(req);
-      const conversationId = requireConversationId(req);
-      const messageId = parseInt(req.params.messageId as string, 10);
-      if (isNaN(messageId) || messageId <= 0) {
-        throw new ValidationException('Invalid message ID');
-      }
-
-      const { emoji } = req.body;
-
-      // Verify user is a participant of this conversation
-      const isParticipant = await this.dmRepo.isUserParticipant(conversationId, userId);
-      if (!isParticipant) {
-        throw new ForbiddenException('You are not a participant in this conversation');
-      }
-
-      // Verify message belongs to this conversation
-      const msgConvId = await this.dmReactionRepo.getMessageConversationId(messageId);
-      if (msgConvId === null) {
-        throw new NotFoundException('Message not found');
-      }
-      if (msgConvId !== conversationId) {
-        throw new ForbiddenException('Message does not belong to this conversation');
-      }
-
-      const removed = await this.dmReactionRepo.removeReaction(messageId, userId, emoji);
-      if (!removed) {
-        return res.status(200).json({ message: 'Reaction not found' });
-      }
-
-      // Emit reaction event to the other user
-      const conversation = await this.dmService.getConversationById(conversationId);
-      if (conversation) {
-        const otherUserId = conversation.user1Id === userId
-          ? conversation.user2Id
-          : conversation.user1Id;
-
-        const eventBus = tryGetEventBus();
-        eventBus?.publish({
-          type: EventTypes.DM_REACTION_REMOVED,
-          userId: otherUserId,
-          payload: { conversationId, messageId, userId, emoji },
-        });
-      }
-
-      res.status(200).json({ messageId, userId, emoji });
-    } catch (error) {
-      next(error);
+  removeReaction = async (req: AuthRequest, res: Response) => {
+    const userId = requireUserId(req);
+    const conversationId = requireConversationId(req);
+    const messageId = parseInt(req.params.messageId as string, 10);
+    if (isNaN(messageId) || messageId <= 0) {
+      throw new ValidationException('Invalid message ID');
     }
+
+    const { emoji } = req.body;
+
+    // Verify user is a participant of this conversation
+    const isParticipant = await this.dmRepo.isUserParticipant(conversationId, userId);
+    if (!isParticipant) {
+      throw new ForbiddenException('You are not a participant in this conversation');
+    }
+
+    // Verify message belongs to this conversation
+    const msgConvId = await this.dmReactionRepo.getMessageConversationId(messageId);
+    if (msgConvId === null) {
+      throw new NotFoundException('Message not found');
+    }
+    if (msgConvId !== conversationId) {
+      throw new ForbiddenException('Message does not belong to this conversation');
+    }
+
+    const removed = await this.dmReactionRepo.removeReaction(messageId, userId, emoji);
+    if (!removed) {
+      return res.status(200).json({ message: 'Reaction not found' });
+    }
+
+    // Emit reaction event to the other user
+    const conversation = await this.dmService.getConversationById(conversationId);
+    if (conversation) {
+      const otherUserId = conversation.user1Id === userId
+        ? conversation.user2Id
+        : conversation.user1Id;
+
+      const eventBus = tryGetEventBus();
+      eventBus?.publish({
+        type: EventTypes.DM_REACTION_REMOVED,
+        userId: otherUserId,
+        payload: { conversationId, messageId, userId, emoji },
+      });
+    }
+
+    res.status(200).json({ messageId, userId, emoji });
   };
 }

@@ -124,7 +124,7 @@ export class RosterPlayersRepository {
       'SELECT COUNT(*) as count FROM roster_players WHERE roster_id = $1',
       [rosterId]
     );
-    return parseInt(result.rows[0].count, 10);
+    return Number(result.rows[0].count) || 0;
   }
 
   /**

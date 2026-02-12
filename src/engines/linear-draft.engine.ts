@@ -1,5 +1,5 @@
 import { BaseDraftEngine } from './base-draft.engine';
-import { Draft, DraftOrderEntry } from '../modules/drafts/drafts.model';
+import type { Draft, DraftOrderEntry } from '../modules/drafts/drafts.model';
 
 /**
  * Linear draft engine.
@@ -10,6 +10,10 @@ import { Draft, DraftOrderEntry } from '../modules/drafts/drafts.model';
  *
  * This gives earlier picks a significant advantage,
  * but is simpler to understand.
+ *
+ * LOCK CONTRACT:
+ * Inherits from BaseDraftEngine. No additional locks acquired.
+ * All lock acquisition happens in the base class (DRAFT lock via runInDraftTransaction).
  */
 export class LinearDraftEngine extends BaseDraftEngine {
   readonly draftType = 'linear';

@@ -1,23 +1,23 @@
 import { Pool, PoolClient } from 'pg';
 import { MatchupsRepository } from './matchups.repository';
-import { LineupsRepository } from '../lineups/lineups.repository';
-import { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
-import { ScoringService } from '../scoring/scoring.service';
-import { PlayerStatsRepository } from '../scoring/scoring.repository';
-import { GameProgressService } from '../scoring/game-progress.service';
-import { ScoringRules } from '../scoring/scoring.model';
+import type { LineupsRepository } from '../lineups/lineups.repository';
+import type { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
+import type { ScoringService } from '../scoring/scoring.service';
+import type { PlayerStatsRepository } from '../scoring/scoring.repository';
+import type { GameProgressService } from '../scoring/game-progress.service';
+import type { ScoringRules } from '../scoring/scoring.model';
 import { normalizeLeagueScoringSettings } from '../scoring/scoring-settings-normalizer';
 import { calculatePlayerPoints } from '../scoring/scoring-calculator';
-import { PlayerRepository } from '../players/players.repository';
+import type { PlayerRepository } from '../players/players.repository';
 import { MedianService } from './median.service';
-import { BestballService } from '../bestball/bestball.service';
+import type { BestballService } from '../bestball/bestball.service';
 import {
   MatchupDetails,
   MatchupWithLineups,
   MatchupTeamLineup,
   MatchupPlayerPerformance,
 } from './matchups.model';
-import { LineupSlots, PositionSlot } from '../lineups/lineups.model';
+import type { LineupSlots, PositionSlot } from '../lineups/lineups.model';
 import {
   NotFoundException,
   ForbiddenException,

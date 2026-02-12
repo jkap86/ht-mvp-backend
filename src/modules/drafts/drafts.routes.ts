@@ -31,6 +31,7 @@ import { StateActionHandler } from './action-handlers/state.handler';
 import { PickActionHandler } from './action-handlers/pick.handler';
 import { QueueActionHandler } from './action-handlers/queue.handler';
 import { AuctionActionHandler } from './action-handlers/auction.handler';
+import { asyncHandler } from '../../shared/async-handler';
 
 // Resolve dependencies from container
 const draftService = container.resolve<DraftService>(KEYS.DRAFT_SERVICE);
@@ -71,99 +72,99 @@ const router = Router({ mergeParams: true }); // mergeParams to access :leagueId
 router.use(authMiddleware);
 
 // GET /api/leagues/:leagueId/drafts
-router.get('/', apiReadLimiter, draftController.getLeagueDrafts);
+router.get('/', apiReadLimiter, asyncHandler(draftController.getLeagueDrafts));
 
 // GET /api/leagues/:leagueId/drafts/config (draft configuration options and defaults)
-router.get('/config', apiReadLimiter, draftController.getDraftConfig);
+router.get('/config', apiReadLimiter, asyncHandler(draftController.getDraftConfig));
 
 // POST /api/leagues/:leagueId/drafts
 router.post(
   '/',
   draftModifyLimiter,
   validateRequest(createDraftSchema),
-  draftController.createDraft
+  asyncHandler(draftController.createDraft)
 );
 
 // GET /api/leagues/:leagueId/drafts/:draftId
-router.get('/:draftId', apiReadLimiter, draftController.getDraft);
+router.get('/:draftId', apiReadLimiter, asyncHandler(draftController.getDraft));
 
 // PATCH /api/leagues/:leagueId/drafts/:draftId/settings (commissioner only)
 router.patch(
   '/:draftId/settings',
   draftModifyLimiter,
   validateRequest(updateDraftSettingsSchema),
-  draftController.updateDraftSettings
+  asyncHandler(draftController.updateDraftSettings)
 );
 
 // DELETE /api/leagues/:leagueId/drafts/:draftId
-router.delete('/:draftId', draftModifyLimiter, draftController.deleteDraft);
+router.delete('/:draftId', draftModifyLimiter, asyncHandler(draftController.deleteDraft));
 
 // GET /api/leagues/:leagueId/drafts/:draftId/order
-router.get('/:draftId/order', apiReadLimiter, draftController.getDraftOrder);
+router.get('/:draftId/order', apiReadLimiter, asyncHandler(draftController.getDraftOrder));
 
 // POST /api/leagues/:leagueId/drafts/:draftId/randomize
-router.post('/:draftId/randomize', draftModifyLimiter, draftController.randomizeDraftOrder);
+router.post('/:draftId/randomize', draftModifyLimiter, asyncHandler(draftController.randomizeDraftOrder));
 
 // POST /api/leagues/:leagueId/drafts/:draftId/order/confirm
-router.post('/:draftId/order/confirm', draftModifyLimiter, draftController.confirmDraftOrder);
+router.post('/:draftId/order/confirm', draftModifyLimiter, asyncHandler(draftController.confirmDraftOrder));
 
 // POST /api/leagues/:leagueId/drafts/:draftId/order/from-pick-ownership
 // Sets draft order based on Round 1 pick ownership from vet draft selections
-router.post('/:draftId/order/from-pick-ownership', draftModifyLimiter, draftController.setOrderFromPickOwnership);
+router.post('/:draftId/order/from-pick-ownership', draftModifyLimiter, asyncHandler(draftController.setOrderFromPickOwnership));
 
 // POST /api/leagues/:leagueId/drafts/:draftId/start
-router.post('/:draftId/start', draftModifyLimiter, draftController.startDraft);
+router.post('/:draftId/start', draftModifyLimiter, asyncHandler(draftController.startDraft));
 
 // POST /api/leagues/:leagueId/drafts/:draftId/actions (unified action endpoint)
 router.post(
   '/:draftId/actions',
   draftModifyLimiter,
   validateRequest(draftActionSchema),
-  draftController.performAction
+  asyncHandler(draftController.performAction)
 );
 
 // POST /api/leagues/:leagueId/drafts/:draftId/undo (commissioner undo last pick)
-router.post('/:draftId/undo', draftModifyLimiter, draftController.undoPick);
+router.post('/:draftId/undo', draftModifyLimiter, asyncHandler(draftController.undoPick));
 
 // GET /api/leagues/:leagueId/drafts/:draftId/picks
-router.get('/:draftId/picks', apiReadLimiter, draftController.getDraftPicks);
+router.get('/:draftId/picks', apiReadLimiter, asyncHandler(draftController.getDraftPicks));
 
 // GET /api/leagues/:leagueId/drafts/:draftId/available-pick-assets
-router.get('/:draftId/available-pick-assets', apiReadLimiter, draftController.getAvailablePickAssets);
+router.get('/:draftId/available-pick-assets', apiReadLimiter, asyncHandler(draftController.getAvailablePickAssets));
 
 // POST /api/leagues/:leagueId/drafts/:draftId/pick
 router.post(
   '/:draftId/pick',
   draftPickLimiter,
   validateRequest(makePickSchema),
-  draftController.makePick
+  asyncHandler(draftController.makePick)
 );
 
 // GET /api/leagues/:leagueId/drafts/:draftId/auction/state
-router.get('/:draftId/auction/state', apiReadLimiter, draftController.getAuctionState);
+router.get('/:draftId/auction/state', apiReadLimiter, asyncHandler(draftController.getAuctionState));
 
 // GET /api/leagues/:leagueId/drafts/:draftId/auction/lots
-router.get('/:draftId/auction/lots', apiReadLimiter, draftController.getAuctionLots);
+router.get('/:draftId/auction/lots', apiReadLimiter, asyncHandler(draftController.getAuctionLots));
 
 // GET /api/leagues/:leagueId/drafts/:draftId/auction/lots/:lotId
-router.get('/:draftId/auction/lots/:lotId', apiReadLimiter, draftController.getAuctionLot);
+router.get('/:draftId/auction/lots/:lotId', apiReadLimiter, asyncHandler(draftController.getAuctionLot));
 
 // GET /api/leagues/:leagueId/drafts/:draftId/auction/lots/:lotId/history
-router.get('/:draftId/auction/lots/:lotId/history', apiReadLimiter, draftController.getLotBidHistory);
+router.get('/:draftId/auction/lots/:lotId/history', apiReadLimiter, asyncHandler(draftController.getLotBidHistory));
 
 // GET /api/leagues/:leagueId/drafts/:draftId/auction/budgets
-router.get('/:draftId/auction/budgets', apiReadLimiter, draftController.getAuctionBudgets);
+router.get('/:draftId/auction/budgets', apiReadLimiter, asyncHandler(draftController.getAuctionBudgets));
 
 // Queue routes
 // GET /api/leagues/:leagueId/drafts/:draftId/queue
-router.get('/:draftId/queue', apiReadLimiter, queueController.getQueue);
+router.get('/:draftId/queue', apiReadLimiter, asyncHandler(queueController.getQueue));
 
 // POST /api/leagues/:leagueId/drafts/:draftId/queue
 router.post(
   '/:draftId/queue',
   queueLimiter,
   validateRequest(addToQueueSchema),
-  queueController.addToQueue
+  asyncHandler(queueController.addToQueue)
 );
 
 // PUT /api/leagues/:leagueId/drafts/:draftId/queue (reorder)
@@ -171,26 +172,26 @@ router.put(
   '/:draftId/queue',
   queueLimiter,
   validateRequest(reorderQueueSchema),
-  queueController.reorderQueue
+  asyncHandler(queueController.reorderQueue)
 );
 
 // DELETE /api/leagues/:leagueId/drafts/:draftId/queue/:playerId
-router.delete('/:draftId/queue/:playerId', queueLimiter, queueController.removeFromQueue);
+router.delete('/:draftId/queue/:playerId', queueLimiter, asyncHandler(queueController.removeFromQueue));
 
 // DELETE /api/leagues/:leagueId/drafts/:draftId/queue/pick-asset/:pickAssetId
-router.delete('/:draftId/queue/pick-asset/:pickAssetId', queueLimiter, queueController.removePickAssetFromQueue);
+router.delete('/:draftId/queue/pick-asset/:pickAssetId', queueLimiter, asyncHandler(queueController.removePickAssetFromQueue));
 
 // PATCH /api/leagues/:leagueId/drafts/:draftId/autodraft
-router.patch('/:draftId/autodraft', draftModifyLimiter, draftController.toggleAutodraft);
+router.patch('/:draftId/autodraft', draftModifyLimiter, asyncHandler(draftController.toggleAutodraft));
 
 // Derby routes (draft order selection phase)
 // POST /api/leagues/:leagueId/drafts/:draftId/derby/start
-router.post('/:draftId/derby/start', draftModifyLimiter, derbyController.startDerby);
+router.post('/:draftId/derby/start', draftModifyLimiter, asyncHandler(derbyController.startDerby));
 
 // POST /api/leagues/:leagueId/drafts/:draftId/derby/pick-slot
-router.post('/:draftId/derby/pick-slot', draftPickLimiter, derbyController.pickSlot);
+router.post('/:draftId/derby/pick-slot', draftPickLimiter, asyncHandler(derbyController.pickSlot));
 
 // GET /api/leagues/:leagueId/drafts/:draftId/derby/state
-router.get('/:draftId/derby/state', apiReadLimiter, derbyController.getDerbyState);
+router.get('/:draftId/derby/state', apiReadLimiter, asyncHandler(derbyController.getDerbyState));
 
 export default router;

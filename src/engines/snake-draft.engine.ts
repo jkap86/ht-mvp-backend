@@ -1,5 +1,5 @@
 import { BaseDraftEngine } from './base-draft.engine';
-import { Draft, DraftOrderEntry } from '../modules/drafts/drafts.model';
+import type { Draft, DraftOrderEntry } from '../modules/drafts/drafts.model';
 
 /**
  * Snake draft engine.
@@ -11,6 +11,10 @@ import { Draft, DraftOrderEntry } from '../modules/drafts/drafts.model';
  *   Round 1: Team1, Team2, Team3, Team4
  *   Round 2: Team4, Team3, Team2, Team1
  *   Round 3: Team1, Team2, Team3, Team4
+ *
+ * LOCK CONTRACT:
+ * Inherits from BaseDraftEngine. No additional locks acquired.
+ * All lock acquisition happens in the base class (DRAFT lock via runInDraftTransaction).
  */
 export class SnakeDraftEngine extends BaseDraftEngine {
   readonly draftType = 'snake';

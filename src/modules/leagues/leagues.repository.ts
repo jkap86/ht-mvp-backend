@@ -245,7 +245,7 @@ export class LeagueRepository {
 
     const row = result.rows[0];
     if (!row.commissioner_roster_id || !row.roster_id) return false;
-    return parseInt(row.commissioner_roster_id, 10) === row.roster_id;
+    return Number(row.commissioner_roster_id) === row.roster_id;
   }
 
   async resetForNewSeason(
@@ -295,7 +295,7 @@ export class LeagueRepository {
         [leagueId]
       );
       const commissionerRosterId = leagueResult.rows[0]?.commissioner_roster_id
-        ? parseInt(leagueResult.rows[0].commissioner_roster_id, 10)
+        ? Number(leagueResult.rows[0].commissioner_roster_id)
         : null;
 
       // Clear or reset rosters (always preserve commissioner)
@@ -362,7 +362,7 @@ export class LeagueRepository {
       [leagueId]
     );
 
-    if (parseInt(draftResult.rows[0].count, 10) > 0) {
+    if ((Number(draftResult.rows[0].count) || 0) > 0) {
       return {
         allowed: false,
         reason: 'League mode cannot be changed after a draft has started',
@@ -377,7 +377,7 @@ export class LeagueRepository {
       [leagueId]
     );
 
-    if (parseInt(rosterPlayersResult.rows[0].count, 10) > 0) {
+    if ((Number(rosterPlayersResult.rows[0].count) || 0) > 0) {
       return {
         allowed: false,
         reason: 'League mode cannot be changed after players have been added to rosters',
@@ -422,10 +422,10 @@ export class LeagueRepository {
     );
 
     return result.rows.map((row) => {
-      const memberCount = parseInt(row.member_count, 10);
+      const memberCount = Number(row.member_count) || 0;
       const totalRosters = row.total_rosters;
       const hasDues = row.has_dues;
-      const paidCount = parseInt(row.paid_count, 10);
+      const paidCount = Number(row.paid_count) || 0;
 
       return {
         id: row.id,

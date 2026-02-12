@@ -1,4 +1,4 @@
-import { Response, NextFunction } from 'express';
+import { Response } from 'express';
 import { AuthRequest } from '../../middleware/auth.middleware';
 import { LeagueService } from './leagues.service';
 import { RosterService } from './roster.service';
@@ -14,283 +14,223 @@ export class LeagueController {
     private readonly dashboardService?: DashboardService
   ) {}
 
-  getMyLeagues = async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const userId = requireUserId(req);
-      const limit = Math.min(parseInt(req.query.limit as string, 10) || 50, 100);
-      const offset = Math.max(parseInt(req.query.offset as string, 10) || 0, 0);
+  getMyLeagues = async (req: AuthRequest, res: Response) => {
+    const userId = requireUserId(req);
+    const limit = Math.min(parseInt(req.query.limit as string, 10) || 50, 100);
+    const offset = Math.max(parseInt(req.query.offset as string, 10) || 0, 0);
 
-      const leagues = await this.leagueService.getUserLeagues(userId, limit, offset);
-      res.status(200).json(leagues);
-    } catch (error) {
-      next(error);
-    }
+    const leagues = await this.leagueService.getUserLeagues(userId, limit, offset);
+    res.status(200).json(leagues);
   };
 
-  getLeague = async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const userId = requireUserId(req);
-      const leagueId = requireLeagueId(req);
+  getLeague = async (req: AuthRequest, res: Response) => {
+    const userId = requireUserId(req);
+    const leagueId = requireLeagueId(req);
 
-      const league = await this.leagueService.getLeagueById(leagueId, userId);
-      res.status(200).json(league);
-    } catch (error) {
-      next(error);
-    }
+    const league = await this.leagueService.getLeagueById(leagueId, userId);
+    res.status(200).json(league);
   };
 
-  createLeague = async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const userId = requireUserId(req);
-      const idempotencyKey = req.headers['x-idempotency-key'] as string | undefined;
+  createLeague = async (req: AuthRequest, res: Response) => {
+    const userId = requireUserId(req);
+    const idempotencyKey = req.headers['x-idempotency-key'] as string | undefined;
 
-      const {
+    const {
+      name,
+      season,
+      total_rosters = 12,
+      settings = {},
+      scoring_settings = {},
+      is_public = false,
+      mode,
+      league_settings,
+      draft_structure,
+    } = req.body;
+
+    const league = await this.leagueService.createLeague(
+      {
         name,
         season,
-        total_rosters = 12,
-        settings = {},
-        scoring_settings = {},
-        is_public = false,
+        totalRosters: total_rosters,
+        settings,
+        scoringSettings: scoring_settings,
+        isPublic: is_public,
         mode,
-        league_settings,
-        draft_structure,
-      } = req.body;
+        leagueSettings: league_settings,
+        draftStructure: draft_structure,
+      },
+      userId,
+      idempotencyKey
+    );
 
-      const league = await this.leagueService.createLeague(
-        {
-          name,
-          season,
-          totalRosters: total_rosters,
-          settings,
-          scoringSettings: scoring_settings,
-          isPublic: is_public,
-          mode,
-          leagueSettings: league_settings,
-          draftStructure: draft_structure,
-        },
-        userId,
-        idempotencyKey
-      );
-
-      res.status(201).json(league);
-    } catch (error) {
-      next(error);
-    }
+    res.status(201).json(league);
   };
 
-  joinLeague = async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const userId = requireUserId(req);
-      const leagueId = requireLeagueId(req);
+  joinLeague = async (req: AuthRequest, res: Response) => {
+    const userId = requireUserId(req);
+    const leagueId = requireLeagueId(req);
 
-      if (!this.rosterService) {
-        throw new ValidationException('Roster service not available');
-      }
-      const result = await this.rosterService.joinLeague(leagueId, userId);
-      res.status(200).json(result);
-    } catch (error) {
-      next(error);
+    if (!this.rosterService) {
+      throw new ValidationException('Roster service not available');
     }
+    const result = await this.rosterService.joinLeague(leagueId, userId);
+    res.status(200).json(result);
   };
 
-  updateLeague = async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const userId = requireUserId(req);
-      const leagueId = requireLeagueId(req);
+  updateLeague = async (req: AuthRequest, res: Response) => {
+    const userId = requireUserId(req);
+    const leagueId = requireLeagueId(req);
 
-      const updates: any = {};
-      if (req.body.name !== undefined) updates.name = req.body.name;
-      if (req.body.mode !== undefined) updates.mode = req.body.mode;
-      if (req.body.settings !== undefined) updates.settings = req.body.settings;
-      if (req.body.league_settings !== undefined) updates.leagueSettings = req.body.league_settings;
-      if (req.body.scoring_settings !== undefined) updates.scoringSettings = req.body.scoring_settings;
-      if (req.body.status !== undefined) updates.status = req.body.status;
-      if (req.body.is_public !== undefined) updates.isPublic = req.body.is_public;
-      if (req.body.total_rosters !== undefined) updates.totalRosters = req.body.total_rosters;
+    const updates: any = {};
+    if (req.body.name !== undefined) updates.name = req.body.name;
+    if (req.body.mode !== undefined) updates.mode = req.body.mode;
+    if (req.body.settings !== undefined) updates.settings = req.body.settings;
+    if (req.body.league_settings !== undefined) updates.leagueSettings = req.body.league_settings;
+    if (req.body.scoring_settings !== undefined) updates.scoringSettings = req.body.scoring_settings;
+    if (req.body.status !== undefined) updates.status = req.body.status;
+    if (req.body.is_public !== undefined) updates.isPublic = req.body.is_public;
+    if (req.body.total_rosters !== undefined) updates.totalRosters = req.body.total_rosters;
 
-      const league = await this.leagueService.updateLeague(leagueId, userId, updates);
-      res.status(200).json(league);
-    } catch (error) {
-      next(error);
-    }
+    const league = await this.leagueService.updateLeague(leagueId, userId, updates);
+    res.status(200).json(league);
   };
 
-  reinstateMember = async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const userId = requireUserId(req);
-      const leagueId = requireLeagueId(req);
-      const rosterId = parseInt(req.params.rosterId as string, 10);
+  reinstateMember = async (req: AuthRequest, res: Response) => {
+    const userId = requireUserId(req);
+    const leagueId = requireLeagueId(req);
+    const rosterId = parseInt(req.params.rosterId as string, 10);
 
-      if (isNaN(rosterId)) {
-        throw new ValidationException('Invalid roster ID');
-      }
-
-      if (!this.rosterService) {
-        throw new ValidationException('Roster service not available');
-      }
-      const result = await this.rosterService.reinstateMember(leagueId, rosterId, userId);
-      res.status(200).json(result);
-    } catch (error) {
-      next(error);
+    if (isNaN(rosterId)) {
+      throw new ValidationException('Invalid roster ID');
     }
+
+    if (!this.rosterService) {
+      throw new ValidationException('Roster service not available');
+    }
+    const result = await this.rosterService.reinstateMember(leagueId, rosterId, userId);
+    res.status(200).json(result);
   };
 
-  deleteLeague = async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const userId = requireUserId(req);
-      const leagueId = requireLeagueId(req);
-      const { confirmationName } = deleteLeagueSchema.parse(req.body);
+  deleteLeague = async (req: AuthRequest, res: Response) => {
+    const userId = requireUserId(req);
+    const leagueId = requireLeagueId(req);
+    const { confirmationName } = deleteLeagueSchema.parse(req.body);
 
-      await this.leagueService.deleteLeague(leagueId, userId, confirmationName);
-      res.status(200).json({ message: 'League deleted successfully' });
-    } catch (error) {
-      next(error);
-    }
+    await this.leagueService.deleteLeague(leagueId, userId, confirmationName);
+    res.status(200).json({ message: 'League deleted successfully' });
   };
 
-  updateSeasonControls = async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const userId = requireUserId(req);
-      const leagueId = requireLeagueId(req);
-      const input = seasonControlsSchema.parse(req.body);
+  updateSeasonControls = async (req: AuthRequest, res: Response) => {
+    const userId = requireUserId(req);
+    const leagueId = requireLeagueId(req);
+    const input = seasonControlsSchema.parse(req.body);
 
-      const league = await this.leagueService.updateSeasonControls(leagueId, userId, input);
-      res.status(200).json(league);
-    } catch (error) {
-      next(error);
-    }
+    const league = await this.leagueService.updateSeasonControls(leagueId, userId, input);
+    res.status(200).json(league);
   };
 
-  getMembers = async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const userId = requireUserId(req);
-      const leagueId = requireLeagueId(req);
+  getMembers = async (req: AuthRequest, res: Response) => {
+    const userId = requireUserId(req);
+    const leagueId = requireLeagueId(req);
 
-      if (!this.rosterService) {
-        throw new ValidationException('Roster service not available');
-      }
-      const members = await this.rosterService.getLeagueMembers(leagueId, userId);
-      res.status(200).json(members);
-    } catch (error) {
-      next(error);
+    if (!this.rosterService) {
+      throw new ValidationException('Roster service not available');
     }
+    const members = await this.rosterService.getLeagueMembers(leagueId, userId);
+    res.status(200).json(members);
   };
 
-  kickMember = async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const userId = requireUserId(req);
-      const leagueId = requireLeagueId(req);
-      const rosterId = parseInt(req.params.rosterId as string, 10);
+  kickMember = async (req: AuthRequest, res: Response) => {
+    const userId = requireUserId(req);
+    const leagueId = requireLeagueId(req);
+    const rosterId = parseInt(req.params.rosterId as string, 10);
 
-      if (isNaN(rosterId)) {
-        throw new ValidationException('Invalid roster ID');
-      }
-
-      if (!this.rosterService) {
-        throw new ValidationException('Roster service not available');
-      }
-      const result = await this.rosterService.kickMember(leagueId, rosterId, userId);
-      res.status(200).json(result);
-    } catch (error) {
-      next(error);
+    if (isNaN(rosterId)) {
+      throw new ValidationException('Invalid roster ID');
     }
+
+    if (!this.rosterService) {
+      throw new ValidationException('Roster service not available');
+    }
+    const result = await this.rosterService.kickMember(leagueId, rosterId, userId);
+    res.status(200).json(result);
   };
 
-  devAddUsers = async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const userId = requireUserId(req);
-      const leagueId = requireLeagueId(req);
+  devAddUsers = async (req: AuthRequest, res: Response) => {
+    const userId = requireUserId(req);
+    const leagueId = requireLeagueId(req);
 
-      // Even in development, require commissioner access to prevent abuse
-      const isCommissioner = await this.leagueService.isCommissioner(leagueId, userId);
-      if (!isCommissioner) {
-        throw new ForbiddenException('Only the commissioner can add users');
-      }
-
-      if (!this.rosterService) {
-        throw new ValidationException('Roster service not available');
-      }
-
-      const { usernames } = req.body;
-      if (!Array.isArray(usernames) || usernames.length === 0) {
-        throw new ValidationException('usernames must be a non-empty array');
-      }
-
-      const results = await this.rosterService.devBulkAddUsers(leagueId, usernames);
-      res.status(200).json({ results });
-    } catch (error) {
-      next(error);
+    // Even in development, require commissioner access to prevent abuse
+    const isCommissioner = await this.leagueService.isCommissioner(leagueId, userId);
+    if (!isCommissioner) {
+      throw new ForbiddenException('Only the commissioner can add users');
     }
+
+    if (!this.rosterService) {
+      throw new ValidationException('Roster service not available');
+    }
+
+    const { usernames } = req.body;
+    if (!Array.isArray(usernames) || usernames.length === 0) {
+      throw new ValidationException('usernames must be a non-empty array');
+    }
+
+    const results = await this.rosterService.devBulkAddUsers(leagueId, usernames);
+    res.status(200).json({ results });
   };
 
-  discoverLeagues = async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const userId = requireUserId(req);
-      const limit = Math.min(parseInt(req.query.limit as string, 10) || 50, 100);
-      const offset = Math.max(parseInt(req.query.offset as string, 10) || 0, 0);
+  discoverLeagues = async (req: AuthRequest, res: Response) => {
+    const userId = requireUserId(req);
+    const limit = Math.min(parseInt(req.query.limit as string, 10) || 50, 100);
+    const offset = Math.max(parseInt(req.query.offset as string, 10) || 0, 0);
 
-      const leagues = await this.leagueService.discoverPublicLeagues(userId, limit, offset);
-      res.status(200).json(leagues);
-    } catch (error) {
-      next(error);
-    }
+    const leagues = await this.leagueService.discoverPublicLeagues(userId, limit, offset);
+    res.status(200).json(leagues);
   };
 
-  joinPublicLeague = async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const userId = requireUserId(req);
-      const leagueId = requireLeagueId(req);
-      const idempotencyKey = req.headers['x-idempotency-key'] as string | undefined;
+  joinPublicLeague = async (req: AuthRequest, res: Response) => {
+    const userId = requireUserId(req);
+    const leagueId = requireLeagueId(req);
+    const idempotencyKey = req.headers['x-idempotency-key'] as string | undefined;
 
-      const league = await this.leagueService.joinPublicLeague(leagueId, userId, idempotencyKey);
-      res.status(200).json(league);
-    } catch (error) {
-      next(error);
-    }
+    const league = await this.leagueService.joinPublicLeague(leagueId, userId, idempotencyKey);
+    res.status(200).json(league);
   };
 
-  resetLeague = async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const userId = requireUserId(req);
-      const leagueId = requireLeagueId(req);
-      const idempotencyKey = req.headers['x-idempotency-key'] as string | undefined;
+  resetLeague = async (req: AuthRequest, res: Response) => {
+    const userId = requireUserId(req);
+    const leagueId = requireLeagueId(req);
+    const idempotencyKey = req.headers['x-idempotency-key'] as string | undefined;
 
-      const { new_season, keep_members, clear_chat, confirmation_name } = req.body;
+    const { new_season, keep_members, clear_chat, confirmation_name } = req.body;
 
-      if (!new_season || !confirmation_name) {
-        throw new ValidationException('new_season and confirmation_name are required');
-      }
-
-      const league = await this.leagueService.resetLeagueForNewSeason(
-        leagueId,
-        userId,
-        new_season,
-        {
-          keepMembers: keep_members ?? false,
-          clearChat: clear_chat ?? true,
-          confirmationName: confirmation_name,
-        },
-        idempotencyKey
-      );
-
-      res.status(200).json(league);
-    } catch (error) {
-      next(error);
+    if (!new_season || !confirmation_name) {
+      throw new ValidationException('new_season and confirmation_name are required');
     }
+
+    const league = await this.leagueService.resetLeagueForNewSeason(
+      leagueId,
+      userId,
+      new_season,
+      {
+        keepMembers: keep_members ?? false,
+        clearChat: clear_chat ?? true,
+        confirmationName: confirmation_name,
+      },
+      idempotencyKey
+    );
+
+    res.status(200).json(league);
   };
 
-  getDashboard = async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const userId = requireUserId(req);
-      const leagueId = requireLeagueId(req);
+  getDashboard = async (req: AuthRequest, res: Response) => {
+    const userId = requireUserId(req);
+    const leagueId = requireLeagueId(req);
 
-      if (!this.dashboardService) {
-        throw new ValidationException('Dashboard service not available');
-      }
-      const dashboard = await this.dashboardService.getDashboardSummary(leagueId, userId);
-      res.status(200).json(dashboard);
-    } catch (error) {
-      next(error);
+    if (!this.dashboardService) {
+      throw new ValidationException('Dashboard service not available');
     }
+    const dashboard = await this.dashboardService.getDashboardSummary(leagueId, userId);
+    res.status(200).json(dashboard);
   };
 }

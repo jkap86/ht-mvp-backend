@@ -8,7 +8,7 @@ import {
 } from '../../../utils/exceptions';
 import { runWithLock, LockDomain } from '../../../shared/transaction-runner';
 import { proposeTrade, ProposeTradeContext } from './propose-trade.use-case';
-import { EventListenerService } from '../../chat/event-listener.service';
+import type { EventListenerService } from '../../chat/event-listener.service';
 import { logger } from '../../../config/logger.config';
 
 export interface CounterTradeContext extends ProposeTradeContext {
@@ -18,6 +18,12 @@ export interface CounterTradeContext extends ProposeTradeContext {
 
 /**
  * Counter a trade
+ *
+ * LOCK CONTRACT:
+ * - Acquires TRADE lock (300M + leagueId) via runWithLock — serializes trade state changes per league
+ * - Calls proposeTrade() inside the same TRADE lock transaction (no additional locks)
+ *
+ * Only one lock domain (TRADE) is acquired. No nested cross-domain advisory locks.
  */
 export async function counterTrade(
   ctx: CounterTradeContext,

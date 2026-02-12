@@ -1,11 +1,11 @@
 import { Pool, PoolClient } from 'pg';
 import { LeagueRepository, RosterRepository } from './leagues.repository';
-import { UserRepository } from '../auth/auth.repository';
-import { RosterPlayersRepository } from '../rosters/rosters.repository';
-import { DuesRepository } from '../dues/dues.repository';
-import { WaiverPriorityRepository, FaabBudgetRepository } from '../waivers/waivers.repository';
+import type { UserRepository } from '../auth/auth.repository';
+import type { RosterPlayersRepository } from '../rosters/rosters.repository';
+import type { DuesRepository } from '../dues/dues.repository';
+import type { WaiverPriorityRepository, FaabBudgetRepository } from '../waivers/waivers.repository';
 import { parseWaiverSettings } from '../waivers/waivers.model';
-import { EventListenerService } from '../chat/event-listener.service';
+import type { EventListenerService } from '../chat/event-listener.service';
 import { EventTypes, tryGetEventBus } from '../../shared/events';
 import {
   NotFoundException,
@@ -63,6 +63,13 @@ async function canJoinLeagueNow(
   return { eligible: true };
 }
 
+/**
+ * LOCK CONTRACT:
+ * - joinLeague() acquires LEAGUE lock (100M + leagueId) via runWithLock — prevents concurrent joins
+ * - kickMember() acquires ROSTER lock (200M + targetRosterId) via runWithLock — serializes roster deletion
+ *
+ * No method holds both LEAGUE and ROSTER locks simultaneously.
+ */
 export class RosterService {
   constructor(
     private readonly db: Pool,
@@ -293,7 +300,7 @@ export class RosterService {
       [leagueId]
     );
 
-    const paidCount = parseInt(paidResult.rows[0].paid_count, 10) || 0;
+    const paidCount = Number(paidResult.rows[0].paid_count) || 0;
 
     // Can join as bench if not all active members have paid
     return paidCount < activeRosterCount;

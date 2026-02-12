@@ -6,6 +6,16 @@ import { tryGetEventBus, EventTypes } from '../shared/events';
 import { getLockId, LockDomain } from '../shared/locks';
 import { logger } from '../config/logger.config';
 
+/**
+ * LOCK CONTRACT:
+ * - processWaivers() acquires JOB lock (900M + 2) via pg_try_advisory_lock — singleton job execution
+ *   Then delegates to WaiversService.processLeagueClaims() which acquires WAIVER lock (400M + leagueId)
+ *   JOB lock is session-level (not transactional); released explicitly after processing
+ *
+ * Lock ordering: JOB lock is session-level, WAIVER lock is transactional (inside processLeagueClaims).
+ * No deadlock risk because session-level locks don't participate in transactional lock ordering.
+ */
+
 let intervalId: NodeJS.Timeout | null = null;
 
 // Run every minute to check if any leagues need waiver processing

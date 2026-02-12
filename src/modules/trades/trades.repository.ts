@@ -668,7 +668,7 @@ export class TradeVotesRepository {
     );
     const counts = { approve: 0, veto: 0 };
     result.rows.forEach((row) => {
-      counts[row.vote as 'approve' | 'veto'] = parseInt(row.count, 10);
+      counts[row.vote as 'approve' | 'veto'] = Number(row.count) || 0;
     });
     return counts;
   }

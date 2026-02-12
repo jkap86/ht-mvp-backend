@@ -1,6 +1,6 @@
 import { FaabBudgetRepository, WaiverClaimsRepository } from '../waivers.repository';
-import { RosterPlayersRepository } from '../../rosters/rosters.repository';
-import { LeagueRepository, RosterRepository } from '../../leagues/leagues.repository';
+import type { RosterPlayersRepository } from '../../rosters/rosters.repository';
+import type { LeagueRepository, RosterRepository } from '../../leagues/leagues.repository';
 import { EventTypes, tryGetEventBus } from '../../../shared/events';
 import {
   WaiverClaimWithDetails,

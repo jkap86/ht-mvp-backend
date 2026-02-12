@@ -59,7 +59,7 @@ export class DraftRepository {
     draftType: string,
     rounds: number,
     pickTimeSeconds: number,
-    settings?: DraftSettings | Record<string, any>,
+    settings?: DraftSettings,
     scheduledStart?: Date
   ): Promise<Draft> {
     return this.core.create(leagueId, draftType, rounds, pickTimeSeconds, settings, scheduledStart);

@@ -48,7 +48,7 @@ export class TrendingService {
 
       // Update trending_players table
       for (const [playerId, data] of Object.entries(transactions)) {
-        const playerIdNum = parseInt(playerId);
+        const playerIdNum = Number(playerId) || 0;
         const ownershipPct = ownership.get(playerIdNum) || 0;
         const perf = performance.get(playerIdNum);
 
@@ -196,10 +196,10 @@ export class TrendingService {
     const transactions: Record<number, any> = {};
     for (const row of result.rows) {
       transactions[row.player_id] = {
-        adds24h: parseInt(row.adds_24h),
-        drops24h: parseInt(row.drops_24h),
-        addsWeek: parseInt(row.adds_week),
-        dropsWeek: parseInt(row.drops_week),
+        adds24h: Number(row.adds_24h) || 0,
+        drops24h: Number(row.drops_24h) || 0,
+        addsWeek: Number(row.adds_week) || 0,
+        dropsWeek: Number(row.drops_week) || 0,
       };
     }
 
@@ -214,7 +214,7 @@ export class TrendingService {
     const totalResult = await client.query(
       `SELECT COUNT(DISTINCT roster_id) as total FROM rosters WHERE active = true`
     );
-    const totalRosters = parseInt(totalResult.rows[0]?.total || '0');
+    const totalRosters = Number(totalResult.rows[0]?.total) || 0;
 
     if (totalRosters === 0) return new Map();
 
@@ -227,7 +227,7 @@ export class TrendingService {
 
     const ownership = new Map<number, number>();
     for (const row of result.rows) {
-      const pct = (parseInt(row.count) / totalRosters) * 100;
+      const pct = ((Number(row.count) || 0) / totalRosters) * 100;
       ownership.set(row.player_id, parseFloat(pct.toFixed(2)));
     }
 
