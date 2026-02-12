@@ -16,6 +16,7 @@ import './bootstrap';
 import routes from './routes';
 import { errorHandler } from './middleware/error.middleware';
 import { initializeSocket, closeSocket } from './socket';
+import { cleanupRateLimitIntervals } from './middleware/socket-rate-limit.middleware';
 import { startAutopickJob, stopAutopickJob } from './jobs/autopick.job';
 import { startDerbyJob, stopDerbyJob } from './jobs/derby.job';
 import { startPlayerSyncJob, stopPlayerSyncJob } from './jobs/player-sync.job';
@@ -85,27 +86,35 @@ const PORT = env.PORT;
 // Create HTTP server
 const server = createServer(app);
 
-// Initialize Socket.IO
-initializeSocket(server);
+// Initialize server with async Socket.IO setup
+(async () => {
+  try {
+    // Initialize Socket.IO (async for Redis adapter connection)
+    await initializeSocket(server);
 
-server.listen(PORT, '0.0.0.0', () => {
-  logger.info('MVP Backend started', { port: PORT, healthCheck: `http://localhost:${PORT}/api/health` });
+    server.listen(PORT, '0.0.0.0', () => {
+      logger.info('MVP Backend started', { port: PORT, healthCheck: `http://localhost:${PORT}/api/health` });
 
-  // Start background jobs if enabled (for multi-instance deployments, only one instance should run jobs)
-  if (env.RUN_JOBS) {
-    logger.info('Background jobs enabled');
-    startAutopickJob();
-    startDerbyJob();
-    startSlowAuctionJob();
-    startTradeExpirationJob();
-    startWaiverProcessingJob();
-    startPlayerSyncJob(true); // Sync players from Sleeper on startup, then every 12h
-    startStatsSyncJob(true); // Sync stats from Sleeper on startup, then dynamically
-    startIdempotencyCleanupJob();
-  } else {
-    logger.info('Background jobs disabled', { reason: 'RUN_JOBS=false' });
+      // Start background jobs if enabled (for multi-instance deployments, only one instance should run jobs)
+      if (env.RUN_JOBS) {
+        logger.info('Background jobs enabled');
+        startAutopickJob();
+        startDerbyJob();
+        startSlowAuctionJob();
+        startTradeExpirationJob();
+        startWaiverProcessingJob();
+        startPlayerSyncJob(true); // Sync players from Sleeper on startup, then every 12h
+        startStatsSyncJob(true); // Sync stats from Sleeper on startup, then dynamically
+        startIdempotencyCleanupJob();
+      } else {
+        logger.info('Background jobs disabled', { reason: 'RUN_JOBS=false' });
+      }
+    });
+  } catch (error) {
+    logger.error('Failed to initialize server', { error });
+    process.exit(1);
   }
-});
+})();
 
 // Graceful shutdown
 let isShuttingDown = false;
@@ -123,6 +132,9 @@ const gracefulShutdown = () => {
   stopPlayerSyncJob();
   stopStatsSyncJob();
   stopIdempotencyCleanupJob();
+
+  // Cleanup rate limit intervals
+  cleanupRateLimitIntervals();
 
   server.close(async () => {
     logger.info('HTTP server closed');

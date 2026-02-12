@@ -426,6 +426,9 @@ export class DraftController {
       include_rookie_picks,
       rookie_picks_season,
       rookie_picks_rounds,
+      overnight_pause_enabled,
+      overnight_pause_start,
+      overnight_pause_end,
     } = req.body;
 
     // Handle scheduled_start: parse date string, or pass null to clear it
@@ -446,8 +449,51 @@ export class DraftController {
       includeRookiePicks: include_rookie_picks,
       rookiePicksSeason: rookie_picks_season,
       rookiePicksRounds: rookie_picks_rounds,
+      overnightPauseEnabled: overnight_pause_enabled,
+      overnightPauseStart: overnight_pause_start,
+      overnightPauseEnd: overnight_pause_end,
     });
 
     res.status(200).json(draft);
+  };
+
+  /**
+   * Get available matchup options for the current picker in a matchups draft
+   */
+  getAvailableMatchups = async (req: AuthRequest, res: Response) => {
+    const userId = requireUserId(req);
+    const leagueId = requireLeagueId(req);
+    const draftId = requireDraftId(req);
+
+    const matchups = await this.draftService.getAvailableMatchups(leagueId, draftId, userId);
+    res.status(200).json({
+      draft_id: draftId,
+      available_matchups: matchups,
+    });
+  };
+
+  /**
+   * Make a matchup pick in a matchups draft
+   */
+  pickMatchup = async (req: AuthRequest, res: Response) => {
+    const userId = requireUserId(req);
+    const leagueId = requireLeagueId(req);
+    const draftId = requireDraftId(req);
+
+    const { week, opponent_roster_id } = req.body;
+
+    if (!week || !opponent_roster_id) {
+      throw new ValidationException('week and opponent_roster_id are required');
+    }
+
+    const result = await this.draftService.makeMatchupPick(
+      leagueId,
+      draftId,
+      userId,
+      week,
+      opponent_roster_id
+    );
+
+    res.status(200).json(result);
   };
 }

@@ -22,6 +22,7 @@ import type { DraftPickAssetRepository } from '../modules/drafts/draft-pick-asse
 import type { VetDraftPickSelectionRepository } from '../modules/drafts/vet-draft-pick-selection.repository';
 import { Pool, PoolClient } from 'pg';
 import { runInDraftTransaction } from '../shared/locks';
+import { isInPauseWindow } from '../shared/utils/time-utils';
 
 /**
  * Data collected inside the transaction for post-commit event emission.
@@ -211,6 +212,28 @@ export abstract class BaseDraftEngine implements IDraftEngine {
   }
 
   /**
+   * Check if draft is currently in overnight pause window.
+   * Only applies to snake/linear drafts with overnight pause enabled.
+   *
+   * @param draft - The draft to check
+   * @returns true if draft is in overnight pause window
+   */
+  protected isInOvernightPause(draft: Draft): boolean {
+    // Only apply to snake/linear drafts (not auction)
+    if (draft.draftType === 'auction') {
+      return false;
+    }
+
+    // Check if overnight pause is enabled
+    if (!draft.overnightPauseEnabled || !draft.overnightPauseStart || !draft.overnightPauseEnd) {
+      return false;
+    }
+
+    // Check if current time is in pause window
+    return isInPauseWindow(new Date(), draft.overnightPauseStart, draft.overnightPauseEnd);
+  }
+
+  /**
    * Calculate next pick deadline
    * @param draft - The draft object (uses pickTimeSeconds)
    * @param context - Optional context for testing or future pick-specific logic
@@ -270,6 +293,15 @@ export abstract class BaseDraftEngine implements IDraftEngine {
 
         // Double-check status under lock (could have changed)
         if (draft.status !== 'in_progress') {
+          return {
+            actionTaken: false,
+            reason: 'none' as const,
+          };
+        }
+
+        // Check if draft is in overnight pause window
+        if (this.isInOvernightPause(draft)) {
+          logger.debug(`Draft ${draftId}: skipping tick - in overnight pause window`);
           return {
             actionTaken: false,
             reason: 'none' as const,

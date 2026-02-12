@@ -7,7 +7,7 @@ import { authMiddleware } from '../../middleware/auth.middleware';
 import { validateRequest } from '../../middleware/validation.middleware';
 import { dmMessageLimiter, dmReadLimiter } from '../../middleware/rate-limit.middleware';
 import { container, KEYS } from '../../container';
-import { sendDmSchema, getDmMessagesQuerySchema, dmReactionSchema } from './dm.schemas';
+import { sendDmSchema, getDmMessagesQuerySchema, dmReactionSchema, searchDmMessagesQuerySchema } from './dm.schemas';
 import { asyncHandler } from '../../shared/async-handler';
 
 // Resolve dependencies from container
@@ -32,6 +32,9 @@ router.post('/user/:otherUserId', dmReadLimiter, asyncHandler(dmController.getOr
 
 // GET /api/dm/:conversationId/messages - Get messages for a conversation
 router.get('/:conversationId/messages', dmReadLimiter, validateRequest(getDmMessagesQuerySchema, 'query'), asyncHandler(dmController.getMessages));
+
+// GET /api/dm/:conversationId/messages/search - Search messages in a conversation
+router.get('/:conversationId/messages/search', dmReadLimiter, validateRequest(searchDmMessagesQuerySchema, 'query'), asyncHandler(dmController.searchMessages));
 
 // POST /api/dm/:conversationId/messages - Send a message (stricter rate limit)
 router.post('/:conversationId/messages', dmMessageLimiter, validateRequest(sendDmSchema), asyncHandler(dmController.sendMessage));

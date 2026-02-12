@@ -54,21 +54,3 @@ export function requestContextMiddleware(
     next();
   });
 }
-
-/**
- * Lightweight version that only sets request ID without full context.
- * Use when you don't need query context but want request ID header.
- */
-export function requestIdMiddleware(
-  req: Request,
-  res: Response,
-  next: NextFunction
-): void {
-  const requestId = (req.headers['x-request-id'] as string) || uuidv4();
-  res.setHeader('x-request-id', requestId);
-
-  // Attach to request for downstream use
-  (req as any).requestId = requestId;
-
-  next();
-}

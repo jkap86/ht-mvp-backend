@@ -68,8 +68,9 @@ export class DmController {
     const conversationId = requireConversationId(req);
     const limit = parseLimit(req.query.limit as string);
     const before = parseBefore(req.query.before as string);
+    const aroundTimestamp = req.query.around_timestamp as string | undefined;
 
-    const messages = await this.dmService.getMessages(userId, conversationId, limit, before);
+    const messages = await this.dmService.getMessages(userId, conversationId, limit, before, aroundTimestamp);
 
     // Attach reactions to messages
     const messageIds = messages.map((m: any) => m.id);
@@ -81,6 +82,33 @@ export class DmController {
     }));
 
     res.status(200).json(messagesWithReactions);
+  };
+
+  searchMessages = async (req: AuthRequest, res: Response) => {
+    const userId = requireUserId(req);
+    const conversationId = requireConversationId(req);
+
+    const searchQuery = req.query.q as string;
+    const limit = parseLimit(req.query.limit as string, 100, 500);
+    const offset = parseInt(req.query.offset as string, 10) || 0;
+
+    const result = await this.dmService.searchMessages(userId, conversationId, searchQuery, limit, offset);
+
+    // Attach reactions to messages
+    const messageIds = result.messages.map((m: any) => m.id);
+    const reactionsMap = await this.dmReactionRepo.getReactionsForMessages(messageIds);
+
+    const messagesWithReactions = result.messages.map((m: any) => ({
+      ...m,
+      reactions: groupDmReactions(reactionsMap.get(m.id) || [], userId),
+    }));
+
+    res.status(200).json({
+      messages: messagesWithReactions,
+      total: result.total,
+      limit,
+      offset,
+    });
   };
 
   sendMessage = async (req: AuthRequest, res: Response) => {

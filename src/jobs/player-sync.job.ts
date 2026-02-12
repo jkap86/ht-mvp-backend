@@ -114,7 +114,11 @@ export function startPlayerSyncJob(runImmediately = true): void {
     runCollegePlayerSync();
   }
 
-  intervalId = setInterval(runPlayerSync, SYNC_INTERVAL_MS);
+  // Schedule both NFL and college player syncs on the interval
+  intervalId = setInterval(() => {
+    runPlayerSync();
+    runCollegePlayerSync();
+  }, SYNC_INTERVAL_MS);
 }
 
 /**

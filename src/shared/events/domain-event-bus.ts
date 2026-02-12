@@ -216,6 +216,8 @@ export const EventTypes = {
   DRAFT_PICK_UNDONE: 'draft:pick_undone',
   DRAFT_AUTODRAFT_TOGGLED: 'draft:autodraft_toggled',
   DRAFT_QUEUE_UPDATED: 'draft:queue_updated',
+  DRAFT_OVERNIGHT_PAUSE_STARTED: 'draft:overnight_pause_started',
+  DRAFT_OVERNIGHT_PAUSE_ENDED: 'draft:overnight_pause_ended',
 
   // Auction events
   AUCTION_BID: 'auction:bid',

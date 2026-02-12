@@ -15,6 +15,7 @@ import { DraftEngineFactory, IDraftEngine } from '../../engines';
 import { finalizeDraftCompletion } from './draft-completion.utils';
 import { runInDraftTransaction } from '../../shared/locks';
 import { container, KEYS } from '../../container';
+import { isInPauseWindow } from '../../shared/utils/time-utils';
 
 /** Snake_case API response for a player pick */
 export interface DraftPickResponse {
@@ -184,6 +185,20 @@ export class DraftPickService {
         // Validate scheduled start time has passed
         if (draft.scheduledStart && new Date() < draft.scheduledStart) {
           throw new ValidationException('Draft has not started yet', ErrorCode.DRAFT_NOT_STARTED);
+        }
+
+        // Check if draft is in overnight pause window (only for snake/linear drafts)
+        if (
+          draft.draftType !== 'auction' &&
+          draft.overnightPauseEnabled &&
+          draft.overnightPauseStart &&
+          draft.overnightPauseEnd &&
+          isInPauseWindow(new Date(), draft.overnightPauseStart, draft.overnightPauseEnd)
+        ) {
+          throw new ValidationException(
+            'Picks are not allowed during the overnight pause window. The draft will resume automatically when the window ends.',
+            ErrorCode.DRAFT_OVERNIGHT_PAUSE
+          );
         }
 
         // Validate order is confirmed (non-auction drafts only)
@@ -417,6 +432,20 @@ export class DraftPickService {
         // Validate scheduled start time has passed
         if (draft.scheduledStart && new Date() < draft.scheduledStart) {
           throw new ValidationException('Draft has not started yet', ErrorCode.DRAFT_NOT_STARTED);
+        }
+
+        // Check if draft is in overnight pause window (only for snake/linear drafts)
+        if (
+          draft.draftType !== 'auction' &&
+          draft.overnightPauseEnabled &&
+          draft.overnightPauseStart &&
+          draft.overnightPauseEnd &&
+          isInPauseWindow(new Date(), draft.overnightPauseStart, draft.overnightPauseEnd)
+        ) {
+          throw new ValidationException(
+            'Picks are not allowed during the overnight pause window. The draft will resume automatically when the window ends.',
+            ErrorCode.DRAFT_OVERNIGHT_PAUSE
+          );
         }
 
         // Validate order is confirmed (non-auction drafts only)

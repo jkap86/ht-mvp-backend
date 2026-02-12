@@ -185,6 +185,79 @@ export async function populateRostersFromDraft(
 }
 
 /**
+ * Populate matchups table from matchups draft picks.
+ * Reads pick_metadata from draft_picks and creates matchup entries.
+ *
+ * @param draftRepo - Draft repository for accessing pick data
+ * @param draftId - The matchups draft ID
+ * @param leagueId - The league ID
+ * @param client - Transaction client for atomicity
+ */
+async function populateMatchupsFromDraft(
+  draftRepo: DraftRepository,
+  draftId: number,
+  leagueId: number,
+  client: PoolClient
+): Promise<void> {
+  // Get league info for season
+  const league = await client.query('SELECT season FROM leagues WHERE id = $1', [leagueId]);
+  if (league.rows.length === 0) {
+    throw new NotFoundException(`League ${leagueId} not found`);
+  }
+  const season = parseInt(league.rows[0].season, 10);
+
+  // Get all matchup picks (only positive pick_numbers, not reciprocal negatives)
+  const picks = await client.query(
+    `SELECT roster_id, pick_metadata FROM draft_picks
+     WHERE draft_id = $1 AND pick_metadata IS NOT NULL AND pick_number > 0
+     ORDER BY pick_number`,
+    [draftId]
+  );
+
+  if (picks.rows.length === 0) {
+    throw new ValidationException(`No matchup picks found for draft ${draftId}`);
+  }
+
+  // Create matchup entries from picks
+  let createdCount = 0;
+  for (const row of picks.rows) {
+    const rosterId = row.roster_id;
+    const metadata = row.pick_metadata as { week: number; opponentRosterId: number };
+    const week = metadata.week;
+    const opponentRosterId = metadata.opponentRosterId;
+
+    // Ensure canonical ordering (lower rosterId first) to avoid duplicates
+    const [roster1Id, roster2Id] =
+      rosterId < opponentRosterId ? [rosterId, opponentRosterId] : [opponentRosterId, rosterId];
+
+    // Check if matchup already exists (idempotency)
+    const existing = await client.query(
+      `SELECT id FROM matchups
+       WHERE league_id = $1 AND season = $2 AND week = $3
+       AND roster1_id = $4 AND roster2_id = $5`,
+      [leagueId, season, week, roster1Id, roster2Id]
+    );
+
+    if (existing.rows.length > 0) {
+      continue; // Already exists, skip
+    }
+
+    // Insert matchup
+    await client.query(
+      `INSERT INTO matchups (league_id, season, week, roster1_id, roster2_id, is_playoff, generated_from_draft_id)
+       VALUES ($1, $2, $3, $4, $5, false, $6)`,
+      [leagueId, season, week, roster1Id, roster2Id, draftId]
+    );
+
+    createdCount++;
+  }
+
+  logger.info(
+    `Populated ${createdCount} matchups from matchups draft ${draftId} for league ${leagueId}`
+  );
+}
+
+/**
  * Unified function to finalize draft completion.
  * Ensures consistent side-effects across all completion paths:
  * - Manual pick (DraftPickService.makePick)
@@ -286,7 +359,20 @@ async function finalizeDraftCompletionWithClient(
     ['regular_season', leagueId]
   );
 
-  // 5. Generate schedule (14 weeks)
+  // 5. Check if this is a matchups draft - if so, populate matchups table from draft picks
+  const draft = await ctx.draftRepo.findByIdWithClient(client, draftId);
+  if (!draft) {
+    throw new NotFoundException(`Draft ${draftId} not found`);
+  }
+
+  if (draft.draftType === 'matchups') {
+    // For matchups drafts, populate matchups table from pick metadata
+    await populateMatchupsFromDraft(ctx.draftRepo, draftId, leagueId, client);
+    logger.info(`Populated matchups table from matchups draft ${draftId}`);
+    return { success: true, scheduleGenerationFailed: false };
+  }
+
+  // 6. For non-matchups drafts, generate schedule (14 weeks)
   // This runs within the transaction but schedule generation uses its own connections.
   // If it fails, we still want the transaction to commit (draft IS complete),
   // so we catch the error and return it as a result instead of throwing.

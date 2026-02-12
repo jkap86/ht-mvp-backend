@@ -39,27 +39,28 @@ export async function validatePickTrade(
   recipientRosterId: number,
   leagueId: number
 ): Promise<PickValidationResult[]> {
-  const validatedPicks: PickValidationResult[] = [];
-
-  // Validate offering picks (proposer -> recipient)
-  for (const assetId of offeringPickAssetIds) {
+  // Validate offering picks (proposer -> recipient) in parallel
+  const offeringPromises = offeringPickAssetIds.map(async (assetId) => {
     const asset = await validateSinglePick(ctx, assetId, proposerRosterId, leagueId, 'offering');
-    validatedPicks.push({
+    return {
       asset,
       fromRosterId: proposerRosterId,
       toRosterId: recipientRosterId,
-    });
-  }
+    };
+  });
 
-  // Validate requesting picks (recipient -> proposer)
-  for (const assetId of requestingPickAssetIds) {
+  // Validate requesting picks (recipient -> proposer) in parallel
+  const requestingPromises = requestingPickAssetIds.map(async (assetId) => {
     const asset = await validateSinglePick(ctx, assetId, recipientRosterId, leagueId, 'requesting');
-    validatedPicks.push({
+    return {
       asset,
       fromRosterId: recipientRosterId,
       toRosterId: proposerRosterId,
-    });
-  }
+    };
+  });
+
+  // Wait for all validations to complete
+  const validatedPicks = await Promise.all([...offeringPromises, ...requestingPromises]);
 
   return validatedPicks;
 }

@@ -93,11 +93,8 @@ export class StandingsService {
   calculateStreakFromMatchups(matchups: Matchup[], rosterId: number): string {
     if (matchups.length === 0) return '';
 
-    // Sort by week to ensure proper order
-    const sortedMatchups = [...matchups].sort((a, b) => a.week - b.week);
-
-    // Get recent results, most recent first
-    const recentMatchups = sortedMatchups.reverse();
+    // Sort by week descending (most recent first) - chain to avoid mutation issues
+    const recentMatchups = [...matchups].sort((a, b) => b.week - a.week);
 
     let streak = 0;
     let streakType: 'W' | 'L' | 'T' | null = null;

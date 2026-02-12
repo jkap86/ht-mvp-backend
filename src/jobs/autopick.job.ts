@@ -5,6 +5,8 @@ import { DraftRepository } from '../modules/drafts/drafts.repository';
 import { logger } from '../config/logger.config';
 import { ValidationException } from '../utils/exceptions';
 import { getLockId, LockDomain } from '../shared/locks';
+import { isInPauseWindow } from '../shared/utils/time-utils';
+import { EventTypes, tryGetEventBus } from '../shared/events';
 
 /**
  * LOCK CONTRACT:
@@ -55,16 +57,82 @@ async function processAutopicks(): Promise<void> {
       const draftRepo = container.resolve<DraftRepository>(KEYS.DRAFT_REPO);
       const engineFactory = container.resolve<DraftEngineFactory>(KEYS.DRAFT_ENGINE_FACTORY);
 
-      // Find all drafts with expired deadlines
+      // Find all drafts with expired deadlines OR in-progress drafts with overnight pause enabled
+      // (to check for pause window transitions)
       const expiredDrafts = await draftRepo.findExpiredDrafts();
 
-      for (const draft of expiredDrafts) {
+      // Also get in-progress drafts with overnight pause enabled to check for pause window transitions
+      const pauseEnabledDrafts = await draftRepo.findByStatusAndOvernightPauseEnabled('in_progress');
+
+      // Combine and deduplicate by ID
+      const allDrafts = [...expiredDrafts, ...pauseEnabledDrafts];
+      const uniqueDrafts = Array.from(new Map(allDrafts.map(d => [d.id, d])).values());
+
+      for (const draft of uniqueDrafts) {
         // Auction drafts use slow-auction.job.ts for settlement, not autopick
         if (draft.draftType === 'auction') {
           continue;
         }
 
         draftsProcessed++;
+
+        // Check for overnight pause window transitions (only for snake/linear drafts)
+        if (
+          draft.status === 'in_progress' &&
+          draft.overnightPauseEnabled &&
+          draft.overnightPauseStart &&
+          draft.overnightPauseEnd
+        ) {
+          const isCurrentlyInPause = isInPauseWindow(
+            new Date(),
+            draft.overnightPauseStart,
+            draft.overnightPauseEnd
+          );
+          const wasInPause = draft.draftState?.inOvernightPause ?? false;
+
+          // State transition: entered pause window
+          if (isCurrentlyInPause && !wasInPause) {
+            logger.info(`Draft ${draft.id}: entering overnight pause window`);
+
+            // Update draft state to track pause status
+            await draftRepo.update(draft.id, {
+              draftState: { ...draft.draftState, inOvernightPause: true },
+            });
+
+            // Emit socket event
+            const eventBus = tryGetEventBus();
+            eventBus?.publish({
+              type: EventTypes.DRAFT_OVERNIGHT_PAUSE_STARTED,
+              payload: {
+                draftId: draft.id,
+                leagueId: draft.leagueId,
+                pauseStart: draft.overnightPauseStart,
+                pauseEnd: draft.overnightPauseEnd,
+              },
+            });
+          }
+          // State transition: exited pause window
+          else if (!isCurrentlyInPause && wasInPause) {
+            logger.info(`Draft ${draft.id}: exiting overnight pause window`);
+
+            // Update draft state to track pause status
+            await draftRepo.update(draft.id, {
+              draftState: { ...draft.draftState, inOvernightPause: false },
+            });
+
+            // Emit socket event
+            const eventBus = tryGetEventBus();
+            eventBus?.publish({
+              type: EventTypes.DRAFT_OVERNIGHT_PAUSE_ENDED,
+              payload: {
+                draftId: draft.id,
+                leagueId: draft.leagueId,
+                pauseStart: draft.overnightPauseStart,
+                pauseEnd: draft.overnightPauseEnd,
+              },
+            });
+          }
+        }
         try {
           // Get the appropriate engine for this draft type
           const engine = engineFactory.createEngine(draft.draftType);

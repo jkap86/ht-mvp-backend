@@ -5,7 +5,11 @@
       "Bash(npx tsc:*)",
       "Bash(npm test:*)",
       "Bash(git stash:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(npm run build:*)",
+      "Bash(npx jest:*)",
+      "Bash(xargs:*)",
+      "Bash(git push:*)"
     ]
   }
 }

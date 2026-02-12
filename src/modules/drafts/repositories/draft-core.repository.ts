@@ -141,6 +141,9 @@ export class DraftCoreRepository {
     if (updates.draftType !== undefined) dbUpdates.draftType = updates.draftType;
     if (updates.scheduledStart !== undefined) dbUpdates.scheduledStart = updates.scheduledStart;
     if (updates.rosterPopulationStatus !== undefined) dbUpdates.rosterPopulationStatus = updates.rosterPopulationStatus;
+    if (updates.overnightPauseEnabled !== undefined) dbUpdates.overnightPauseEnabled = updates.overnightPauseEnabled;
+    if (updates.overnightPauseStart !== undefined) dbUpdates.overnightPauseStart = updates.overnightPauseStart;
+    if (updates.overnightPauseEnd !== undefined) dbUpdates.overnightPauseEnd = updates.overnightPauseEnd;
 
     if (Object.keys(dbUpdates).length === 0) {
       const existing = await this.findById(id);
@@ -233,6 +236,9 @@ export class DraftCoreRepository {
     if (updates.draftType !== undefined) dbUpdates.draftType = updates.draftType;
     if (updates.scheduledStart !== undefined) dbUpdates.scheduledStart = updates.scheduledStart;
     if (updates.rosterPopulationStatus !== undefined) dbUpdates.rosterPopulationStatus = updates.rosterPopulationStatus;
+    if (updates.overnightPauseEnabled !== undefined) dbUpdates.overnightPauseEnabled = updates.overnightPauseEnabled;
+    if (updates.overnightPauseStart !== undefined) dbUpdates.overnightPauseStart = updates.overnightPauseStart;
+    if (updates.overnightPauseEnd !== undefined) dbUpdates.overnightPauseEnd = updates.overnightPauseEnd;
 
     if (Object.keys(dbUpdates).length === 0) {
       const existing = await this.findByIdWithClient(client, id);
@@ -284,6 +290,22 @@ export class DraftCoreRepository {
            AND r.user_id IS NULL
          )
        )`
+    );
+    return result.rows.map(draftFromDatabase);
+  }
+
+  /**
+   * Find drafts with a specific status and overnight pause enabled.
+   * Used to check for overnight pause window transitions.
+   */
+  async findByStatusAndOvernightPauseEnabled(status: string): Promise<Draft[]> {
+    const result = await this.db.query(
+      `SELECT * FROM drafts
+       WHERE status = $1
+       AND overnight_pause_enabled = true
+       AND overnight_pause_start IS NOT NULL
+       AND overnight_pause_end IS NOT NULL`,
+      [status]
     );
     return result.rows.map(draftFromDatabase);
   }

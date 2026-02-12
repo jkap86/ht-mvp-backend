@@ -1,6 +1,6 @@
-import type { PoolClient } from 'pg';
+import type { PoolClient, Pool } from 'pg';
 import { DraftRepository } from './drafts.repository';
-import { draftToResponse, DraftType, DraftOrderEntry, DraftSettings, AuctionSettings } from './drafts.model';
+import { draftToResponse, DraftType, DraftOrderEntry, DraftSettings, AuctionSettings, DraftResponse } from './drafts.model';
 import type { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import type { LeagueSettings } from '../leagues/leagues.model';
 import type { League } from '../leagues/leagues.model';
@@ -11,6 +11,10 @@ import { DraftStateService } from './draft-state.service';
 import { DraftPickAssetRepository } from './draft-pick-asset.repository';
 import { EventTypes, tryGetEventBus } from '../../shared/events';
 import { logger } from '../../config/logger.config';
+import { container, KEYS } from '../../container';
+import type { PlayerRepository } from '../players/players.repository';
+import type { RosterPlayersRepository } from '../rosters/rosters.repository';
+import { finalizeDraftCompletion } from './draft-completion.utils';
 
 /**
  * Maps auction settings from API format (snake_case) to storage format (camelCase).
@@ -600,6 +604,9 @@ export class DraftService {
       includeRookiePicks?: boolean;
       rookiePicksSeason?: number;
       rookiePicksRounds?: number;
+      overnightPauseEnabled?: boolean;
+      overnightPauseStart?: string;
+      overnightPauseEnd?: string;
     }
   ): Promise<any> {
     // 1. Verify commissioner
@@ -622,6 +629,35 @@ export class DraftService {
       throw new ValidationException(
         'Cannot edit draft settings while in progress. Pause the draft first.'
       );
+    }
+
+    // 3a. Validate overnight pause settings
+    if (updates.overnightPauseEnabled || updates.overnightPauseStart || updates.overnightPauseEnd) {
+      // Validate overnight pause is only for snake/linear drafts
+      const draftType = updates.draftType || draft.draftType;
+      if (draftType === 'auction') {
+        throw new ValidationException('Overnight pause is not supported for auction drafts');
+      }
+
+      // Validate time format (HH:MM)
+      const timeRegex = /^([01]?\d|2[0-3]):([0-5]\d)$/;
+      if (updates.overnightPauseStart && !timeRegex.test(updates.overnightPauseStart)) {
+        throw new ValidationException('overnight_pause_start must be in HH:MM format');
+      }
+      if (updates.overnightPauseEnd && !timeRegex.test(updates.overnightPauseEnd)) {
+        throw new ValidationException('overnight_pause_end must be in HH:MM format');
+      }
+
+      // If enabling overnight pause, ensure both start and end times are provided
+      if (updates.overnightPauseEnabled === true) {
+        const startTime = updates.overnightPauseStart || draft.overnightPauseStart;
+        const endTime = updates.overnightPauseEnd || draft.overnightPauseEnd;
+        if (!startTime || !endTime) {
+          throw new ValidationException(
+            'Both overnight_pause_start and overnight_pause_end must be provided when enabling overnight pause'
+          );
+        }
+      }
     }
 
     // 4. If paused, only allow timer-related changes
@@ -685,6 +721,9 @@ export class DraftService {
       pickTimeSeconds: updates.pickTimeSeconds,
       settings: Object.keys(mergedSettings).length > 0 ? mergedSettings : undefined,
       scheduledStart: updates.scheduledStart,
+      overnightPauseEnabled: updates.overnightPauseEnabled,
+      overnightPauseStart: updates.overnightPauseStart,
+      overnightPauseEnd: updates.overnightPauseEnd,
     });
 
     // 7. If rounds changed and draft not started, regenerate pick assets
@@ -780,5 +819,238 @@ export class DraftService {
     logger.info(`Commissioner ${userId} updated settings for draft ${draftId}`);
 
     return response;
+  }
+
+  /**
+   * Get available matchup options for the current picker in a matchups draft.
+   * Only valid when draft is in progress and is a matchups type.
+   */
+  async getAvailableMatchups(leagueId: number, draftId: number, userId: string) {
+    // Verify user is a league member
+    const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
+    if (!isMember) {
+      throw new ForbiddenException('You are not a member of this league');
+    }
+
+    const draft = await this.draftRepo.findById(draftId);
+    if (!draft) {
+      throw new NotFoundException('Draft not found');
+    }
+
+    if (draft.leagueId !== leagueId) {
+      throw new ForbiddenException('Draft does not belong to this league');
+    }
+
+    if (draft.draftType !== 'matchups') {
+      throw new ValidationException('This is not a matchups draft');
+    }
+
+    if (draft.status !== 'in_progress') {
+      throw new ValidationException('Draft is not in progress');
+    }
+
+    // Get the engine for this draft
+    const pool = container.resolve<Pool>(KEYS.POOL);
+    const playerRepo = container.resolve<PlayerRepository>(KEYS.PLAYER_REPO);
+    const rosterPlayersRepo = container.resolve<RosterPlayersRepository>(KEYS.ROSTER_PLAYERS_REPO);
+    const { MatchupsDraftEngine } = await import('../../engines/matchups-draft.engine');
+    const engine = new MatchupsDraftEngine(
+      this.draftRepo,
+      playerRepo,
+      rosterPlayersRepo,
+      this.leagueRepo,
+      this.rosterRepo
+    );
+
+    // Get draft order
+    const draftOrder = await this.draftRepo.getDraftOrder(draftId);
+
+    // Get available matchups using the engine (within a readonly transaction for consistency)
+    const { withClient } = await import('../../shared/transaction-runner');
+    const matchups = await withClient(pool, async (client) => {
+      return await engine.getAvailableMatchups(client, draft, draftOrder);
+    });
+
+    // Convert to response format
+    return matchups.map(m => ({
+      week: m.week,
+      opponent_roster_id: m.opponentRosterId,
+      opponent_team_name: m.opponentTeamName,
+      current_frequency: m.currentFrequency,
+      max_frequency: m.maxFrequency,
+    }));
+  }
+
+  /**
+   * Make a matchup pick in a matchups draft.
+   * Creates reciprocal matchup entries for both teams.
+   */
+  async makeMatchupPick(
+    leagueId: number,
+    draftId: number,
+    userId: string,
+    week: number,
+    opponentRosterId: number
+  ): Promise<{
+    pick_id: number;
+    reciprocal_pick_id: number;
+    week: number;
+    roster_id: number;
+    opponent_roster_id: number;
+    picked_at: Date;
+    draft: DraftResponse;
+  }> {
+    // Verify user is a league member
+    const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
+    if (!isMember) {
+      throw new ForbiddenException('You are not a member of this league');
+    }
+
+    const draft = await this.draftRepo.findById(draftId);
+    if (!draft) {
+      throw new NotFoundException('Draft not found');
+    }
+
+    if (draft.leagueId !== leagueId) {
+      throw new ForbiddenException('Draft does not belong to this league');
+    }
+
+    if (draft.draftType !== 'matchups') {
+      throw new ValidationException('This is not a matchups draft');
+    }
+
+    if (draft.status !== 'in_progress') {
+      throw new ValidationException('Draft is not in progress');
+    }
+
+    // Get user's roster
+    const userRoster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId);
+    if (!userRoster) {
+      throw new ForbiddenException('You are not a member of this league');
+    }
+
+    // Verify it's this roster's turn to pick
+    if (draft.currentRosterId !== userRoster.id) {
+      throw new ForbiddenException('It is not your turn to pick');
+    }
+
+    // Get the engine
+    const playerRepo = container.resolve<PlayerRepository>(KEYS.PLAYER_REPO);
+    const rosterPlayersRepo = container.resolve<RosterPlayersRepository>(KEYS.ROSTER_PLAYERS_REPO);
+    const { MatchupsDraftEngine } = await import('../../engines/matchups-draft.engine');
+    const engine = new MatchupsDraftEngine(
+      this.draftRepo,
+      playerRepo,
+      rosterPlayersRepo,
+      this.leagueRepo,
+      this.rosterRepo
+    );
+
+    // Get draft order
+    const draftOrder = await this.draftRepo.getDraftOrder(draftId);
+    const totalRosters = draftOrder.length;
+
+    // Compute next pick state
+    const currentPickNumber = draft.currentPick;
+    const pickInRound = ((currentPickNumber - 1) % totalRosters) + 1;
+    const round = Math.ceil(currentPickNumber / totalRosters);
+
+    // Import MatchupDraftRepository directly
+    const { MatchupDraftRepository } = await import('./repositories/matchup-draft.repository');
+    const pool = container.resolve<Pool>(KEYS.POOL);
+    const matchupDraftRepo = new MatchupDraftRepository(pool);
+
+    // Validate and compute next state within a transaction
+    const { runInDraftTransaction } = await import('../../shared/locks');
+    const pickResult = await runInDraftTransaction(pool, draftId, async (client) => {
+      // Validate the matchup selection
+      await engine.validateMatchupSelection(
+        client,
+        draft,
+        draftOrder,
+        userRoster.id,
+        week,
+        opponentRosterId
+      );
+
+      // Compute next pick state
+      const { computeNextPickState } = await import('./draft-pick-state.utils');
+      const nextPickState = computeNextPickState(draft, draftOrder, engine, []);
+
+      // Make the pick atomically
+      const result = await matchupDraftRepo.makeMatchupPickAndAdvanceTxWithClient(client, {
+        draftId,
+        expectedPickNumber: currentPickNumber,
+        round,
+        pickInRound,
+        rosterId: userRoster.id,
+        week,
+        opponentRosterId,
+        nextPickState,
+        idempotencyKey: `matchup-pick-${draftId}-${currentPickNumber}`,
+        isAutoPick: false,
+      });
+
+      return result;
+    });
+
+    // Handle draft completion if needed
+    if (pickResult.draft.status === 'completed') {
+      const rosterPlayersRepo = container.resolve<RosterPlayersRepository>(KEYS.ROSTER_PLAYERS_REPO);
+      await finalizeDraftCompletion(
+        {
+          draftRepo: this.draftRepo,
+          leagueRepo: this.leagueRepo,
+          rosterPlayersRepo,
+        },
+        draftId,
+        leagueId
+      );
+    }
+
+    // Emit socket events
+    const eventBus = tryGetEventBus();
+    eventBus?.publish({
+      type: EventTypes.DRAFT_PICK,
+      payload: {
+        draft_id: draftId,
+        pick_id: pickResult.result.pickId,
+        week: pickResult.result.week,
+        roster_id: userRoster.id,
+        opponent_roster_id: opponentRosterId,
+        is_auto_pick: false,
+        picked_at: pickResult.result.pickedAt,
+      },
+    });
+
+    if (pickResult.draft.status === 'completed') {
+      eventBus?.publish({
+        type: EventTypes.DRAFT_COMPLETED,
+        payload: draftToResponse(pickResult.draft) as unknown as Record<string, unknown>,
+      });
+    } else {
+      // Emit next pick event
+      eventBus?.publish({
+        type: EventTypes.DRAFT_NEXT_PICK,
+        payload: {
+          draftId,
+          currentPick: pickResult.draft.currentPick,
+          currentRound: pickResult.draft.currentRound,
+          currentRosterId: pickResult.draft.currentRosterId,
+          pickDeadline: pickResult.draft.pickDeadline,
+          status: 'in_progress',
+        },
+      });
+    }
+
+    return {
+      pick_id: pickResult.result.pickId,
+      reciprocal_pick_id: pickResult.result.reciprocalPickId,
+      week: pickResult.result.week,
+      roster_id: userRoster.id,
+      opponent_roster_id: opponentRosterId,
+      picked_at: pickResult.result.pickedAt,
+      draft: draftToResponse(pickResult.draft),
+    };
   }
 }

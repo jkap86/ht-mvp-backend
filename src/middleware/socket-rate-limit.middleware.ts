@@ -31,7 +31,7 @@ interface RateLimitEntry {
 const connectionAttempts = new Map<string, RateLimitEntry>();
 
 // Cleanup old entries every 5 minutes (in-memory fallback only)
-setInterval(() => {
+const connectionCleanupInterval = setInterval(() => {
   const now = Date.now();
   for (const [key, entry] of connectionAttempts.entries()) {
     if (now > entry.resetTime) {
@@ -233,11 +233,11 @@ function trackUserConnectionsInMemory(
   onConnectionLimit?: () => void
 ): void {
   // Get or create connection set for this user
-  if (!userConnections.has(userId)) {
-    userConnections.set(userId, new Set());
+  let connections = userConnections.get(userId);
+  if (!connections) {
+    connections = new Set();
+    userConnections.set(userId, connections);
   }
-
-  const connections = userConnections.get(userId)!;
 
   // Check concurrent connection limit
   if (connections.size >= MAX_CONCURRENT_CONNECTIONS_PER_USER) {
@@ -296,7 +296,7 @@ interface EventRateLimitEntry {
 const eventRateLimitStore = new Map<string, EventRateLimitEntry>();
 
 // Clean up expired event rate limit entries every 2 minutes
-setInterval(() => {
+const eventCleanupInterval = setInterval(() => {
   const now = Date.now();
   for (const [key, entry] of eventRateLimitStore.entries()) {
     if (now > entry.resetAt) {
@@ -337,4 +337,13 @@ export function checkEventRateLimit(
   }
 
   return { allowed: true };
+}
+
+/**
+ * Cleanup function to clear all rate limit intervals.
+ * Should be called during graceful server shutdown.
+ */
+export function cleanupRateLimitIntervals(): void {
+  clearInterval(connectionCleanupInterval);
+  clearInterval(eventCleanupInterval);
 }

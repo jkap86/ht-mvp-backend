@@ -1,5 +1,5 @@
 /** Valid draft types */
-export type DraftType = 'snake' | 'linear' | 'auction';
+export type DraftType = 'snake' | 'linear' | 'auction' | 'matchups';
 
 /** Draft status values */
 export type DraftStatus = 'not_started' | 'in_progress' | 'paused' | 'completed';
@@ -36,6 +36,12 @@ export interface DraftSettings extends Partial<AuctionSettings> {
   rookiePicksSeason?: number;
   /** Number of rounds for generated rookie picks (1-5, default 5) */
   rookiePicksRounds?: number;
+  /** Overnight pause window: whether overnight pause is enabled */
+  overnightPauseEnabled?: boolean;
+  /** Overnight pause window: start time in HH:MM format (UTC) */
+  overnightPauseStart?: string;
+  /** Overnight pause window: end time in HH:MM format (UTC) */
+  overnightPauseEnd?: string;
 }
 
 /** Default auction settings */
@@ -70,6 +76,9 @@ export interface Draft {
   draftState: Record<string, any>;
   orderConfirmed: boolean;
   rosterPopulationStatus: RosterPopulationStatus | null;
+  overnightPauseEnabled: boolean;
+  overnightPauseStart: string | null;
+  overnightPauseEnd: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -119,6 +128,9 @@ export function draftFromDatabase(row: any): Draft {
     draftState: row.draft_state || {},
     orderConfirmed: row.order_confirmed ?? false,
     rosterPopulationStatus: row.roster_population_status ?? null,
+    overnightPauseEnabled: row.overnight_pause_enabled ?? false,
+    overnightPauseStart: row.overnight_pause_start ?? null,
+    overnightPauseEnd: row.overnight_pause_end ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

@@ -20,8 +20,9 @@ export class ChatController {
 
     const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 50;
     const before = req.query.before ? parseInt(req.query.before as string, 10) : undefined;
+    const aroundTimestamp = req.query.around_timestamp as string | undefined;
 
-    const messages = await this.chatService.getMessages(leagueId, userId, limit, before);
+    const messages = await this.chatService.getMessages(leagueId, userId, limit, before, aroundTimestamp);
 
     // Attach reactions to messages
     const messageIds = messages.map((m: any) => m.id);
@@ -33,6 +34,33 @@ export class ChatController {
     }));
 
     res.status(200).json(messagesWithReactions);
+  };
+
+  searchMessages = async (req: AuthRequest, res: Response) => {
+    const userId = requireUserId(req);
+    const leagueId = requireLeagueId(req);
+
+    const searchQuery = req.query.q as string;
+    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 100;
+    const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : 0;
+
+    const result = await this.chatService.searchMessages(leagueId, userId, searchQuery, limit, offset);
+
+    // Attach reactions to messages
+    const messageIds = result.messages.map((m: any) => m.id);
+    const reactionsMap = await this.chatReactionRepo.getReactionsForMessages(messageIds);
+
+    const messagesWithReactions = result.messages.map((m: any) => ({
+      ...m,
+      reactions: groupReactions(reactionsMap.get(m.id) || [], userId),
+    }));
+
+    res.status(200).json({
+      messages: messagesWithReactions,
+      total: result.total,
+      limit,
+      offset,
+    });
   };
 
   sendMessage = async (req: AuthRequest, res: Response) => {

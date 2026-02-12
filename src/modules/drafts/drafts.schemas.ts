@@ -1,8 +1,8 @@
 import { z } from 'zod';
 
 /** Zod schema for draft type validation */
-export const draftTypeSchema = z.enum(['snake', 'linear', 'auction'], {
-  message: 'Draft type must be "snake", "linear", or "auction"',
+export const draftTypeSchema = z.enum(['snake', 'linear', 'auction', 'matchups'], {
+  message: 'Draft type must be "snake", "linear", "auction", or "matchups"',
 });
 
 /** Zod schema for auction mode validation */

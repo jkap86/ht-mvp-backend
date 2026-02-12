@@ -76,6 +76,9 @@ const mockDraft: Draft = {
   draftState: {},
   orderConfirmed: true,
   rosterPopulationStatus: null,
+  overnightPauseEnabled: false,
+  overnightPauseStart: null,
+  overnightPauseEnd: null,
   createdAt: new Date(),
   updatedAt: new Date(),
 };

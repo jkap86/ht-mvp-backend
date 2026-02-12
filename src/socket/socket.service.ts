@@ -205,7 +205,7 @@ export class SocketService {
     });
   }
 
-  constructor(httpServer: HttpServer) {
+  private constructor(httpServer: HttpServer) {
     this.io = new Server(httpServer, {
       cors: {
         origin: (origin, callback) => {
@@ -229,17 +229,33 @@ export class SocketService {
         credentials: true,
       },
     });
+  }
+
+  /**
+   * Factory method to create and initialize SocketService
+   * Handles async Redis adapter setup
+   */
+  static async create(httpServer: HttpServer): Promise<SocketService> {
+    const service = new SocketService(httpServer);
 
     // Configure Redis adapter for horizontal scaling
     if (env.REDIS_HOST) {
       const pubClient = getRedisClient();
       const subClient = pubClient.duplicate();
-      this.io.adapter(createAdapter(pubClient, subClient));
+
+      // Wait for subClient to connect before creating adapter
+      await new Promise<void>((resolve, reject) => {
+        subClient.once('ready', () => resolve());
+        subClient.once('error', (err) => reject(err));
+      });
+
+      service.io.adapter(createAdapter(pubClient, subClient));
       logger.info('Socket.io using Redis adapter for horizontal scaling');
     }
 
-    this.setupMiddleware();
-    this.setupEventHandlers();
+    service.setupMiddleware();
+    service.setupEventHandlers();
+    return service;
   }
 
   private setupMiddleware(): void {
@@ -258,9 +274,9 @@ export class SocketService {
 
         const payload = verifyToken(token as string);
 
-        // Reject refresh tokens - only access tokens may authenticate sockets
-        if (payload.type === 'refresh') {
-          return next(new Error('Refresh tokens cannot be used for socket authentication'));
+        // Reject refresh tokens and tokens without type field - only access tokens may authenticate sockets
+        if (payload.type !== 'access') {
+          return next(new Error('Only access tokens can be used for socket authentication'));
         }
 
         socket.userId = payload.userId;
@@ -484,6 +500,16 @@ export class SocketService {
   // Emit draft completed event
   emitDraftCompleted(draftId: number, draft: any): void {
     this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.DRAFT.COMPLETED, draft);
+  }
+
+  // Emit overnight pause started event
+  emitDraftOvernightPauseStarted(draftId: number, data: any): void {
+    this.io.to(ROOM_NAMES.draft(draftId)).emit('draft:overnight_pause_started', data);
+  }
+
+  // Emit overnight pause ended event
+  emitDraftOvernightPauseEnded(draftId: number, data: any): void {
+    this.io.to(ROOM_NAMES.draft(draftId)).emit('draft:overnight_pause_ended', data);
   }
 
   // Emit pick undone event
@@ -848,8 +874,8 @@ export class SocketService {
 // Singleton instance (kept for backward compatibility during migration)
 let socketService: SocketService | null = null;
 
-export function initializeSocket(httpServer: HttpServer): SocketService {
-  socketService = new SocketService(httpServer);
+export async function initializeSocket(httpServer: HttpServer): Promise<SocketService> {
+  socketService = await SocketService.create(httpServer);
   // Register in container for dependency injection
   container.override(KEYS.SOCKET_SERVICE, socketService);
   return socketService;

@@ -63,7 +63,8 @@ export class DmService {
     userId: string,
     conversationId: number,
     limit?: number,
-    before?: number
+    before?: number,
+    aroundTimestamp?: string
   ): Promise<any[]> {
     // Verify user is a participant
     const isParticipant = await this.dmRepo.isUserParticipant(conversationId, userId);
@@ -71,6 +72,17 @@ export class DmService {
       throw new ForbiddenException('You are not a participant in this conversation');
     }
 
+    // Handle timestamp-based query (for date jump navigation)
+    if (aroundTimestamp) {
+      const timestamp = new Date(aroundTimestamp);
+      if (isNaN(timestamp.getTime())) {
+        throw new ValidationException('Invalid timestamp');
+      }
+      const messages = await this.dmRepo.getMessagesAroundTimestamp(conversationId, timestamp, limit);
+      return messages.map(messageToResponse);
+    }
+
+    // Handle regular pagination
     const messages = await this.dmRepo.getMessages(conversationId, limit, before);
     return messages.map(messageToResponse);
   }
@@ -164,5 +176,33 @@ export class DmService {
   async getTotalUnreadCount(userId: string): Promise<number> {
     const conversations = await this.dmRepo.getConversationsForUser(userId);
     return conversations.reduce((sum, conv) => sum + conv.unreadCount, 0);
+  }
+
+  /**
+   * Search messages in a conversation
+   */
+  async searchMessages(
+    userId: string,
+    conversationId: number,
+    searchQuery: string,
+    limit = 100,
+    offset = 0
+  ): Promise<{ messages: any[]; total: number }> {
+    // Verify user is a participant
+    const isParticipant = await this.dmRepo.isUserParticipant(conversationId, userId);
+    if (!isParticipant) {
+      throw new ForbiddenException('You are not a participant in this conversation');
+    }
+
+    // Validate search query
+    if (!searchQuery || searchQuery.trim().length === 0) {
+      throw new ValidationException('Search query cannot be empty');
+    }
+
+    const result = await this.dmRepo.searchMessages(conversationId, searchQuery.trim(), limit, offset);
+    return {
+      messages: result.messages.map(messageToResponse),
+      total: result.total,
+    };
   }
 }

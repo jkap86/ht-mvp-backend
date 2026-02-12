@@ -40,6 +40,10 @@ export const getDmMessagesQuerySchema = z.object({
     .transform(Number)
     .pipe(z.number().positive())
     .optional(),
+  around_timestamp: z
+    .string()
+    .datetime({ message: 'Invalid ISO 8601 timestamp' })
+    .optional(),
 });
 
 /** Schema for adding/removing a DM reaction */
@@ -50,7 +54,32 @@ export const dmReactionSchema = z.object({
     .max(8, 'Emoji too long'),
 });
 
+/** Schema for searching DM messages */
+export const searchDmMessagesQuerySchema = z.object({
+  q: z
+    .string()
+    .min(1, 'Search query is required')
+    .max(100, 'Search query too long')
+    .trim()
+    .transform(stripHtml),
+  limit: z
+    .string()
+    .regex(/^\d+$/, 'Limit must be a number')
+    .transform(Number)
+    .pipe(z.number().min(1).max(500))
+    .optional()
+    .default(100),
+  offset: z
+    .string()
+    .regex(/^\d+$/, 'Offset must be a number')
+    .transform(Number)
+    .pipe(z.number().min(0))
+    .optional()
+    .default(0),
+});
+
 // Type exports from Zod schemas
 export type SendDmInput = z.infer<typeof sendDmSchema>;
 export type GetDmMessagesQueryInput = z.infer<typeof getDmMessagesQuerySchema>;
 export type DmReactionInput = z.infer<typeof dmReactionSchema>;
+export type SearchDmMessagesQueryInput = z.infer<typeof searchDmMessagesQuerySchema>;

@@ -125,6 +125,15 @@ export class RosterRepository {
   }
 
   /**
+   * Find multiple rosters by IDs with client (for use in transactions).
+   */
+  async findByIdsWithClient(client: PoolClient, ids: number[]): Promise<Roster[]> {
+    if (ids.length === 0) return [];
+    const result = await client.query('SELECT * FROM rosters WHERE id = ANY($1)', [ids]);
+    return RosterMapper.fromRows(result.rows);
+  }
+
+  /**
    * Find roster by league ID and per-league roster_id (not global id)
    */
   async findByLeagueAndRosterId(leagueId: number, rosterId: number): Promise<Roster | null> {

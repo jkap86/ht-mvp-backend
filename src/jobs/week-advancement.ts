@@ -22,7 +22,7 @@ export async function checkAndAdvanceWeek(
   nflSeasonType: SleeperSeasonType
 ): Promise<void> {
   try {
-    const advancedLeagueIds: number[] = [];
+    const advancedLeagueIds = new Set<number>();
 
     // Step 1: Advance week for in-season leagues that are behind
     const weekResult = await pool.query<{ id: number; active_league_season_id: number | null }>(
@@ -36,7 +36,7 @@ export async function checkAndAdvanceWeek(
 
     if (weekResult.rowCount && weekResult.rowCount > 0) {
       const leagueIds = weekResult.rows.map(r => r.id);
-      advancedLeagueIds.push(...leagueIds);
+      leagueIds.forEach(id => advancedLeagueIds.add(id));
       logger.info(`Advanced ${weekResult.rowCount} leagues to week ${nflWeek}`);
 
       // Sync league_seasons current_week for leagues that have an active season
@@ -55,15 +55,11 @@ export async function checkAndAdvanceWeek(
 
     // Step 2: Advance season status (forward-only transitions)
     const statusAdvancedIds = await advanceSeasonStatus(pool, nflSeason, nflSeasonType);
-    // Merge without duplicates
-    for (const id of statusAdvancedIds) {
-      if (!advancedLeagueIds.includes(id)) {
-        advancedLeagueIds.push(id);
-      }
-    }
+    // Merge without duplicates (Set automatically handles dedup)
+    statusAdvancedIds.forEach(id => advancedLeagueIds.add(id));
 
     // Step 3: Emit socket events after all DB writes
-    if (advancedLeagueIds.length > 0) {
+    if (advancedLeagueIds.size > 0) {
       const eventBus = tryGetEventBus();
       if (eventBus) {
         for (const leagueId of advancedLeagueIds) {

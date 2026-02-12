@@ -50,6 +50,12 @@ export class SocketEventSubscriber implements DomainEventSubscriber {
       case EventTypes.DRAFT_RESUMED:
         socketService.emitDraftResumed(event.payload.draftId as number, event.payload);
         break;
+      case EventTypes.DRAFT_OVERNIGHT_PAUSE_STARTED:
+        socketService.emitDraftOvernightPauseStarted(event.payload.draftId as number, event.payload);
+        break;
+      case EventTypes.DRAFT_OVERNIGHT_PAUSE_ENDED:
+        socketService.emitDraftOvernightPauseEnded(event.payload.draftId as number, event.payload);
+        break;
 
       // Auction events
       case EventTypes.AUCTION_BID:

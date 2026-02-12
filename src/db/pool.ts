@@ -41,46 +41,66 @@ export function getPoolHealth(): PoolHealth {
 // Wrap pool.query to measure timing and log slow queries with context
 const originalQuery = pool.query.bind(pool);
 
-// Create a type-safe wrapper function
-// Note: The assignment to pool.query requires a cast because Pool.query has multiple overloads
-// (callback-style, promise-style, streaming, etc.) that are difficult to replicate exactly.
-// However, the wrapper function itself is properly typed for the promise-based usage we actually use.
-async function queryWithLogging<T extends QueryResultRow = any>(
-  text: string | { text: string; values?: any[] },
-  params?: any[]
-): Promise<QueryResult<T>> {
+// Create a type-safe wrapper function using rest parameters to preserve all overloads
+// This handles promise-based, callback-based, and streaming query variants
+function queryWithLogging(...args: any[]): any {
   const start = Date.now();
   const context = getQueryContext();
 
-  try {
-    return await originalQuery<T>(text, params);
-  } finally {
-    const duration = Date.now() - start;
-    const queryText = typeof text === 'string' ? text : text.text;
+  // Extract query text for logging (works for all overload styles)
+  const firstArg = args[0];
+  const queryText = typeof firstArg === 'string'
+    ? firstArg
+    : firstArg?.text || '<unknown query>';
 
-    if (duration > SLOW_QUERY_THRESHOLD_MS) {
-      const logData = {
-        durationMs: duration,
-        query: queryText?.substring(0, 200),
-        requestId: context.requestId,
-        userId: context.userId,
-        jobName: context.jobName,
-        label: context.label,
-      };
+  // Check if callback-style (last arg is function)
+  const lastArg = args[args.length - 1];
+  const hasCallback = typeof lastArg === 'function';
 
-      if (duration > VERY_SLOW_QUERY_THRESHOLD_MS) {
-        logger.error('Very slow query detected', logData);
-      } else {
-        logger.warn('Slow query detected', logData);
-      }
+  if (hasCallback) {
+    // Callback-style: wrap the callback to measure timing
+    const originalCallback = lastArg;
+    args[args.length - 1] = (err: any, result: any) => {
+      const duration = Date.now() - start;
+      logSlowQuery(duration, queryText, context);
+      originalCallback(err, result);
+    };
+    return originalQuery(...args);
+  } else {
+    // Promise-style: measure timing in finally block
+    const result = originalQuery(...args);
+    if (result && typeof result.then === 'function') {
+      return result.finally(() => {
+        const duration = Date.now() - start;
+        logSlowQuery(duration, queryText, context);
+      });
+    }
+    return result;
+  }
+}
+
+// Helper to log slow queries
+function logSlowQuery(duration: number, queryText: string, context: any): void {
+  if (duration > SLOW_QUERY_THRESHOLD_MS) {
+    const logData = {
+      durationMs: duration,
+      query: queryText?.substring(0, 200),
+      requestId: context.requestId,
+      userId: context.userId,
+      jobName: context.jobName,
+      label: context.label,
+    };
+
+    if (duration > VERY_SLOW_QUERY_THRESHOLD_MS) {
+      logger.error('Very slow query detected', logData);
+    } else {
+      logger.warn('Slow query detected', logData);
     }
   }
 }
 
 // Override pool.query with our logging wrapper
-// SAFETY: This cast is required because Pool.query has 10+ overloads including callback-style variants.
-// Our wrapper covers the promise-based overloads that the codebase actually uses.
-// The wrapper function itself maintains full type safety with generics.
+// SAFETY: Uses rest parameters to preserve all Pool.query overloads (promise, callback, streaming)
 (pool as any).query = queryWithLogging;
 
 // Log connection events in development

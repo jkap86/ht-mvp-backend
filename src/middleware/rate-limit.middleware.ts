@@ -88,7 +88,7 @@ export const draftPickLimiter = rateLimit({
   message: {
     error: { code: 'RATE_LIMITED', message: 'Too many pick attempts, please slow down' },
   },
-  keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
+  keyGenerator: (req: AuthRequest) => req.user?.userId || getSecureIdentifier(req),
   standardHeaders: true,
   legacyHeaders: false,
   store: getRedisStore(),
@@ -104,7 +104,7 @@ export const queueLimiter = rateLimit({
   message: {
     error: { code: 'RATE_LIMITED', message: 'Too many queue operations, please slow down' },
   },
-  keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
+  keyGenerator: (req: AuthRequest) => req.user?.userId || getSecureIdentifier(req),
   standardHeaders: true,
   legacyHeaders: false,
   store: getRedisStore(),
@@ -120,7 +120,7 @@ export const draftModifyLimiter = rateLimit({
   message: {
     error: { code: 'RATE_LIMITED', message: 'Too many draft operations, please slow down' },
   },
-  keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
+  keyGenerator: (req: AuthRequest) => req.user?.userId || getSecureIdentifier(req),
   standardHeaders: true,
   legacyHeaders: false,
   store: getRedisStore(),
@@ -136,7 +136,7 @@ export const dmMessageLimiter = rateLimit({
   message: {
     error: { code: 'RATE_LIMITED', message: 'Too many messages, please slow down' },
   },
-  keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
+  keyGenerator: (req: AuthRequest) => req.user?.userId || getSecureIdentifier(req),
   standardHeaders: true,
   legacyHeaders: false,
   store: getRedisStore(),
@@ -152,7 +152,7 @@ export const dmReadLimiter = rateLimit({
   message: {
     error: { code: 'RATE_LIMITED', message: 'Too many requests, please slow down' },
   },
-  keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
+  keyGenerator: (req: AuthRequest) => req.user?.userId || getSecureIdentifier(req),
   standardHeaders: true,
   legacyHeaders: false,
   store: getRedisStore(),
@@ -168,7 +168,7 @@ export const searchLimiter = rateLimit({
   message: {
     error: { code: 'RATE_LIMITED', message: 'Too many search requests, please slow down' },
   },
-  keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
+  keyGenerator: (req: AuthRequest) => req.user?.userId || getSecureIdentifier(req),
   standardHeaders: true,
   legacyHeaders: false,
   store: getRedisStore(),
@@ -217,7 +217,7 @@ export const apiReadLimiter = rateLimit({
   message: {
     error: { code: 'RATE_LIMITED', message: 'Too many requests, please slow down' },
   },
-  keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
+  keyGenerator: (req: AuthRequest) => req.user?.userId || getSecureIdentifier(req),
   standardHeaders: true,
   legacyHeaders: false,
   store: getRedisStore(),
@@ -234,7 +234,7 @@ export const apiWriteLimiter = rateLimit({
   message: {
     error: { code: 'RATE_LIMITED', message: 'Too many requests, please slow down' },
   },
-  keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
+  keyGenerator: (req: AuthRequest) => req.user?.userId || getSecureIdentifier(req),
   standardHeaders: true,
   legacyHeaders: false,
   store: getRedisStore(),
@@ -250,7 +250,7 @@ export const tradeLimiter = rateLimit({
   message: {
     error: { code: 'RATE_LIMITED', message: 'Too many trade operations, please slow down' },
   },
-  keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
+  keyGenerator: (req: AuthRequest) => req.user?.userId || getSecureIdentifier(req),
   standardHeaders: true,
   legacyHeaders: false,
   store: getRedisStore(),
@@ -266,7 +266,7 @@ export const rosterModifyLimiter = rateLimit({
   message: {
     error: { code: 'RATE_LIMITED', message: 'Too many roster operations, please slow down' },
   },
-  keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
+  keyGenerator: (req: AuthRequest) => req.user?.userId || getSecureIdentifier(req),
   standardHeaders: true,
   legacyHeaders: false,
   store: getRedisStore(),
@@ -282,7 +282,7 @@ export const waiverLimiter = rateLimit({
   message: {
     error: { code: 'RATE_LIMITED', message: 'Too many waiver operations, please slow down' },
   },
-  keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
+  keyGenerator: (req: AuthRequest) => req.user?.userId || getSecureIdentifier(req),
   standardHeaders: true,
   legacyHeaders: false,
   store: getRedisStore(),
@@ -298,7 +298,7 @@ export const playerSyncLimiter = rateLimit({
   message: {
     error: { code: 'RATE_LIMITED', message: 'Player sync is rate limited. Please try again later.' },
   },
-  keyGenerator: (req: AuthRequest) => req.user?.userId || req.ip || 'unknown',
+  keyGenerator: (req: AuthRequest) => req.user?.userId || getSecureIdentifier(req),
   standardHeaders: true,
   legacyHeaders: false,
   store: getRedisStore(),

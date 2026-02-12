@@ -40,6 +40,10 @@ export const getMessagesQuerySchema = z.object({
     .transform(Number)
     .pipe(z.number().positive())
     .optional(),
+  around_timestamp: z
+    .string()
+    .datetime({ message: 'Invalid ISO 8601 timestamp' })
+    .optional(),
 });
 
 /** Schema for adding/removing a reaction */
@@ -50,7 +54,32 @@ export const reactionSchema = z.object({
     .max(8, 'Emoji too long'),
 });
 
+/** Schema for searching chat messages */
+export const searchMessagesQuerySchema = z.object({
+  q: z
+    .string()
+    .min(1, 'Search query is required')
+    .max(100, 'Search query too long')
+    .trim()
+    .transform(stripHtml),
+  limit: z
+    .string()
+    .regex(/^\d+$/, 'Limit must be a number')
+    .transform(Number)
+    .pipe(z.number().min(1).max(500))
+    .optional()
+    .default(100),
+  offset: z
+    .string()
+    .regex(/^\d+$/, 'Offset must be a number')
+    .transform(Number)
+    .pipe(z.number().min(0))
+    .optional()
+    .default(0),
+});
+
 // Type exports from Zod schemas
 export type SendMessageInput = z.infer<typeof sendMessageSchema>;
 export type GetMessagesQueryInput = z.infer<typeof getMessagesQuerySchema>;
 export type ReactionInput = z.infer<typeof reactionSchema>;
+export type SearchMessagesQueryInput = z.infer<typeof searchMessagesQuerySchema>;

@@ -346,4 +346,99 @@ export class DmRepository {
   getOtherUserId(conversation: Conversation, userId: string): string {
     return conversation.user1Id === userId ? conversation.user2Id : conversation.user1Id;
   }
+
+  /**
+   * Search messages in a conversation using full-text search
+   */
+  async searchMessages(
+    conversationId: number,
+    searchQuery: string,
+    limit = 100,
+    offset = 0
+  ): Promise<{ messages: DirectMessageWithUser[]; total: number }> {
+    // Get total count first
+    const countResult = await this.pool.query(
+      `SELECT COUNT(*) as total
+       FROM direct_messages dm
+       WHERE dm.conversation_id = $1
+         AND to_tsvector('english', dm.message) @@ plainto_tsquery('english', $2)`,
+      [conversationId, searchQuery]
+    );
+
+    const total = parseInt(countResult.rows[0].total, 10);
+
+    // Get paginated results
+    const result = await this.pool.query(
+      `SELECT
+        dm.id,
+        dm.conversation_id as "conversationId",
+        dm.sender_id as "senderId",
+        dm.message,
+        dm.created_at as "createdAt",
+        u.username as "senderUsername",
+        ts_rank(to_tsvector('english', dm.message), plainto_tsquery('english', $2)) as relevance
+      FROM direct_messages dm
+      JOIN users u ON dm.sender_id = u.id
+      WHERE dm.conversation_id = $1
+        AND to_tsvector('english', dm.message) @@ plainto_tsquery('english', $2)
+      ORDER BY relevance DESC, dm.created_at DESC
+      LIMIT $3 OFFSET $4`,
+      [conversationId, searchQuery, limit, offset]
+    );
+
+    return {
+      messages: result.rows,
+      total,
+    };
+  }
+
+  /**
+   * Get messages around a specific timestamp (for date jump navigation)
+   * Returns messages before and after the timestamp
+   */
+  async getMessagesAroundTimestamp(
+    conversationId: number,
+    timestamp: Date,
+    limit = 50
+  ): Promise<DirectMessageWithUser[]> {
+    const halfLimit = Math.floor(limit / 2);
+
+    // Get messages before the timestamp
+    const beforeQuery = await this.pool.query(
+      `SELECT
+        dm.id,
+        dm.conversation_id as "conversationId",
+        dm.sender_id as "senderId",
+        dm.message,
+        dm.created_at as "createdAt",
+        u.username as "senderUsername"
+      FROM direct_messages dm
+      JOIN users u ON dm.sender_id = u.id
+      WHERE dm.conversation_id = $1 AND dm.created_at < $2
+      ORDER BY dm.created_at DESC
+      LIMIT $3`,
+      [conversationId, timestamp, halfLimit]
+    );
+
+    // Get messages at or after the timestamp
+    const afterQuery = await this.pool.query(
+      `SELECT
+        dm.id,
+        dm.conversation_id as "conversationId",
+        dm.sender_id as "senderId",
+        dm.message,
+        dm.created_at as "createdAt",
+        u.username as "senderUsername"
+      FROM direct_messages dm
+      JOIN users u ON dm.sender_id = u.id
+      WHERE dm.conversation_id = $1 AND dm.created_at >= $2
+      ORDER BY dm.created_at ASC
+      LIMIT $3`,
+      [conversationId, timestamp, halfLimit]
+    );
+
+    // Combine results and sort by timestamp descending (newest first)
+    const messages = [...beforeQuery.rows, ...afterQuery.rows.reverse()];
+    return messages;
+  }
 }

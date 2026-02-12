@@ -573,18 +573,25 @@ export class SlowAuctionService {
     });
 
     // Notify outbid users via domain events
-    for (const notif of bidResult.outbidNotifications) {
-      const outbidRoster = await this.rosterRepo.findById(notif.rosterId);
-      if (outbidRoster?.userId) {
-        eventBus?.publish({
-          type: EventTypes.AUCTION_OUTBID,
-          userId: outbidRoster.userId,
-          payload: {
-            lot_id: notif.lotId,
-            player_id: bidResult.lot.playerId,
-            new_bid: notif.newLeadingBid,
-          },
-        });
+    // Batch lookup rosters to avoid N+1 queries
+    if (bidResult.outbidNotifications.length > 0) {
+      const rosterIds = bidResult.outbidNotifications.map((n) => n.rosterId);
+      const rosters = await this.rosterRepo.findByIds(rosterIds);
+      const rosterMap = new Map(rosters.map((r) => [r.id, r]));
+
+      for (const notif of bidResult.outbidNotifications) {
+        const outbidRoster = rosterMap.get(notif.rosterId);
+        if (outbidRoster?.userId) {
+          eventBus?.publish({
+            type: EventTypes.AUCTION_OUTBID,
+            userId: outbidRoster.userId,
+            payload: {
+              lot_id: notif.lotId,
+              player_id: bidResult.lot.playerId,
+              new_bid: notif.newLeadingBid,
+            },
+          });
+        }
       }
     }
 

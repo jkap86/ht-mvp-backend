@@ -194,4 +194,11 @@ router.post('/:draftId/derby/pick-slot', draftPickLimiter, asyncHandler(derbyCon
 // GET /api/leagues/:leagueId/drafts/:draftId/derby/state
 router.get('/:draftId/derby/state', apiReadLimiter, asyncHandler(derbyController.getDerbyState));
 
+// Matchups draft routes
+// GET /api/leagues/:leagueId/drafts/:draftId/available-matchups
+router.get('/:draftId/available-matchups', apiReadLimiter, asyncHandler(draftController.getAvailableMatchups));
+
+// POST /api/leagues/:leagueId/drafts/:draftId/pick-matchup
+router.post('/:draftId/pick-matchup', draftPickLimiter, asyncHandler(draftController.pickMatchup));
+
 export default router;

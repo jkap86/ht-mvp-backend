@@ -17,18 +17,21 @@ import { DraftCoreRepository } from './repositories/draft-core.repository';
 import { DraftOrderRepository } from './repositories/draft-order.repository';
 import { DraftPickRepository } from './repositories/draft-pick.repository';
 import { DraftQueueRepository, type QueueEntry } from './repositories/draft-queue.repository';
+import { MatchupDraftRepository, type MatchupPickResult } from './repositories/matchup-draft.repository';
 
 export class DraftRepository {
   private readonly core: DraftCoreRepository;
   private readonly order: DraftOrderRepository;
   private readonly pick: DraftPickRepository;
   private readonly queue: DraftQueueRepository;
+  private readonly matchup: MatchupDraftRepository;
 
   constructor(private readonly db: Pool) {
     this.core = new DraftCoreRepository(db);
     this.order = new DraftOrderRepository(db);
     this.pick = new DraftPickRepository(db);
     this.queue = new DraftQueueRepository(db);
+    this.matchup = new MatchupDraftRepository(db);
   }
 
   // ============================================
@@ -107,6 +110,10 @@ export class DraftRepository {
 
   async findExpiredDrafts(): Promise<Draft[]> {
     return this.core.findExpiredDrafts();
+  }
+
+  async findByStatusAndOvernightPauseEnabled(status: string): Promise<Draft[]> {
+    return this.core.findByStatusAndOvernightPauseEnabled(status);
   }
 
   async getBestAvailablePlayer(
@@ -456,7 +463,76 @@ export class DraftRepository {
   ): Promise<void> {
     return this.queue.reorderQueue(draftId, rosterId, playerIds, entryIds);
   }
+
+  // ============================================
+  // Matchup Draft Operations (delegated to MatchupDraftRepository)
+  // ============================================
+
+  async makeMatchupPickAndAdvanceTx(params: {
+    draftId: number;
+    expectedPickNumber: number;
+    round: number;
+    pickInRound: number;
+    rosterId: number;
+    week: number;
+    opponentRosterId: number;
+    nextPickState: {
+      currentPick: number | null;
+      currentRound: number | null;
+      currentRosterId: number | null;
+      pickDeadline: Date | null;
+      status?: 'in_progress' | 'completed';
+      completedAt?: Date | null;
+    };
+    idempotencyKey?: string;
+    isAutoPick?: boolean;
+  }): Promise<{ result: MatchupPickResult; draft: Draft }> {
+    return this.matchup.makeMatchupPickAndAdvanceTx(params);
+  }
+
+  async makeMatchupPickAndAdvanceTxWithClient(
+    client: PoolClient,
+    params: {
+      draftId: number;
+      expectedPickNumber: number;
+      round: number;
+      pickInRound: number;
+      rosterId: number;
+      week: number;
+      opponentRosterId: number;
+      nextPickState: {
+        currentPick: number | null;
+        currentRound: number | null;
+        currentRosterId: number | null;
+        pickDeadline: Date | null;
+        status?: 'in_progress' | 'completed';
+        completedAt?: Date | null;
+      };
+      idempotencyKey?: string;
+      isAutoPick?: boolean;
+    }
+  ): Promise<{ result: MatchupPickResult; draft: Draft }> {
+    return this.matchup.makeMatchupPickAndAdvanceTxWithClient(client, params);
+  }
+
+  async getMatchupPicks(draftId: number, client?: PoolClient): Promise<Array<{
+    rosterId: number;
+    week: number;
+    opponentRosterId: number;
+    pickNumber: number;
+    pickedAt: Date;
+  }>> {
+    return this.matchup.getMatchupPicks(draftId, client);
+  }
+
+  async getRosterMatchups(draftId: number, rosterId: number, client?: PoolClient): Promise<Array<{
+    week: number;
+    opponentRosterId: number;
+  }>> {
+    return this.matchup.getRosterMatchups(draftId, rosterId, client);
+  }
 }
 
-// Re-export QueueEntry for backward compatibility
+// Re-export types for backward compatibility
 export type { QueueEntry } from './repositories/draft-queue.repository';
+export type { MatchupPickResult } from './repositories/matchup-draft.repository';
