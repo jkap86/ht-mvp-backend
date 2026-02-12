@@ -32,6 +32,7 @@ import {
   FaabBudgetRepository,
   WaiverClaimsRepository,
   WaiverWireRepository,
+  WaiverProcessingRunsRepository,
 } from './modules/waivers/waivers.repository';
 
 // Services
@@ -427,6 +428,10 @@ function bootstrap(): void {
     KEYS.WAIVER_WIRE_REPO,
     () => new WaiverWireRepository(container.resolve(KEYS.POOL))
   );
+  container.register(
+    KEYS.WAIVER_PROCESSING_RUNS_REPO,
+    () => new WaiverProcessingRunsRepository(container.resolve(KEYS.POOL))
+  );
   container.register(KEYS.PLAYOFF_REPO, () => new PlayoffRepository(container.resolve(KEYS.POOL)));
 
   // Roster mutation service (centralized validation for roster changes)
@@ -582,7 +587,8 @@ function bootstrap(): void {
         container.resolve(KEYS.LEAGUE_REPO),
         container.resolve(KEYS.TRADES_REPO),
         container.resolve(KEYS.EVENT_LISTENER_SERVICE),
-        container.resolve(KEYS.ROSTER_MUTATION_SERVICE)
+        container.resolve(KEYS.ROSTER_MUTATION_SERVICE),
+        container.resolve(KEYS.WAIVER_PROCESSING_RUNS_REPO)
       )
   );
 

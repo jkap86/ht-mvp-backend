@@ -1,4 +1,5 @@
 import { Pool, PoolClient } from 'pg';
+import { snakeToCamel } from '../../shared/mappers';
 
 export interface LeagueOperation {
   id: number;
@@ -9,6 +10,10 @@ export interface LeagueOperation {
   responseData: any;
   createdAt: Date;
   expiresAt: Date;
+}
+
+function leagueOperationFromDatabase(row: any): LeagueOperation {
+  return snakeToCamel<LeagueOperation>(row);
 }
 
 /**
@@ -42,17 +47,7 @@ export class LeagueOperationsRepository {
 
     if (result.rows.length === 0) return null;
 
-    const row = result.rows[0];
-    return {
-      id: row.id,
-      idempotencyKey: row.idempotency_key,
-      leagueId: row.league_id,
-      userId: row.user_id,
-      operationType: row.operation_type,
-      responseData: row.response_data,
-      createdAt: row.created_at,
-      expiresAt: row.expires_at,
-    };
+    return leagueOperationFromDatabase(result.rows[0]);
   }
 
   /**
@@ -77,16 +72,6 @@ export class LeagueOperationsRepository {
       [idempotencyKey, leagueId, userId, operationType, JSON.stringify(responseData)]
     );
 
-    const row = result.rows[0];
-    return {
-      id: row.id,
-      idempotencyKey: row.idempotency_key,
-      leagueId: row.league_id,
-      userId: row.user_id,
-      operationType: row.operation_type,
-      responseData: row.response_data,
-      createdAt: row.created_at,
-      expiresAt: row.expires_at,
-    };
+    return leagueOperationFromDatabase(result.rows[0]);
   }
 }

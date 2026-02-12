@@ -101,6 +101,7 @@ const createMockRosterService = (): jest.Mocked<RosterService> =>
 const createMockDraftService = (): jest.Mocked<DraftService> =>
   ({
     createDraft: jest.fn(),
+    createDraftWithClient: jest.fn().mockResolvedValue({ id: 1 }),
     getLeagueDrafts: jest.fn(),
     getDraftById: jest.fn(),
     getDraftOrder: jest.fn(),

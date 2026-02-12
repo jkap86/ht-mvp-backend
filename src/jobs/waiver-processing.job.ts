@@ -80,10 +80,6 @@ async function processWaivers(): Promise<void> {
         AND settings->>'waiver_type' != 'none'
       `);
 
-      // Calculate current window start (truncate to hour for deduplication)
-      const windowStart = new Date();
-      windowStart.setMinutes(0, 0, 0);
-
       for (const league of leaguesResult.rows) {
         try {
           const waiverSettings = parseWaiverSettings(league.settings);
@@ -98,11 +94,8 @@ async function processWaivers(): Promise<void> {
             continue;
           }
 
-          // Get current season and week from league
-          const season = parseInt(league.settings?.season || league.season, 10);
-          const currentWeek = league.settings?.current_week ?? league.current_week ?? null;
-
           // Skip if no current week set (pre-season)
+          const currentWeek = league.settings?.current_week ?? league.current_week ?? null;
           if (currentWeek === null) {
             logger.debug(`League ${league.id} has no current week, skipping waiver processing`, {
               jobName: 'waiver-processing',
@@ -110,34 +103,14 @@ async function processWaivers(): Promise<void> {
             continue;
           }
 
-          // Check if we already processed waivers for this league in this window
-          // Uses waiver_processing_runs table to prevent duplicate processing even with 0 claims
-          const existingRun = await client.query<{ id: number }>(
-            `SELECT id FROM waiver_processing_runs
-             WHERE league_id = $1 AND season = $2 AND week = $3 AND window_start_at = $4`,
-            [league.id, season, currentWeek, windowStart]
-          );
-
-          if (existingRun.rows.length > 0) {
-            logger.debug(`Waivers already processed for league ${league.id} this window`, {
-              jobName: 'waiver-processing',
-            });
-            continue;
-          }
-
-          // Process claims for this league
+          // Process claims for this league.
+          // Deduplication is handled atomically inside processLeagueClaims:
+          // the processing run record is created within the same transaction
+          // that processes claims, preventing double-processing on crash/restart.
           logger.info(`Processing waivers for league ${league.id}`, {
             jobName: 'waiver-processing',
           });
           const result = await waiversService.processLeagueClaims(league.id);
-
-          // Record the processing run (even with 0 claims) to prevent repeated runs
-          await client.query(
-            `INSERT INTO waiver_processing_runs (league_id, season, week, window_start_at, claims_found, claims_successful)
-             VALUES ($1, $2, $3, $4, $5, $6)
-             ON CONFLICT (league_id, season, week, window_start_at) DO NOTHING`,
-            [league.id, season, currentWeek, windowStart, result.processed, result.successful]
-          );
 
           leaguesProcessed++;
           totalClaims += result.processed;

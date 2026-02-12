@@ -505,7 +505,7 @@ describe('MatchupService', () => {
       await service.finalizeWeekMatchups(LEAGUE_ID, WEEK, COMMISSIONER_ID);
 
       expect(leagueRepo.isCommissioner).toHaveBeenCalledWith(LEAGUE_ID, COMMISSIONER_ID);
-      expect(scoringService.calculateWeeklyScores).toHaveBeenCalledWith(LEAGUE_ID, WEEK, COMMISSIONER_ID);
+      expect(scoringService.calculateWeeklyScores).toHaveBeenCalledWith(LEAGUE_ID, WEEK, COMMISSIONER_ID, expect.objectContaining({ id: LEAGUE_ID }));
       expect(matchupsRepo.updatePoints).toHaveBeenCalledWith(
         MATCHUP_ID,
         105.5,

@@ -4,6 +4,7 @@ import {
   FaabBudgetRepository,
   WaiverClaimsRepository,
   WaiverWireRepository,
+  WaiverProcessingRunsRepository,
 } from './waivers.repository';
 import type {
   RosterPlayersRepository,
@@ -58,7 +59,8 @@ export class WaiversService {
     private readonly leagueRepo: LeagueRepository,
     private readonly tradesRepo?: TradesRepository,
     private readonly eventListenerService?: EventListenerService,
-    private readonly rosterMutationService?: RosterMutationService
+    private readonly rosterMutationService?: RosterMutationService,
+    private readonly processingRunsRepo?: WaiverProcessingRunsRepository
   ) {}
 
   // ==================== CLAIM MANAGEMENT ====================
@@ -318,6 +320,7 @@ export class WaiversService {
         tradesRepo: this.tradesRepo,
         eventListenerService: this.eventListenerService,
         rosterMutationService: this.rosterMutationService,
+        processingRunsRepo: this.processingRunsRepo,
       },
       leagueId
     );

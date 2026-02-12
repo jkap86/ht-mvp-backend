@@ -228,7 +228,7 @@ export class TradesService {
    * Process expired trades (called by job)
    */
   async processExpiredTrades(): Promise<number> {
-    return processExpiredTradesUseCase({ tradesRepo: this.tradesRepo });
+    return processExpiredTradesUseCase({ tradesRepo: this.tradesRepo, db: this.db });
   }
 
   /**

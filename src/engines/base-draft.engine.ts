@@ -8,7 +8,8 @@ import {
 import type { Draft, DraftOrderEntry, DraftPick, DraftSettings } from '../modules/drafts/drafts.model';
 import { draftToResponse } from '../modules/drafts/drafts.model';
 import type { DraftRepository } from '../modules/drafts/drafts.repository';
-import type { DraftPickAsset } from '../modules/drafts/draft-pick-asset.model';
+import type { DraftPickAsset, DraftPickAssetWithDetails } from '../modules/drafts/draft-pick-asset.model';
+import type { Player } from '../modules/players/players.model';
 import type { PlayerRepository } from '../modules/players/players.repository';
 import type { RosterPlayersRepository } from '../modules/rosters/rosters.repository';
 import type { LeagueRepository, RosterRepository } from '../modules/leagues/leagues.repository';
@@ -21,6 +22,38 @@ import type { DraftPickAssetRepository } from '../modules/drafts/draft-pick-asse
 import type { VetDraftPickSelectionRepository } from '../modules/drafts/vet-draft-pick-selection.repository';
 import { Pool, PoolClient } from 'pg';
 import { runInDraftTransaction } from '../shared/locks';
+
+/**
+ * Data collected inside the transaction for post-commit event emission.
+ * Follows the pattern from DraftStateService.applyPick: collect data inside txn, emit after commit.
+ */
+interface AutoPickEventData {
+  type: 'player' | 'asset';
+  draftId: number;
+  /** For player picks: the enriched pick payload */
+  pickPayload?: Record<string, any>;
+  /** For asset picks: the response object */
+  assetResponse?: Record<string, any>;
+  /** Player ID (for queue update event) */
+  playerId?: number;
+  /** Next pick info (null if draft completed) */
+  nextPickInfo?: NextPickDetails | null;
+  /** Next pick state (for asset picks with richer data) */
+  nextPickState?: NextPickState;
+  /** Completed draft response data (pre-collected inside txn) */
+  completedDraftResponse?: Record<string, any>;
+}
+
+/**
+ * Result from performAutoPickInternal, containing both the pick/response
+ * and the event data to emit after the transaction commits.
+ */
+interface AutoPickInternalResult {
+  /** The pick (for player picks) or response (for asset picks) */
+  result: any;
+  /** Data needed for post-commit event emission */
+  eventData: AutoPickEventData;
+}
 
 /**
  * Abstract base class for draft engines.
@@ -219,6 +252,8 @@ export abstract class BaseDraftEngine implements IDraftEngine {
       pick?: DraftPick;
       advanced?: boolean;
       nextPickInfo?: NextPickDetails;
+      /** Event data from autopick, to be emitted after transaction commits */
+      autoPickEventData?: AutoPickEventData;
     };
 
     const result = await runWithLock<TickInternalResult>(
@@ -295,13 +330,15 @@ export abstract class BaseDraftEngine implements IDraftEngine {
         );
 
         // Call performAutoPickInternal which expects to run within an existing transaction
-        const pick = await this.performAutoPickInternal(client, draft, draftOrder);
+        // Event data is collected inside and returned for post-commit emission
+        const autoPickResult = await this.performAutoPickInternal(client, draft, draftOrder);
 
         return {
           actionTaken: true,
           reason,
-          pick,
+          pick: autoPickResult.result,
           advanced: false,
+          autoPickEventData: autoPickResult.eventData,
         };
       }
     );
@@ -318,7 +355,10 @@ export abstract class BaseDraftEngine implements IDraftEngine {
         },
       });
     }
-    // Note: performAutoPickInternal publishes its own events internally via performAutoPickPlayer
+    // Emit autopick events AFTER transaction commits (data was collected inside txn)
+    if (result.autoPickEventData) {
+      this.emitAutoPickEvents(result.autoPickEventData);
+    }
 
     // Re-fetch final state outside lock for return value
     const finalDraft = await this.draftRepo.findById(draftId);
@@ -343,6 +383,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
    * Supports both player picks and pick asset selections (for vet drafts with includeRookiePicks).
    *
    * This is the public API that acquires its own lock.
+   * Events are emitted AFTER the transaction commits.
    */
   protected async performAutoPick(draft: Draft): Promise<DraftPick | any> {
     if (!draft.currentRosterId) {
@@ -353,21 +394,29 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     // to prevent race conditions where another process drafts the same player
     // between our queue read and the pick write.
     const pool = container.resolve<Pool>(KEYS.POOL);
-    return runInDraftTransaction(pool, draft.id, async (client) => {
+    const { result, eventData } = await runInDraftTransaction(pool, draft.id, async (client) => {
       const draftOrder = await this.draftRepo.getDraftOrderWithClient(client, draft.id);
       return this.performAutoPickInternal(client, draft, draftOrder);
     });
+
+    // Emit events AFTER transaction commits
+    this.emitAutoPickEvents(eventData);
+
+    return result;
   }
 
   /**
    * Internal autopick implementation that runs within an existing transaction/lock.
    * Used by both performAutoPick (which acquires its own lock) and tick() (which already has a lock).
+   *
+   * Returns both the pick result and the event data needed for post-commit emission.
+   * Callers are responsible for emitting events AFTER the transaction commits.
    */
   protected async performAutoPickInternal(
     client: PoolClient,
     draft: Draft,
     draftOrder: DraftOrderEntry[]
-  ): Promise<DraftPick | any> {
+  ): Promise<AutoPickInternalResult> {
     if (!draft.currentRosterId) {
       throw new Error('No current roster to pick for');
     }
@@ -418,6 +467,9 @@ export abstract class BaseDraftEngine implements IDraftEngine {
   /**
    * Perform an autopick for a player.
    * Uses atomic makePickAndAdvanceTx to prevent race conditions.
+   *
+   * Collects all data needed for event emission inside the transaction.
+   * Returns the pick AND event data; callers emit events AFTER transaction commits.
    */
   protected async performAutoPickPlayer(
     draft: Draft,
@@ -425,7 +477,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     playerId: number | null,
     usedQueue: boolean,
     client?: PoolClient
-  ): Promise<DraftPick> {
+  ): Promise<AutoPickInternalResult> {
     const totalRosters = draftOrder.length;
 
     // If no playerId, get best available
@@ -496,32 +548,68 @@ export abstract class BaseDraftEngine implements IDraftEngine {
       status: 'in_progress',
     };
 
-    // Emit socket events AFTER transaction has committed
-    this.emitPickEvents(draft, pick, playerId, nextPickInfo);
+    // Collect player info INSIDE the transaction using the transaction client
+    // This ensures we read committed data consistent with the transaction
+    const player: Player | null = client
+      ? await this.playerRepo.findByIdWithClient(client, playerId)
+      : await this.playerRepo.findById(playerId);
+
+    // Collect completed draft data inside the transaction if draft completed
+    let completedDraftResponse: Record<string, any> | undefined;
+    if (nextPickState.status === 'completed') {
+      const completedDraft = client
+        ? await this.draftRepo.findByIdWithClient(client, draft.id)
+        : await this.draftRepo.findById(draft.id);
+      if (completedDraft) {
+        completedDraftResponse = draftToResponse(completedDraft);
+      }
+    }
+
+    // Build the enriched pick payload for the event (collected inside txn)
+    const pickPayload = {
+      ...pick,
+      is_auto_pick: true,
+      player_name: player?.fullName,
+      player_position: player?.position,
+      player_team: player?.team,
+    };
 
     logger.info(
       `Auto-pick made in draft ${draft.id}: player ${playerId} for roster ${draft.currentRosterId}${usedQueue ? ' (from queue)' : ' (best available)'}`
     );
 
-    return pick;
+    return {
+      result: pick,
+      eventData: {
+        type: 'player',
+        draftId: draft.id,
+        pickPayload,
+        playerId,
+        nextPickInfo,
+        completedDraftResponse,
+      },
+    };
   }
 
   /**
    * Perform an autopick for a pick asset (rookie draft pick).
    * Used in vet drafts with includeRookiePicks enabled.
+   *
+   * Collects all data needed for event emission inside the transaction.
+   * Returns the response AND event data; callers emit events AFTER transaction commits.
    */
   protected async performAutoPickAsset(
     draft: Draft,
     draftOrder: DraftOrderEntry[],
     pickAssetId: number,
     client?: PoolClient
-  ): Promise<any> {
+  ): Promise<AutoPickInternalResult> {
     const totalRosters = draftOrder.length;
     const pickInRound = this.getPickInRound(draft.currentPick, totalRosters);
 
-    // Load pick assets for computing next pick state
+    // Load pick assets for computing next pick state (uses client for transaction consistency)
     const pickAssetRepo = container.resolve<DraftPickAssetRepository>(KEYS.PICK_ASSET_REPO);
-    const pickAssets = client
+    const pickAssets: DraftPickAssetWithDetails[] = client
       ? await pickAssetRepo.findByDraftIdWithClient(client, draft.id)
       : await pickAssetRepo.findByDraftId(draft.id);
 
@@ -560,8 +648,9 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     // Check if user had autodraft disabled - if so, force-enable it
     await this.handleAutodraftForceEnable(draft, draftOrder, client);
 
-    // Get pick asset details for socket event
-    const pickAsset = await pickAssetRepo.findByIdWithDetails(pickAssetId);
+    // Get pick asset details from the already-loaded pickAssets array (read with client)
+    // instead of making a separate pool read via findByIdWithDetails
+    const pickAsset = pickAssets.find((a) => a.id === pickAssetId);
 
     // Build response with pick asset info
     const response = {
@@ -582,40 +671,14 @@ export abstract class BaseDraftEngine implements IDraftEngine {
       is_pick_asset: true,
     };
 
-    // Publish domain events AFTER transaction commits
-    const eventBus = tryGetEventBus();
-    eventBus?.publish({
-      type: EventTypes.DRAFT_PICK,
-      payload: {
-        draftId: draft.id,
-        ...response,
-      },
-    });
-
-    if (nextPickState.status !== 'completed') {
-      eventBus?.publish({
-        type: EventTypes.DRAFT_NEXT_PICK,
-        payload: {
-          draftId: draft.id,
-          currentPick: nextPickState.currentPick,
-          currentRound: nextPickState.currentRound,
-          currentRosterId: nextPickState.currentRosterId,
-          originalRosterId: nextPickState.originalRosterId,
-          isTraded: nextPickState.isTraded,
-          pickDeadline: nextPickState.pickDeadline,
-        },
-      });
-    } else {
-      // Draft completed
-      const completedDraft = await this.draftRepo.findById(draft.id);
+    // Collect completed draft data inside the transaction if draft completed
+    let completedDraftResponse: Record<string, any> | undefined;
+    if (nextPickState.status === 'completed') {
+      const completedDraft = client
+        ? await this.draftRepo.findByIdWithClient(client, draft.id)
+        : await this.draftRepo.findById(draft.id);
       if (completedDraft) {
-        eventBus?.publish({
-          type: EventTypes.DRAFT_COMPLETED,
-          payload: {
-            draftId: draft.id,
-            ...draftToResponse(completedDraft),
-          },
-        });
+        completedDraftResponse = draftToResponse(completedDraft);
       }
     }
 
@@ -623,7 +686,16 @@ export abstract class BaseDraftEngine implements IDraftEngine {
       `Auto-pick made in draft ${draft.id}: pick asset ${pickAssetId} for roster ${draft.currentRosterId} (from queue)`
     );
 
-    return response;
+    return {
+      result: response,
+      eventData: {
+        type: 'asset',
+        draftId: draft.id,
+        assetResponse: response,
+        nextPickState,
+        completedDraftResponse,
+      },
+    };
   }
 
   /**
@@ -683,64 +755,72 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     draft: Draft,
     draftOrder: DraftOrderEntry[]
   ): Promise<NextPickDetails | null> {
-    const totalRosters = draftOrder.length;
-    const totalPicks = totalRosters * draft.rounds;
-    const nextPick = draft.currentPick + 1;
+    // Wrap in a DRAFT advisory lock + transaction so that finalizeDraftCompletion
+    // and the subsequent draftRepo update are atomic. Without this, a failure
+    // between the two operations would leave draft state inconsistent.
+    const pool = container.resolve<Pool>(KEYS.POOL);
 
-    if (nextPick > totalPicks) {
-      // Draft complete - run unified finalization (rosters, league status, schedule)
-      await finalizeDraftCompletion(
-        {
-          draftRepo: this.draftRepo,
-          leagueRepo: this.leagueRepo,
-          rosterPlayersRepo: this.rosterPlayersRepo,
-        },
-        draft.id,
-        draft.leagueId
-      );
+    return runInDraftTransaction(pool, draft.id, async (client) => {
+      const totalRosters = draftOrder.length;
+      const totalPicks = totalRosters * draft.rounds;
+      const nextPick = draft.currentPick + 1;
 
-      await this.draftRepo.update(draft.id, {
-        status: 'completed',
-        completedAt: new Date(),
-        currentRosterId: null,
-        pickDeadline: null,
+      if (nextPick > totalPicks) {
+        // Draft complete - run unified finalization (rosters, league status, schedule)
+        await finalizeDraftCompletion(
+          {
+            draftRepo: this.draftRepo,
+            leagueRepo: this.leagueRepo,
+            rosterPlayersRepo: this.rosterPlayersRepo,
+          },
+          draft.id,
+          draft.leagueId,
+          client
+        );
+
+        await this.draftRepo.updateWithClient(client, draft.id, {
+          status: 'completed',
+          completedAt: new Date(),
+          currentRosterId: null,
+          pickDeadline: null,
+        });
+
+        return null;
+      }
+
+      const nextRound = this.getRound(nextPick, totalRosters);
+
+      // Fetch pick assets to check for traded picks (using client for transaction consistency)
+      let nextRosterId: number | null = null;
+      try {
+        const pickAssetRepo = container.resolve<DraftPickAssetRepository>(KEYS.PICK_ASSET_REPO);
+        const pickAssets = await pickAssetRepo.findByDraftIdWithClient(client, draft.id);
+        const actualPicker = this.getActualPickerForPickNumber(draft, draftOrder, pickAssets, nextPick);
+        nextRosterId = actualPicker?.rosterId || null;
+      } catch (error) {
+        // Fallback to original picker if pick assets not available
+        logger.warn(`Failed to fetch pick assets for draft ${draft.id}, using original picker`, error);
+        const originalPicker = this.getPickerForPickNumber(draft, draftOrder, nextPick);
+        nextRosterId = originalPicker?.rosterId || null;
+      }
+
+      const pickDeadline = this.calculatePickDeadline(draft);
+
+      await this.draftRepo.updateWithClient(client, draft.id, {
+        currentPick: nextPick,
+        currentRound: nextRound,
+        currentRosterId: nextRosterId,
+        pickDeadline,
       });
 
-      return null;
-    }
-
-    const nextRound = this.getRound(nextPick, totalRosters);
-
-    // Fetch pick assets to check for traded picks
-    let nextRosterId: number | null = null;
-    try {
-      const pickAssetRepo = container.resolve<DraftPickAssetRepository>(KEYS.PICK_ASSET_REPO);
-      const pickAssets = await pickAssetRepo.findByDraftId(draft.id);
-      const actualPicker = this.getActualPickerForPickNumber(draft, draftOrder, pickAssets, nextPick);
-      nextRosterId = actualPicker?.rosterId || null;
-    } catch (error) {
-      // Fallback to original picker if pick assets not available
-      logger.warn(`Failed to fetch pick assets for draft ${draft.id}, using original picker`, error);
-      const originalPicker = this.getPickerForPickNumber(draft, draftOrder, nextPick);
-      nextRosterId = originalPicker?.rosterId || null;
-    }
-
-    const pickDeadline = this.calculatePickDeadline(draft);
-
-    await this.draftRepo.update(draft.id, {
-      currentPick: nextPick,
-      currentRound: nextRound,
-      currentRosterId: nextRosterId,
-      pickDeadline,
+      return {
+        currentPick: nextPick,
+        currentRound: nextRound,
+        currentRosterId: nextRosterId,
+        pickDeadline,
+        status: 'in_progress' as const,
+      };
     });
-
-    return {
-      currentPick: nextPick,
-      currentRound: nextRound,
-      currentRosterId: nextRosterId,
-      pickDeadline,
-      status: 'in_progress',
-    };
   }
 
   /**
@@ -833,58 +913,79 @@ export abstract class BaseDraftEngine implements IDraftEngine {
   }
 
   /**
-   * Publish domain events for pick
+   * Emit autopick events using pre-collected data.
+   * Called AFTER the transaction commits to ensure clients see committed state.
+   *
+   * All data needed for events was collected inside the transaction using the
+   * transaction client, following the pattern from DraftStateService.applyPick.
    */
-  protected async emitPickEvents(
-    draft: Draft,
-    pick: DraftPick,
-    playerId: number,
-    nextPickInfo: NextPickDetails | null
-  ): Promise<void> {
+  protected emitAutoPickEvents(eventData: AutoPickEventData): void {
     const eventBus = tryGetEventBus();
 
-    // Enrich pick with player info for event
-    const player = await this.playerRepo.findById(playerId);
-    const enrichedPick = {
-      ...pick,
-      is_auto_pick: true,
-      player_name: player?.fullName,
-      player_position: player?.position,
-      player_team: player?.team,
-    };
-
-    eventBus?.publish({
-      type: EventTypes.DRAFT_PICK,
-      payload: enrichedPick,
-    });
-
-    // Publish queue update event for all users in draft
-    eventBus?.publish({
-      type: EventTypes.DRAFT_QUEUE_UPDATED,
-      payload: {
-        draftId: draft.id,
-        playerId,
-        action: 'removed',
-      },
-    });
-
-    if (nextPickInfo) {
+    if (eventData.type === 'player') {
+      // Player pick events
       eventBus?.publish({
-        type: EventTypes.DRAFT_NEXT_PICK,
+        type: EventTypes.DRAFT_PICK,
+        payload: eventData.pickPayload!,
+      });
+
+      // Publish queue update event for all users in draft
+      eventBus?.publish({
+        type: EventTypes.DRAFT_QUEUE_UPDATED,
         payload: {
-          draftId: draft.id,
-          ...nextPickInfo,
+          draftId: eventData.draftId,
+          playerId: eventData.playerId,
+          action: 'removed',
         },
       });
-    } else {
-      // Draft completed
-      const completedDraft = await this.draftRepo.findById(draft.id);
-      if (completedDraft) {
+
+      if (eventData.nextPickInfo) {
+        eventBus?.publish({
+          type: EventTypes.DRAFT_NEXT_PICK,
+          payload: {
+            draftId: eventData.draftId,
+            ...eventData.nextPickInfo,
+          },
+        });
+      } else if (eventData.completedDraftResponse) {
         eventBus?.publish({
           type: EventTypes.DRAFT_COMPLETED,
           payload: {
-            draftId: draft.id,
-            ...draftToResponse(completedDraft),
+            draftId: eventData.draftId,
+            ...eventData.completedDraftResponse,
+          },
+        });
+      }
+    } else {
+      // Asset pick events
+      eventBus?.publish({
+        type: EventTypes.DRAFT_PICK,
+        payload: {
+          draftId: eventData.draftId,
+          ...eventData.assetResponse!,
+        },
+      });
+
+      const nextPickState = eventData.nextPickState!;
+      if (nextPickState.status !== 'completed') {
+        eventBus?.publish({
+          type: EventTypes.DRAFT_NEXT_PICK,
+          payload: {
+            draftId: eventData.draftId,
+            currentPick: nextPickState.currentPick,
+            currentRound: nextPickState.currentRound,
+            currentRosterId: nextPickState.currentRosterId,
+            originalRosterId: nextPickState.originalRosterId,
+            isTraded: nextPickState.isTraded,
+            pickDeadline: nextPickState.pickDeadline,
+          },
+        });
+      } else if (eventData.completedDraftResponse) {
+        eventBus?.publish({
+          type: EventTypes.DRAFT_COMPLETED,
+          payload: {
+            draftId: eventData.draftId,
+            ...eventData.completedDraftResponse,
           },
         });
       }

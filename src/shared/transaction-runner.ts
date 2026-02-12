@@ -41,17 +41,25 @@ export async function runInTransaction<T>(
 ): Promise<T> {
   const client = await pool.connect();
   const eventBus = tryGetEventBus();
+
+  const execute = async () => {
+    try {
+      await client.query('BEGIN');
+      const result = await fn(client);
+      await client.query('COMMIT');
+      eventBus?.commitTransaction();
+      return result;
+    } catch (error) {
+      eventBus?.rollbackTransaction();
+      await client.query('ROLLBACK');
+      throw error;
+    }
+  };
+
   try {
-    await client.query('BEGIN');
-    eventBus?.beginTransaction();
-    const result = await fn(client);
-    await client.query('COMMIT');
-    eventBus?.commitTransaction();
-    return result;
-  } catch (error) {
-    eventBus?.rollbackTransaction();
-    await client.query('ROLLBACK');
-    throw error;
+    return eventBus
+      ? await eventBus.runInTransaction(execute)
+      : await execute();
   } finally {
     client.release();
   }
@@ -82,18 +90,26 @@ export async function runWithLock<T>(
 ): Promise<T> {
   const client = await pool.connect();
   const eventBus = tryGetEventBus();
+
+  const execute = async () => {
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock($1)', [getLockId(domain, id)]);
+      const result = await fn(client);
+      await client.query('COMMIT');
+      eventBus?.commitTransaction();
+      return result;
+    } catch (error) {
+      eventBus?.rollbackTransaction();
+      await client.query('ROLLBACK');
+      throw error;
+    }
+  };
+
   try {
-    await client.query('BEGIN');
-    eventBus?.beginTransaction();
-    await client.query('SELECT pg_advisory_xact_lock($1)', [getLockId(domain, id)]);
-    const result = await fn(client);
-    await client.query('COMMIT');
-    eventBus?.commitTransaction();
-    return result;
-  } catch (error) {
-    eventBus?.rollbackTransaction();
-    await client.query('ROLLBACK');
-    throw error;
+    return eventBus
+      ? await eventBus.runInTransaction(execute)
+      : await execute();
   } finally {
     client.release();
   }
@@ -125,32 +141,40 @@ export async function runWithLocks<T>(
 ): Promise<T> {
   const client = await pool.connect();
   const eventBus = tryGetEventBus();
-  try {
-    await client.query('BEGIN');
-    eventBus?.beginTransaction();
 
-    // Sort locks by domain priority (lower = first), then by ID
-    const sortedLocks = [...locks].sort((a, b) => {
-      if (a.domain !== b.domain) {
-        return a.domain - b.domain;
+  const execute = async () => {
+    try {
+      await client.query('BEGIN');
+
+      // Sort locks by domain priority (lower = first), then by ID
+      const sortedLocks = [...locks].sort((a, b) => {
+        if (a.domain !== b.domain) {
+          return a.domain - b.domain;
+        }
+        return a.id - b.id;
+      });
+
+      // Acquire all locks in order
+      for (const lock of sortedLocks) {
+        const lockId = getLockId(lock.domain, lock.id);
+        await client.query('SELECT pg_advisory_xact_lock($1)', [lockId]);
       }
-      return a.id - b.id;
-    });
 
-    // Acquire all locks in order
-    for (const lock of sortedLocks) {
-      const lockId = getLockId(lock.domain, lock.id);
-      await client.query('SELECT pg_advisory_xact_lock($1)', [lockId]);
+      const result = await fn(client);
+      await client.query('COMMIT');
+      eventBus?.commitTransaction();
+      return result;
+    } catch (error) {
+      eventBus?.rollbackTransaction();
+      await client.query('ROLLBACK');
+      throw error;
     }
+  };
 
-    const result = await fn(client);
-    await client.query('COMMIT');
-    eventBus?.commitTransaction();
-    return result;
-  } catch (error) {
-    eventBus?.rollbackTransaction();
-    await client.query('ROLLBACK');
-    throw error;
+  try {
+    return eventBus
+      ? await eventBus.runInTransaction(execute)
+      : await execute();
   } finally {
     client.release();
   }
@@ -199,43 +223,51 @@ export async function runTransaction<T>(
 ): Promise<T> {
   const client = await pool.connect();
   const eventBus = tryGetEventBus();
-  try {
-    // Start transaction with optional isolation level
-    if (options.isolationLevel) {
-      if (!VALID_ISOLATION_LEVELS.includes(options.isolationLevel)) {
-        throw new Error(`Invalid isolation level: ${options.isolationLevel}`);
-      }
-      await client.query(`BEGIN ISOLATION LEVEL ${options.isolationLevel}`);
-    } else {
-      await client.query('BEGIN');
-    }
-    eventBus?.beginTransaction();
 
-    // Acquire locks if specified
-    if (options.locks && options.locks.length > 0) {
-      const sortedLocks = [...options.locks].sort((a, b) => {
-        if (a.domain !== b.domain) {
-          return a.domain - b.domain;
+  const execute = async () => {
+    try {
+      // Start transaction with optional isolation level
+      if (options.isolationLevel) {
+        if (!VALID_ISOLATION_LEVELS.includes(options.isolationLevel)) {
+          throw new Error(`Invalid isolation level: ${options.isolationLevel}`);
         }
-        return a.id - b.id;
-      });
-      for (const lock of sortedLocks) {
-        const lockId = getLockId(lock.domain, lock.id);
+        await client.query(`BEGIN ISOLATION LEVEL ${options.isolationLevel}`);
+      } else {
+        await client.query('BEGIN');
+      }
+
+      // Acquire locks if specified
+      if (options.locks && options.locks.length > 0) {
+        const sortedLocks = [...options.locks].sort((a, b) => {
+          if (a.domain !== b.domain) {
+            return a.domain - b.domain;
+          }
+          return a.id - b.id;
+        });
+        for (const lock of sortedLocks) {
+          const lockId = getLockId(lock.domain, lock.id);
+          await client.query('SELECT pg_advisory_xact_lock($1)', [lockId]);
+        }
+      } else if (options.lock) {
+        const lockId = getLockId(options.lock.domain, options.lock.id);
         await client.query('SELECT pg_advisory_xact_lock($1)', [lockId]);
       }
-    } else if (options.lock) {
-      const lockId = getLockId(options.lock.domain, options.lock.id);
-      await client.query('SELECT pg_advisory_xact_lock($1)', [lockId]);
-    }
 
-    const result = await fn(client);
-    await client.query('COMMIT');
-    eventBus?.commitTransaction();
-    return result;
-  } catch (error) {
-    eventBus?.rollbackTransaction();
-    await client.query('ROLLBACK');
-    throw error;
+      const result = await fn(client);
+      await client.query('COMMIT');
+      eventBus?.commitTransaction();
+      return result;
+    } catch (error) {
+      eventBus?.rollbackTransaction();
+      await client.query('ROLLBACK');
+      throw error;
+    }
+  };
+
+  try {
+    return eventBus
+      ? await eventBus.runInTransaction(execute)
+      : await execute();
   } finally {
     client.release();
   }

@@ -5,13 +5,14 @@ import { SOCKET_EVENTS } from '../constants/socket-events';
 import { AppException } from '../utils/exceptions';
 
 /**
- * Validation error response sent to client
+ * Validation error response sent to client.
+ * Only includes user-friendly message; raw Zod issue details are
+ * logged server-side but never exposed to the client.
  */
 export interface SocketValidationError {
   code: 'VALIDATION_ERROR';
   message: string;
   event: string;
-  details?: z.ZodIssue[];
 }
 
 /**
@@ -46,18 +47,19 @@ export function onValidated<T>(
     const result = schema.safeParse(data);
 
     if (!result.success) {
-      const error: SocketValidationError = {
-        code: 'VALIDATION_ERROR',
-        message: formatValidationError(result.error),
-        event,
-        details: result.error.issues,
-      };
-
+      // Log full Zod details server-side for debugging
       logger.warn('Socket validation failed', {
         event,
         socketId: socket.id,
         errors: result.error.issues,
       });
+
+      // Send only user-friendly message to client (no raw schema details)
+      const error: SocketValidationError = {
+        code: 'VALIDATION_ERROR',
+        message: formatValidationError(result.error),
+        event,
+      };
 
       socket.emit(SOCKET_EVENTS.APP.ERROR, error);
       return;
@@ -143,18 +145,19 @@ export function validatePayload<T>(
   const result = schema.safeParse(data);
 
   if (!result.success) {
-    const error: SocketValidationError = {
-      code: 'VALIDATION_ERROR',
-      message: formatValidationError(result.error),
-      event,
-      details: result.error.issues,
-    };
-
+    // Log full Zod details server-side for debugging
     logger.warn('Socket validation failed', {
       event,
       socketId: socket.id,
       errors: result.error.issues,
     });
+
+    // Send only user-friendly message to client (no raw schema details)
+    const error: SocketValidationError = {
+      code: 'VALIDATION_ERROR',
+      message: formatValidationError(result.error),
+      event,
+    };
 
     socket.emit(SOCKET_EVENTS.APP.ERROR, error);
     return null;

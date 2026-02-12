@@ -51,4 +51,23 @@ export class User {
       updatedAt: this.updatedAt,
     };
   }
+
+  /**
+   * Returns a public-facing representation of the user, excluding
+   * sensitive fields like email. Use this for search results and
+   * any context where user data is exposed to other users.
+   */
+  toPublicObject(): {
+    userId: string;
+    username: string;
+    createdAt: Date;
+    updatedAt: Date;
+  } {
+    return {
+      userId: this.userId,
+      username: this.username,
+      createdAt: this.createdAt,
+      updatedAt: this.updatedAt,
+    };
+  }
 }

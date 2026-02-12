@@ -214,13 +214,12 @@ export class AuthService {
     Array<{
       userId: string;
       username: string;
-      email: string;
       createdAt: Date;
       updatedAt: Date;
     }>
   > {
     const users = await this.userRepository.searchByUsername(query, currentUserId);
-    return users.map((user) => user.toSafeObject());
+    return users.map((user) => user.toPublicObject());
   }
 
   private generateAccessToken(user: User): string {

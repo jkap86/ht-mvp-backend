@@ -23,6 +23,7 @@ jest.mock('../../../shared/events', () => ({
     rollbackTransaction: jest.fn(),
     beginTransaction: jest.fn(),
     commitTransaction: jest.fn(),
+    runInTransaction: jest.fn((fn: () => Promise<unknown>) => fn()),
   })),
   EventTypes: {
     MEMBER_JOINED: 'MEMBER_JOINED',

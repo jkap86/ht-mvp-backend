@@ -103,14 +103,39 @@ export function idempotencyMiddleware(pool: Pool) {
       }
 
       // We own the pending record — wrap res.json to capture and store the response
+      const MAX_RESPONSE_BODY_BYTES = 102_400; // 100KB
       const originalJson = res.json.bind(res);
       res.json = function (body: any): Response {
+        // Check response body size before storing to prevent unbounded DB growth
+        const serialized = JSON.stringify(body);
+        const bodySize = Buffer.byteLength(serialized, 'utf8');
+
+        if (bodySize > MAX_RESPONSE_BODY_BYTES) {
+          logger.warn('Idempotency response body too large, skipping cache', {
+            key: idempotencyKey,
+            bodySize,
+            limit: MAX_RESPONSE_BODY_BYTES,
+          });
+          // Clean up the pending record since we won't store the response
+          pool.query(
+            `DELETE FROM idempotency_keys
+             WHERE idempotency_key = $1 AND endpoint = $2 AND user_id = $3`,
+            [idempotencyKey, endpoint, userId]
+          ).catch((err) => {
+            logger.warn('Failed to clean up oversized idempotency key', {
+              err: err.message,
+              key: idempotencyKey,
+            });
+          });
+          return originalJson(body);
+        }
+
         // Store response synchronously in the call chain (best-effort but reliable)
         pool.query(
           `UPDATE idempotency_keys
            SET response_status = $1, response_body = $2
            WHERE idempotency_key = $3 AND endpoint = $4 AND user_id = $5`,
-          [res.statusCode, JSON.stringify(body), idempotencyKey, endpoint, userId]
+          [res.statusCode, serialized, idempotencyKey, endpoint, userId]
         ).catch((err) => {
           logger.warn('Failed to update idempotency key response', {
             err: err.message,

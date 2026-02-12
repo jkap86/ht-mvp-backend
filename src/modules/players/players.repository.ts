@@ -5,6 +5,14 @@ import { CFBDPlayer } from './cfbd.client';
 import { PlayerMasterData } from '../../integrations/shared/stats-provider.types';
 import { ExternalIdRepository } from './external-ids.repository';
 
+/** All columns needed by playerFromDatabase() */
+const PLAYER_COLUMNS = `
+  id, sleeper_id, first_name, last_name, full_name, fantasy_positions,
+  position, team, years_exp, age, active, status, injury_status,
+  jersey_number, cfbd_id, college, height, weight, home_city, home_state,
+  player_type, created_at, updated_at
+`.replace(/\s+/g, ' ').trim();
+
 export class PlayerRepository {
   constructor(private readonly db: Pool) {}
 
@@ -13,7 +21,7 @@ export class PlayerRepository {
    * Use this inside transactions to avoid connection churn.
    */
   async findByIdWithClient(client: PoolClient, id: number): Promise<Player | null> {
-    const result = await client.query('SELECT * FROM players WHERE id = $1', [id]);
+    const result = await client.query(`SELECT ${PLAYER_COLUMNS} FROM players WHERE id = $1`, [id]);
     return result.rows.length > 0 ? playerFromDatabase(result.rows[0]) : null;
   }
 
@@ -21,6 +29,13 @@ export class PlayerRepository {
    * Find a random eligible player for auction auto-nomination.
    * Uses SQL-level filtering to avoid loading all players into memory.
    * Excludes players that are already drafted or already nominated in this draft.
+   *
+   * Performance notes:
+   * - NOT EXISTS short-circuits on first match, unlike NOT IN which materializes
+   *   the entire subquery result. With FK indexes on draft_picks(draft_id, player_id)
+   *   and auction_lots(draft_id, player_id), the existence checks use index scans.
+   * - ORDER BY RANDOM() LIMIT 1 is acceptable for MVP scale (~10k players).
+   *
    * @param client - Transaction client for consistency
    * @param draftId - Draft to check eligibility for
    * @returns A random available player, or null if none available
@@ -29,33 +44,13 @@ export class PlayerRepository {
     client: PoolClient,
     draftId: number
   ): Promise<Player | null> {
-    // Use OFFSET-based random selection instead of ORDER BY RANDOM()
-    // to avoid a full-table scan + sort. First get the count of eligible
-    // players, then pick one at a random offset.
-    const countResult = await client.query(
-      `SELECT COUNT(*) AS cnt
-       FROM players p
-       WHERE p.active = true
-         AND NOT EXISTS (
-           SELECT 1 FROM draft_picks dp
-           WHERE dp.draft_id = $1 AND dp.player_id = p.id
-         )
-         AND NOT EXISTS (
-           SELECT 1 FROM auction_lots al
-           WHERE al.draft_id = $1 AND al.player_id = p.id
-         )`,
-      [draftId]
-    );
-
-    const totalEligible = parseInt(countResult.rows[0].cnt, 10);
-    if (totalEligible === 0) {
-      return null;
-    }
-
-    const randomOffset = Math.floor(Math.random() * totalEligible);
-
     const result = await client.query(
-      `SELECT p.*
+      `SELECT
+        p.id, p.sleeper_id, p.first_name, p.last_name, p.full_name,
+        p.fantasy_positions, p.position, p.team, p.years_exp, p.age,
+        p.active, p.status, p.injury_status, p.jersey_number, p.cfbd_id,
+        p.college, p.height, p.weight, p.home_city, p.home_state,
+        p.player_type, p.created_at, p.updated_at
        FROM players p
        WHERE p.active = true
          AND NOT EXISTS (
@@ -66,29 +61,29 @@ export class PlayerRepository {
            SELECT 1 FROM auction_lots al
            WHERE al.draft_id = $1 AND al.player_id = p.id
          )
-       OFFSET $2
+       ORDER BY RANDOM()
        LIMIT 1`,
-      [draftId, randomOffset]
+      [draftId]
     );
     return result.rows.length > 0 ? playerFromDatabase(result.rows[0]) : null;
   }
 
   async findAll(limit = 100, offset = 0): Promise<Player[]> {
     const result = await this.db.query(
-      `SELECT * FROM players WHERE active = true ORDER BY full_name LIMIT $1 OFFSET $2`,
+      `SELECT ${PLAYER_COLUMNS} FROM players WHERE active = true ORDER BY full_name LIMIT $1 OFFSET $2`,
       [limit, offset]
     );
     return result.rows.map(playerFromDatabase);
   }
 
   async findById(id: number): Promise<Player | null> {
-    const result = await this.db.query('SELECT * FROM players WHERE id = $1', [id]);
+    const result = await this.db.query(`SELECT ${PLAYER_COLUMNS} FROM players WHERE id = $1`, [id]);
     return result.rows.length > 0 ? playerFromDatabase(result.rows[0]) : null;
   }
 
   async findByIds(ids: number[]): Promise<Player[]> {
     if (ids.length === 0) return [];
-    const result = await this.db.query('SELECT * FROM players WHERE id = ANY($1)', [ids]);
+    const result = await this.db.query(`SELECT ${PLAYER_COLUMNS} FROM players WHERE id = ANY($1)`, [ids]);
     return result.rows.map(playerFromDatabase);
   }
 
@@ -119,7 +114,7 @@ export class PlayerRepository {
   }
 
   async findBySleeperId(sleeperId: string): Promise<Player | null> {
-    const result = await this.db.query('SELECT * FROM players WHERE sleeper_id = $1', [sleeperId]);
+    const result = await this.db.query(`SELECT ${PLAYER_COLUMNS} FROM players WHERE sleeper_id = $1`, [sleeperId]);
     return result.rows.length > 0 ? playerFromDatabase(result.rows[0]) : null;
   }
 
@@ -131,7 +126,7 @@ export class PlayerRepository {
     playerPool?: ('veteran' | 'rookie' | 'college')[],
     limit = 200
   ): Promise<Player[]> {
-    let sql = `SELECT * FROM players WHERE active = true`;
+    let sql = `SELECT ${PLAYER_COLUMNS} FROM players WHERE active = true`;
     const params: any[] = [];
     let paramIndex = 1;
 

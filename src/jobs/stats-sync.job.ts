@@ -54,11 +54,10 @@ function isPastThursdayLockTime(): boolean {
     );
   }
 
-  // If it's Friday (5), Saturday (6), Sunday (0), Monday (1), Tuesday (2), or Wednesday (3) after Thursday
-  // Friday through Wednesday before Thursday = past lock time for current NFL week
-  // We consider Friday, Saturday, and Sunday as past Thursday
-  // Monday, Tuesday, Wednesday are before the next Thursday
-  return dayOfWeek === 5 || dayOfWeek === 6 || dayOfWeek === 0;
+  // NFL week runs: Thursday lock -> games Thu-Mon -> next Thursday
+  // Days past Thursday lock: Fri(5), Sat(6), Sun(0), Mon(1), Tue(2)
+  // Wednesday(3) is the waiver window before the next lock, so return false
+  return dayOfWeek !== 3;
 }
 
 /**

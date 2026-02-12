@@ -21,7 +21,15 @@ export function validateRequest(schema: ZodSchema, source: 'body' | 'query' | 'p
       next();
     } catch (error) {
       if (error instanceof ZodError) {
-        // Use first error message for simpler client handling
+        // Log full Zod details server-side for debugging
+        logger.warn('Request validation failed', {
+          source,
+          path: req.path,
+          issues: error.issues,
+        });
+
+        // Send only the user-friendly message to the client, without
+        // internal schema details (code, minimum, maximum, type, etc.)
         const firstError = error.issues[0];
         const errorMessage = firstError ? firstError.message : 'Validation failed';
         return res.status(400).json({

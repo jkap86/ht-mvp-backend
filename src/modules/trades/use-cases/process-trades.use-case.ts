@@ -1,4 +1,4 @@
-import { PoolClient } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import { TradesRepository, TradeVotesRepository } from '../trades.repository';
 import { Trade } from '../trades.model';
 import { EventTypes, tryGetEventBus } from '../../../shared/events';
@@ -92,30 +92,54 @@ export async function invalidateTradesWithPick(
  * Uses conditional update to prevent overwriting trades that were accepted/rejected concurrently
  *
  * LOCK CONTRACT:
- * - No advisory locks acquired. Uses conditional SQL updates (WHERE status = 'pending')
- *   for optimistic concurrency control instead of advisory locks.
+ * - Acquires JOB advisory lock (900001) via pg_try_advisory_lock — singleton job execution
+ *   Then uses conditional SQL updates (WHERE status = 'pending') for optimistic concurrency control.
+ *   JOB lock is session-level (not transactional); released explicitly after processing.
+ *
+ * Only a single JOB lock is acquired. No nested advisory locks within this function.
  */
-export async function processExpiredTrades(ctx: { tradesRepo: TradesRepository }): Promise<number> {
-  const expired = await ctx.tradesRepo.findExpiredTrades();
-  let expiredCount = 0;
+const TRADE_EXPIRATION_USE_CASE_LOCK_ID = 900001;
 
-  for (const trade of expired) {
-    // Conditional update - only expire if still pending
-    const updated = await ctx.tradesRepo.updateStatus(trade.id, 'expired', undefined, 'pending');
+export async function processExpiredTrades(ctx: { tradesRepo: TradesRepository; db: Pool }): Promise<number> {
+  const client = await ctx.db.connect();
+  try {
+    const lockResult = await client.query<{ acquired: boolean }>(
+      'SELECT pg_try_advisory_lock($1) as acquired',
+      [TRADE_EXPIRATION_USE_CASE_LOCK_ID]
+    );
 
-    if (updated) {
-      expiredCount++;
-      const eventBus = tryGetEventBus();
-      eventBus?.publish({
-        type: EventTypes.TRADE_EXPIRED,
-        leagueId: trade.leagueId,
-        payload: { tradeId: trade.id },
-      });
+    if (!lockResult.rows[0].acquired) {
+      // Another instance is already processing expired trades
+      return 0;
     }
-    // If not updated, trade was already accepted/rejected/etc - skip silently
-  }
 
-  return expiredCount;
+    try {
+      const expired = await ctx.tradesRepo.findExpiredTrades();
+      let expiredCount = 0;
+
+      for (const trade of expired) {
+        // Conditional update - only expire if still pending
+        const updated = await ctx.tradesRepo.updateStatus(trade.id, 'expired', undefined, 'pending');
+
+        if (updated) {
+          expiredCount++;
+          const eventBus = tryGetEventBus();
+          eventBus?.publish({
+            type: EventTypes.TRADE_EXPIRED,
+            leagueId: trade.leagueId,
+            payload: { tradeId: trade.id },
+          });
+        }
+        // If not updated, trade was already accepted/rejected/etc - skip silently
+      }
+
+      return expiredCount;
+    } finally {
+      await client.query('SELECT pg_advisory_unlock($1)', [TRADE_EXPIRATION_USE_CASE_LOCK_ID]);
+    }
+  } finally {
+    client.release();
+  }
 }
 
 /**
@@ -132,7 +156,6 @@ export async function processReviewCompleteTrades(ctx: ProcessTradesContext): Pr
   let processed = 0;
 
   for (const trade of trades) {
-    const voteCount = await ctx.tradeVotesRepo.countVotes(trade.id);
     const league = await ctx.leagueRepo.findById(trade.leagueId);
     if (!league) {
       logger.warn('League not found for trade, skipping', { leagueId: trade.leagueId, tradeId: trade.id });
@@ -151,6 +174,10 @@ export async function processReviewCompleteTrades(ctx: ProcessTradesContext): Pr
         LockDomain.TRADE,
         trade.leagueId,
         async (client) => {
+          // Read veto count inside the lock to prevent stale data from a vote cast
+          // between the read and the lock acquisition
+          const voteCount = await ctx.tradeVotesRepo.countVotes(trade.id, client);
+
           // Use conditional update to ensure trade is still in 'in_review' status
           // This prevents processing a trade that was already completed or vetoed concurrently
           if (voteCount.veto >= vetoThreshold) {

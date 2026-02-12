@@ -10,6 +10,7 @@ import { closePool } from './db/pool';
 import { closeRedis } from './config/redis.config';
 import { requestTimingMiddleware } from './middleware/request-timing.middleware';
 import { requestIdMiddleware } from './middleware/request-id.middleware';
+import { poolHealthMiddleware } from './middleware/pool-health.middleware';
 // Bootstrap DI container (auto-runs on import, must be before routes)
 import './bootstrap';
 import routes from './routes';
@@ -71,6 +72,7 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '50kb' })); // Limit payload size to prevent DoS
 app.use(requestIdMiddleware); // Add request ID for distributed tracing
 app.use(requestTimingMiddleware);
+app.use(poolHealthMiddleware); // Circuit breaker: reject requests when pool is exhausted
 
 // Routes
 app.use('/api', routes);

@@ -19,7 +19,11 @@ declare global {
  */
 export function requestIdMiddleware(req: Request, res: Response, next: NextFunction): void {
   // Use client-provided request ID or generate new one
-  const requestId = (req.headers['x-request-id'] as string) || randomUUID();
+  // Validate format: max 128 chars, alphanumeric + hyphens only (prevents log injection / memory abuse)
+  const clientId = req.headers['x-request-id'] as string;
+  const requestId = (clientId && /^[a-zA-Z0-9\-]{1,128}$/.test(clientId))
+    ? clientId
+    : randomUUID();
 
   // Attach to request for use in controllers/services
   req.requestId = requestId;

@@ -224,7 +224,11 @@ export async function withLocks<T>(
     } finally {
       // Reset statement timeout so the callback runs without artificial time limits
       if (lockTimeoutMs > 0) {
-        await client.query('SET LOCAL statement_timeout = 0');
+        try {
+          await client.query('SET LOCAL statement_timeout = 0');
+        } catch {
+          // Transaction is likely aborted; timeout resets on rollback
+        }
       }
     }
 
@@ -367,52 +371,63 @@ export async function runInDraftTransaction<T>(
   const slowThreshold = options?.slowThresholdMs ?? DEFAULT_SLOW_LOCK_THRESHOLD_MS;
   const eventBus = tryGetEventBus();
 
-  try {
-    await client.query('BEGIN');
-    eventBus?.beginTransaction();
-
-    const lockId = getLockId(LockDomain.DRAFT, draftId);
-    const lockTimeoutMs = options?.timeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS;
-    const start = Date.now();
-
-    // Set statement timeout to prevent indefinite blocking during lock acquisition
-    if (lockTimeoutMs > 0) {
-      await client.query(`SET LOCAL statement_timeout = ${lockTimeoutMs}`);
-    }
+  const execute = async () => {
     try {
-      await client.query('SELECT pg_advisory_xact_lock($1)', [lockId]);
-    } catch (err: unknown) {
-      const pgError = err as { code?: string };
-      if (pgError.code === PG_STATEMENT_TIMEOUT_ERROR_CODE) {
-        throw new LockTimeoutError(
-          lockId,
-          lockTimeoutMs,
-          `Failed to acquire draft lock: draftId=${draftId} lockId=${lockId} within ${lockTimeoutMs}ms`
+      await client.query('BEGIN');
+
+      const lockId = getLockId(LockDomain.DRAFT, draftId);
+      const lockTimeoutMs = options?.timeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS;
+      const start = Date.now();
+
+      // Set statement timeout to prevent indefinite blocking during lock acquisition
+      if (lockTimeoutMs > 0) {
+        await client.query(`SET LOCAL statement_timeout = ${lockTimeoutMs}`);
+      }
+      try {
+        await client.query('SELECT pg_advisory_xact_lock($1)', [lockId]);
+      } catch (err: unknown) {
+        const pgError = err as { code?: string };
+        if (pgError.code === PG_STATEMENT_TIMEOUT_ERROR_CODE) {
+          throw new LockTimeoutError(
+            lockId,
+            lockTimeoutMs,
+            `Failed to acquire draft lock: draftId=${draftId} lockId=${lockId} within ${lockTimeoutMs}ms`
+          );
+        }
+        throw err;
+      } finally {
+        // Reset statement timeout so the callback runs without artificial time limits
+        if (lockTimeoutMs > 0) {
+          try {
+            await client.query('SET LOCAL statement_timeout = 0');
+          } catch {
+            // Transaction is likely aborted; timeout resets on rollback
+          }
+        }
+      }
+
+      const elapsed = Date.now() - start;
+      if (elapsed > slowThreshold) {
+        logger.warn(
+          `Slow lock acquisition: domain=DRAFT draftId=${draftId} lockId=${lockId} took ${elapsed}ms`
         );
       }
-      throw err;
-    } finally {
-      // Reset statement timeout so the callback runs without artificial time limits
-      if (lockTimeoutMs > 0) {
-        await client.query('SET LOCAL statement_timeout = 0');
-      }
-    }
 
-    const elapsed = Date.now() - start;
-    if (elapsed > slowThreshold) {
-      logger.warn(
-        `Slow lock acquisition: domain=DRAFT draftId=${draftId} lockId=${lockId} took ${elapsed}ms`
-      );
+      const result = await fn(client);
+      await client.query('COMMIT');
+      eventBus?.commitTransaction();
+      return result;
+    } catch (error) {
+      eventBus?.rollbackTransaction();
+      await client.query('ROLLBACK');
+      throw error;
     }
+  };
 
-    const result = await fn(client);
-    await client.query('COMMIT');
-    eventBus?.commitTransaction();
-    return result;
-  } catch (error) {
-    eventBus?.rollbackTransaction();
-    await client.query('ROLLBACK');
-    throw error;
+  try {
+    return eventBus
+      ? await eventBus.runInTransaction(execute)
+      : await execute();
   } finally {
     client.release();
   }

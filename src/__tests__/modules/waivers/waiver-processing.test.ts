@@ -21,6 +21,7 @@ jest.mock('../../../shared/events', () => ({
     startTransaction: jest.fn(),
     commitTransaction: jest.fn(),
     rollbackTransaction: jest.fn(),
+    runInTransaction: jest.fn((fn: () => Promise<unknown>) => fn()),
   })),
   EventTypes: {
     WAIVER_CLAIM_SUCCESSFUL: 'waiver_claim_successful',

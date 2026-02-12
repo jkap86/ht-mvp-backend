@@ -7,6 +7,18 @@ import { runInTransaction } from '../../shared/transaction-runner';
  * Uses the same PlayerStats interface since projections have identical structure,
  * but stores data in the separate player_projections table to avoid overwriting actual stats.
  */
+/** All columns needed by playerProjectionFromDatabase() */
+const PROJECTION_COLUMNS = `
+  id, player_id, season, week,
+  pass_yards, pass_td, pass_int,
+  rush_yards, rush_td,
+  receptions, rec_yards, rec_td,
+  fumbles_lost, two_pt_conversions,
+  fg_made, fg_missed, pat_made, pat_missed,
+  def_td, def_int, def_sacks, def_fumble_rec, def_safety, def_points_allowed,
+  created_at, updated_at
+`.replace(/\s+/g, ' ').trim();
+
 export class PlayerProjectionsRepository {
   constructor(private readonly db: Pool) {}
 
@@ -19,7 +31,7 @@ export class PlayerProjectionsRepository {
     week: number
   ): Promise<PlayerStats | null> {
     const result = await this.db.query(
-      `SELECT * FROM player_projections
+      `SELECT ${PROJECTION_COLUMNS} FROM player_projections
        WHERE player_id = $1 AND season = $2 AND week = $3`,
       [playerId, season, week]
     );
@@ -39,7 +51,7 @@ export class PlayerProjectionsRepository {
     if (playerIds.length === 0) return [];
 
     const result = await this.db.query(
-      `SELECT * FROM player_projections
+      `SELECT ${PROJECTION_COLUMNS} FROM player_projections
        WHERE player_id = ANY($1) AND season = $2 AND week = $3`,
       [playerIds, season, week]
     );
@@ -88,7 +100,7 @@ export class PlayerProjectionsRepository {
         def_safety = EXCLUDED.def_safety,
         def_points_allowed = EXCLUDED.def_points_allowed,
         updated_at = CURRENT_TIMESTAMP
-      RETURNING *`,
+      RETURNING ${PROJECTION_COLUMNS}`,
       [
         projection.playerId,
         projection.season,

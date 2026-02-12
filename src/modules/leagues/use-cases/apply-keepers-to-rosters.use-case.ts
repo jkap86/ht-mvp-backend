@@ -7,12 +7,16 @@
 import { Pool, PoolClient } from 'pg';
 import { KeeperSelectionRepository } from '../keeper-selection.repository';
 import { LeagueSeasonRepository } from '../league-season.repository';
+import { LeagueRepository } from '../leagues.repository';
+import { NotFoundException, ValidationException } from '../../../utils/exceptions';
+import { getMaxRosterSize } from '../../../shared/roster-defaults';
 
 export class ApplyKeepersToRostersUseCase {
   constructor(
     private readonly pool: Pool,
     private readonly keeperRepo: KeeperSelectionRepository,
-    private readonly leagueSeasonRepo: LeagueSeasonRepository
+    private readonly leagueSeasonRepo: LeagueSeasonRepository,
+    private readonly leagueRepo: LeagueRepository
   ) {}
 
   async execute(leagueSeasonId: number): Promise<{ playersAdded: number; assetsKept: number }> {
@@ -91,8 +95,48 @@ export class ApplyKeepersToRostersUseCase {
     try {
       await client.query('BEGIN');
 
-      // Get keeper selections for this roster
+      // 1. Verify season exists
+      const season = await this.leagueSeasonRepo.findById(leagueSeasonId, client);
+      if (!season) {
+        throw new NotFoundException('League season not found');
+      }
+
+      // 2. Verify keeper deadline has passed
+      if (!season.isKeeperDeadlinePassed()) {
+        throw new ValidationException('Keeper deadline has not passed yet. Cannot apply keepers.');
+      }
+
+      // 3. Verify season is still in pre_draft status
+      if (season.status !== 'pre_draft') {
+        throw new ValidationException('Keepers can only be applied during pre_draft status');
+      }
+
+      // 4. Get league for roster size limits
+      const league = await this.leagueRepo.findById(season.leagueId, client);
+      if (!league) {
+        throw new NotFoundException('League not found');
+      }
+
+      // 5. Get keeper selections for this roster
       const keepers = await this.keeperRepo.findByRoster(rosterId, leagueSeasonId, client);
+
+      // 6. Count player keepers to add and check roster size limit
+      const playerKeepers = keepers.filter(k => k.isPlayer());
+      if (playerKeepers.length > 0) {
+        const currentRosterCount = await client.query(
+          'SELECT COUNT(*)::int as count FROM roster_players WHERE roster_id = $1',
+          [rosterId]
+        );
+        const currentCount = currentRosterCount.rows[0].count;
+        const maxRosterSize = getMaxRosterSize(league.settings);
+
+        if (currentCount + playerKeepers.length > maxRosterSize) {
+          throw new ValidationException(
+            `Cannot apply keepers: would exceed max roster size of ${maxRosterSize} ` +
+            `(current: ${currentCount}, keepers to add: ${playerKeepers.length})`
+          );
+        }
+      }
 
       let playersAdded = 0;
       let assetsKept = 0;

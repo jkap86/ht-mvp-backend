@@ -48,17 +48,14 @@ interface TransactionContext {
  *
  * Usage:
  * ```typescript
- * // In domain service (typically handled by transaction-runner.ts)
- * eventBus.beginTransaction();
- * try {
+ * // Preferred: use runInTransaction() for properly scoped async context
+ * const result = await eventBus.runInTransaction(async () => {
  *   // Do database work...
  *   eventBus.publish({ type: 'trade:accepted', leagueId, payload });
  *   await client.query('COMMIT');
  *   eventBus.commitTransaction();
- * } catch (error) {
- *   await client.query('ROLLBACK');
- *   eventBus.rollbackTransaction();
- * }
+ *   return result;
+ * });
  * ```
  */
 export class DomainEventBus {
@@ -109,15 +106,15 @@ export class DomainEventBus {
   /**
    * Begin a new transaction context.
    * Events published after this will be queued until commit/rollback.
-   * Returns a function that must be called with the async work to execute.
    *
-   * Note: For integration with transaction-runner.ts, use runInTransaction()
-   * which wraps the callback automatically.
+   * @deprecated Use `runInTransaction()` instead. This method uses
+   * `AsyncLocalStorage.enterWith()` which leaks the async context beyond
+   * the intended transaction scope. `runInTransaction()` uses
+   * `asyncStorage.run()` to properly scope the context to a callback.
    */
   beginTransaction(): void {
-    // Enter a new async context with a fresh transaction
-    // This is called at the start of a transaction, and the context
-    // will be available to all async operations within the same call stack
+    // WARNING: enterWith() replaces the async context for all subsequent code
+    // in this async scope, not just within a callback. Prefer runInTransaction().
     const context: TransactionContext = { pendingEvents: [] };
     this.asyncStorage.enterWith(context);
   }

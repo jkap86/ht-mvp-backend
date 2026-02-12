@@ -5,6 +5,19 @@ import {
   draftPickAssetFromDatabase,
 } from './draft-pick-asset.model';
 
+/** All columns needed by draftPickAssetFromDatabase() */
+const PICK_ASSET_COLUMNS = `
+  id, league_id, draft_id, season, round, original_roster_id,
+  current_owner_roster_id, original_pick_position, created_at, updated_at
+`.replace(/\s+/g, ' ').trim();
+
+/** Same columns prefixed with dpa. for use in JOIN queries */
+const PICK_ASSET_COLUMNS_ALIASED = `
+  dpa.id, dpa.league_id, dpa.draft_id, dpa.season, dpa.round,
+  dpa.original_roster_id, dpa.current_owner_roster_id,
+  dpa.original_pick_position, dpa.created_at, dpa.updated_at
+`.replace(/\s+/g, ' ').trim();
+
 export class DraftPickAssetRepository {
   constructor(private readonly db: Pool) {}
 
@@ -30,7 +43,7 @@ export class DraftPickAssetRepository {
    */
   async findById(id: number, client?: PoolClient): Promise<DraftPickAsset | null> {
     const queryRunner = client || this.db;
-    const result = await queryRunner.query('SELECT * FROM draft_pick_assets WHERE id = $1', [id]);
+    const result = await queryRunner.query(`SELECT ${PICK_ASSET_COLUMNS} FROM draft_pick_assets WHERE id = $1`, [id]);
     return result.rows.length > 0 ? draftPickAssetFromDatabase(result.rows[0]) : null;
   }
 
@@ -40,7 +53,7 @@ export class DraftPickAssetRepository {
   async findByIdWithDetails(id: number): Promise<DraftPickAssetWithDetails | null> {
     const result = await this.db.query(
       `SELECT
-        dpa.*,
+        ${PICK_ASSET_COLUMNS_ALIASED},
         orig_u.username as original_username,
         owner_u.username as current_owner_username,
         COALESCE(orig_r.settings->>'teamName', orig_u.username) as original_team_name,
@@ -75,7 +88,7 @@ export class DraftPickAssetRepository {
   ): Promise<DraftPickAssetWithDetails[]> {
     const result = await this.db.query(
       `SELECT
-        dpa.*,
+        ${PICK_ASSET_COLUMNS_ALIASED},
         orig_u.username as original_username,
         owner_u.username as current_owner_username,
         COALESCE(orig_r.settings->>'teamName', orig_u.username) as original_team_name,
@@ -105,7 +118,7 @@ export class DraftPickAssetRepository {
   async findByDraftId(draftId: number): Promise<DraftPickAssetWithDetails[]> {
     const result = await this.db.query(
       `SELECT
-        dpa.*,
+        ${PICK_ASSET_COLUMNS_ALIASED},
         orig_u.username as original_username,
         owner_u.username as current_owner_username,
         COALESCE(orig_r.settings->>'teamName', orig_u.username) as original_team_name,
@@ -138,7 +151,7 @@ export class DraftPickAssetRepository {
   ): Promise<DraftPickAssetWithDetails[]> {
     const result = await client.query(
       `SELECT
-        dpa.*,
+        ${PICK_ASSET_COLUMNS_ALIASED},
         orig_u.username as original_username,
         owner_u.username as current_owner_username,
         COALESCE(orig_r.settings->>'teamName', orig_u.username) as original_team_name,
@@ -167,7 +180,7 @@ export class DraftPickAssetRepository {
    */
   async findByOwner(rosterId: number, leagueId?: number): Promise<DraftPickAssetWithDetails[]> {
     let query = `SELECT
-        dpa.*,
+        ${PICK_ASSET_COLUMNS_ALIASED},
         orig_u.username as original_username,
         owner_u.username as current_owner_username,
         COALESCE(orig_r.settings->>'teamName', orig_u.username) as original_team_name,
@@ -208,7 +221,7 @@ export class DraftPickAssetRepository {
     leagueId?: number
   ): Promise<DraftPickAssetWithDetails[]> {
     let query = `SELECT
-        dpa.*,
+        ${PICK_ASSET_COLUMNS_ALIASED},
         orig_u.username as original_username,
         owner_u.username as current_owner_username,
         COALESCE(orig_r.settings->>'teamName', orig_u.username) as original_team_name,
@@ -250,7 +263,7 @@ export class DraftPickAssetRepository {
     originalRosterId: number
   ): Promise<DraftPickAsset | null> {
     const result = await this.db.query(
-      `SELECT * FROM draft_pick_assets
+      `SELECT ${PICK_ASSET_COLUMNS} FROM draft_pick_assets
        WHERE draft_id = $1 AND round = $2 AND original_roster_id = $3`,
       [draftId, round, originalRosterId]
     );
@@ -294,7 +307,7 @@ export class DraftPickAssetRepository {
         (league_id, draft_id, season, round, original_roster_id, current_owner_roster_id, original_pick_position)
        VALUES ${placeholders.join(', ')}
        ON CONFLICT (league_id, season, round, original_roster_id) DO NOTHING
-       RETURNING *`,
+       RETURNING ${PICK_ASSET_COLUMNS}`,
       values
     );
 
@@ -338,7 +351,7 @@ export class DraftPickAssetRepository {
         (league_id, draft_id, season, round, original_roster_id, current_owner_roster_id, original_pick_position)
        VALUES ${placeholders.join(', ')}
        ON CONFLICT (league_id, season, round, original_roster_id) DO NOTHING
-       RETURNING *`,
+       RETURNING ${PICK_ASSET_COLUMNS}`,
       values
     );
 
@@ -397,7 +410,7 @@ export class DraftPickAssetRepository {
       `UPDATE draft_pick_assets
        SET current_owner_roster_id = $1, updated_at = CURRENT_TIMESTAMP
        WHERE id = $2
-       RETURNING *`,
+       RETURNING ${PICK_ASSET_COLUMNS}`,
       [newOwnerRosterId, assetId]
     );
 
@@ -485,7 +498,7 @@ export class DraftPickAssetRepository {
   ): Promise<DraftPickAssetWithDetails[]> {
     const result = await this.db.query(
       `SELECT
-        dpa.*,
+        ${PICK_ASSET_COLUMNS_ALIASED},
         orig_u.username as original_username,
         owner_u.username as current_owner_username,
         COALESCE(orig_r.settings->>'teamName', orig_u.username) as original_team_name,
@@ -556,7 +569,7 @@ export class DraftPickAssetRepository {
 
     const result = await this.db.query(
       `SELECT
-        dpa.*,
+        ${PICK_ASSET_COLUMNS_ALIASED},
         orig_u.username as original_username,
         owner_u.username as current_owner_username,
         COALESCE(orig_r.settings->>'teamName', orig_u.username) as original_team_name,

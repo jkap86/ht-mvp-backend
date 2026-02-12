@@ -149,7 +149,7 @@ export async function batchCheckRosteredPlayers(
   const result = await client.query(
     `SELECT DISTINCT rp.player_id
      FROM roster_players rp
-     JOIN league_rosters lr ON lr.id = rp.roster_id
+     JOIN rosters lr ON lr.id = rp.roster_id
      WHERE lr.league_id = $1 AND rp.player_id = ANY($2)`,
     [leagueId, playerIds]
   );

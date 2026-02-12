@@ -9,6 +9,7 @@ import { LeagueRepository } from '../leagues.repository';
 import { LeagueSeasonRepository } from '../league-season.repository';
 import { LeagueSeason } from '../league-season.model';
 import { League } from '../leagues.model';
+import { NotFoundException, ValidationException, ConflictException } from '../../../utils/exceptions';
 
 export interface RolloverParams {
   leagueId: number;
@@ -34,28 +35,28 @@ export class RolloverToNewSeasonUseCase {
       // 1. Validate league exists and mode supports rollover
       const league = await this.leagueRepo.findById(params.leagueId, client);
         if (!league) {
-          throw new Error('League not found');
+          throw new NotFoundException('League not found');
         }
 
         if (league.mode === 'redraft') {
-          throw new Error('Redraft leagues should use reset, not rollover. Rollover is for dynasty/keeper/devy leagues only.');
+          throw new ValidationException('Redraft leagues should use reset, not rollover. Rollover is for dynasty/keeper/devy leagues only.');
         }
 
         // 2. Get current active season
         const currentSeason = await this.leagueSeasonRepo.findActiveByLeague(params.leagueId, client);
         if (!currentSeason) {
-          throw new Error('No active season found to rollover from');
+          throw new NotFoundException('No active season found to rollover from');
         }
 
         // 3. Verify current season is in completable state
         if (currentSeason.status === 'pre_draft') {
-          throw new Error('Cannot rollover from pre_draft status. Complete the season first.');
+          throw new ValidationException('Cannot rollover from pre_draft status. Complete the season first.');
         }
 
         // 4. Check if a newer season already exists
         const latestSeasonNumber = await this.leagueSeasonRepo.getLatestSeasonNumber(params.leagueId, client);
         if (latestSeasonNumber && latestSeasonNumber > currentSeason.season) {
-          throw new Error('A newer season already exists. Cannot rollover again.');
+          throw new ConflictException('A newer season already exists. Cannot rollover again.');
         }
 
         // 5. Mark previous season as completed

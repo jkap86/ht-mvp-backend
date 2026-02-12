@@ -1244,6 +1244,12 @@ describe('FastAuctionService', () => {
             [3, { spent: 0, wonCount: 0, leadingCommitment: 0 }],    // eligible
           ])
         );
+        // Fresh budget re-verification for the eligible candidate (roster 3)
+        mockLotRepo.getRosterBudgetDataWithClient.mockResolvedValue({
+          spent: 0,
+          wonCount: 0,
+          leadingCommitment: 0,
+        });
 
         return fn(mockClient);
       });
@@ -1412,6 +1418,12 @@ describe('FastAuctionService', () => {
             [2, { spent: 0, wonCount: 0, leadingCommitment: 0 }],
           ])
         );
+        // Fresh budget re-verification for the eligible candidate
+        mockLotRepo.getRosterBudgetDataWithClient.mockResolvedValue({
+          spent: 0,
+          wonCount: 0,
+          leadingCommitment: 0,
+        });
 
         return fn(mockClient);
       });
@@ -1581,6 +1593,12 @@ describe('FastAuctionService', () => {
               [2, { spent: 0, wonCount: 0, leadingCommitment: 0 }],
             ])
           );
+          // Fresh budget re-verification for the eligible candidate (roster 2)
+          mockLotRepo.getRosterBudgetDataWithClient.mockResolvedValue({
+            spent: 0,
+            wonCount: 0,
+            leadingCommitment: 0,
+          });
 
           return fn(mockClient);
         }
@@ -2139,9 +2157,11 @@ describe('FastAuctionService', () => {
         expect.objectContaining({
           draftRepo: mockDraftRepo,
           leagueRepo: mockLeagueRepo,
+          rosterPlayersRepo: expect.anything(),
         }),
         1,  // draftId
-        1   // leagueId
+        1,  // leagueId
+        expect.anything()  // client
       );
 
       // Verify draft completed event was published

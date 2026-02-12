@@ -59,6 +59,7 @@ export class DraftOrderMapper {
 export class DraftPickMapper {
   /**
    * Convert a database row to a DraftPick object.
+   * Note: Explicit field mapping to avoid leaking extra joined columns.
    */
   static fromRow(row: any): DraftPick {
     return {

@@ -5,6 +5,7 @@
 
 import { Pool } from 'pg';
 import { logger } from '../../config/logger.config';
+import { snakeToCamel } from '../../shared/mappers';
 
 // TODO: Implement Firebase Cloud Messaging push notifications (import firebase-admin)
 
@@ -200,25 +201,7 @@ export class NotificationService {
       };
     }
 
-    const row = result.rows[0];
-    return {
-      userId: row.user_id,
-      enabledPush: row.enabled_push,
-      draftStart: row.draft_start,
-      draftYourTurn: row.draft_your_turn,
-      draftCompleted: row.draft_completed,
-      tradeOffers: row.trade_offers,
-      tradeAccepted: row.trade_accepted,
-      tradeCountered: row.trade_countered,
-      tradeVoted: row.trade_voted,
-      tradeCompleted: row.trade_completed,
-      waiverResults: row.waiver_results,
-      waiverProcessing: row.waiver_processing,
-      waiverEndingSoon: row.waiver_ending_soon,
-      lineupLocks: row.lineup_locks,
-      playerNews: row.player_news,
-      breakingNews: row.breaking_news,
-    };
+    return snakeToCamel<NotificationPreferences>(result.rows[0]);
   }
 
   /**
@@ -271,24 +254,7 @@ export class NotificationService {
           breakingNews: true,
         });
       } else {
-        prefsMap.set(userId, {
-          userId: row.user_id,
-          enabledPush: row.enabled_push,
-          draftStart: row.draft_start,
-          draftYourTurn: row.draft_your_turn,
-          draftCompleted: row.draft_completed,
-          tradeOffers: row.trade_offers,
-          tradeAccepted: row.trade_accepted,
-          tradeCountered: row.trade_countered,
-          tradeVoted: row.trade_voted,
-          tradeCompleted: row.trade_completed,
-          waiverResults: row.waiver_results,
-          waiverProcessing: row.waiver_processing,
-          waiverEndingSoon: row.waiver_ending_soon,
-          lineupLocks: row.lineup_locks,
-          playerNews: row.player_news,
-          breakingNews: row.breaking_news,
-        });
+        prefsMap.set(userId, snakeToCamel<NotificationPreferences>(row));
       }
     }
 

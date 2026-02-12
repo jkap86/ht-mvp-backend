@@ -15,7 +15,7 @@ import { container, KEYS } from '../../../container';
 import * as locks from '../../../shared/locks';
 
 // Mock runInDraftTransaction to bypass actual DB transactions in tests
-const mockClient = {} as any;
+const mockClient = { query: jest.fn().mockResolvedValue({ rows: [], rowCount: 0 }) } as any;
 jest.spyOn(locks, 'runInDraftTransaction').mockImplementation(
   async (_pool, _draftId, fn) => fn(mockClient)
 );
@@ -152,6 +152,8 @@ const createMockDraftRepo = (): jest.Mocked<DraftRepository> =>
     removePlayerFromAllQueues: jest.fn(),
     makePickAndAdvanceTx: jest.fn(),
     makePickAndAdvanceTxWithClient: jest.fn(),
+    updateWithClient: jest.fn().mockResolvedValue(undefined),
+    getDraftPicksWithClient: jest.fn().mockResolvedValue([]),
   }) as unknown as jest.Mocked<DraftRepository>;
 
 const createMockLeagueRepo = (): jest.Mocked<LeagueRepository> =>

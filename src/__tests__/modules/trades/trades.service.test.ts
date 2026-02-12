@@ -153,6 +153,13 @@ const mockRosterPlayer: any = {
 // Mock pool client with batch query support
 const createMockPoolClient = (): jest.Mocked<PoolClient> => {
   const mockQuery = jest.fn().mockImplementation((query: string, params?: unknown[]) => {
+    // Handle advisory lock queries
+    if (typeof query === 'string' && query.includes('pg_try_advisory_lock')) {
+      return Promise.resolve({ rows: [{ acquired: true }] });
+    }
+    if (typeof query === 'string' && query.includes('pg_advisory_unlock')) {
+      return Promise.resolve({ rows: [{ pg_advisory_unlock: true }] });
+    }
     // Default: return empty rows
     return Promise.resolve({ rows: [] });
   });
@@ -196,6 +203,17 @@ function setupBatchValidationMock(
     if (typeof query === 'string' && query.includes('SELECT full_name')) {
       return Promise.resolve({
         rows: [{ full_name: 'Test Player', position: 'QB', team: 'TST' }],
+      });
+    }
+
+    // Handle atomic swap query for trade execution
+    if (typeof query === 'string' && query.includes('UPDATE roster_players')) {
+      // Return all player IDs as successfully swapped
+      const playerIdParams = params?.filter((p): p is number => typeof p === 'number' && !Array.isArray(p));
+      const playerIdsArray = Array.isArray(params?.[params.length - 1]) ? params![params.length - 1] as number[] : [];
+      return Promise.resolve({
+        rows: playerIdsArray.map((id: number) => ({ player_id: id, roster_id: 2 })),
+        rowCount: playerIdsArray.length,
       });
     }
 
@@ -500,6 +518,10 @@ describe('TradesService', () => {
       mockTradeItemsRepo.findByTrade.mockResolvedValue([mockTradeItem]);
       // Setup batch validation mock - player 100 owned by roster 1
       setupBatchValidationMock(mockPoolClient, [{ rosterId: 1, playerIds: [100] }]);
+      // Mock player ownership validation for executeTrade
+      mockRosterPlayersRepo.findByRosterAndPlayer.mockResolvedValue(mockRosterPlayer);
+      // Mock roster size check for executeTrade
+      mockRosterPlayersRepo.getPlayerCount.mockResolvedValue(10);
       mockTradesRepo.updateStatus.mockResolvedValue({ ...mockTrade, status: 'completed' });
       mockTradesRepo.findByIdWithDetails.mockResolvedValue({
         ...mockTradeWithDetails,
@@ -510,9 +532,8 @@ describe('TradesService', () => {
       const result = await tradesService.acceptTrade(1, 'user-456');
 
       expect(result.status).toBe('completed');
-      // Trade execution now uses RosterMutationService
-      expect(mockRosterMutationService.bulkRemovePlayers).toHaveBeenCalled();
-      expect(mockRosterMutationService.bulkAddPlayers).toHaveBeenCalled();
+      // Trade execution uses atomic SQL swap and records transactions
+      expect(mockTransactionsRepo.create).toHaveBeenCalled();
     });
 
     it('should set review period when enabled', async () => {
@@ -780,6 +801,10 @@ describe('TradesService', () => {
       mockTradeItemsRepo.findByTrade.mockResolvedValue([mockTradeItem]);
       // Setup batch validation mock - player 100 owned by roster 1
       setupBatchValidationMock(mockPoolClient, [{ rosterId: 1, playerIds: [100] }]);
+      // Mock player ownership validation for executeTrade
+      mockRosterPlayersRepo.findByRosterAndPlayer.mockResolvedValue(mockRosterPlayer);
+      // Mock roster size check for executeTrade
+      mockRosterPlayersRepo.getPlayerCount.mockResolvedValue(10);
       mockTransactionsRepo.create.mockResolvedValue({ id: 1 } as any);
       mockTradesRepo.updateStatus.mockResolvedValue({ ...reviewCompleteTrade, status: 'completed' });
 

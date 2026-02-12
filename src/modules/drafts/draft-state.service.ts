@@ -89,7 +89,7 @@ export type UndoneItem = DraftPick | UndonePickAssetSelection;
  *   (freezes both draft and active lot atomically); non-fast uses conditional SQL update
  * - resumeDraft() acquires DRAFT lock (700M + draftId) via runWithLock for fast auctions
  *   (restores both draft and active lot atomically); non-fast uses conditional SQL update
- * - completeDraft() uses updateWithLock (conditional SQL update, no advisory lock)
+ * - completeDraft() acquires DRAFT lock (700M + draftId) via runWithLock — atomic status update + finalization
  * - undoPick() acquires DRAFT lock (700M + draftId) via runInDraftTransaction — atomic undo
  * - applyPick() acquires DRAFT lock (700M + draftId) via runInDraftTransaction — atomic pick + state advance
  * - applyAutoPick() acquires DRAFT lock (700M + draftId) via runInDraftTransaction — decision + pick
@@ -503,30 +503,48 @@ export class DraftStateService {
       throw new ValidationException('Cannot complete a draft that has not started');
     }
 
-    // Mark draft as completed FIRST to prevent races with in-flight picks.
-    // If this fails, no side effects have occurred yet.
-    // If finalization fails after this, a retry can detect "completed" status
-    // and re-run finalization (idempotent).
-    // Pass expectedStatus to make the status check atomic with the update,
-    // preventing TOCTOU race where another process completes the draft between
-    // our check above and the lock acquisition inside updateWithLock.
-    const updatedDraft = await this.draftRepo.updateWithLock(draftId, {
-      status: 'completed',
-      completedAt: new Date(),
-      pickDeadline: null,
-      currentRosterId: null,
-    }, draft.status);
-
-    // Run unified finalization (rosters, league status, schedule) AFTER status update
-    const completionResult = await finalizeDraftCompletion(
-      {
-        draftRepo: this.draftRepo,
-        leagueRepo: this.leagueRepo,
-        rosterPlayersRepo: this.rosterPlayersRepo,
-        scheduleGeneratorService: this.scheduleGeneratorService,
-      },
+    // Acquire DRAFT advisory lock so that in-flight picks (which also acquire
+    // the DRAFT lock via runInDraftTransaction) are blocked while we mark the
+    // draft completed and run finalization atomically.
+    const { updatedDraft, completionResult } = await runWithLock(
+      this.db,
+      LockDomain.DRAFT,
       draftId,
-      draft.leagueId
+      async (client) => {
+        // Re-check status inside the lock to prevent TOCTOU race where another
+        // process completes the draft between our check above and lock acquisition.
+        const freshDraft = await this.draftRepo.findByIdWithClient(client, draftId);
+        if (!freshDraft || freshDraft.status === 'completed') {
+          throw new ValidationException('Draft is already completed');
+        }
+        if (freshDraft.status === 'not_started') {
+          throw new ValidationException('Cannot complete a draft that has not started');
+        }
+
+        // Mark draft as completed FIRST to prevent races with in-flight picks.
+        const updated = await this.draftRepo.updateWithClient(client, draftId, {
+          status: 'completed',
+          completedAt: new Date(),
+          pickDeadline: null,
+          currentRosterId: null,
+        });
+
+        // Run unified finalization (rosters, league status, schedule) inside the lock
+        // so no late picks can sneak in between status update and finalization.
+        const completion = await finalizeDraftCompletion(
+          {
+            draftRepo: this.draftRepo,
+            leagueRepo: this.leagueRepo,
+            rosterPlayersRepo: this.rosterPlayersRepo,
+            scheduleGeneratorService: this.scheduleGeneratorService,
+          },
+          draftId,
+          draft.leagueId,
+          client
+        );
+
+        return { updatedDraft: updated, completionResult: completion };
+      }
     );
 
     const response: DraftResponseWithWarnings = draftToResponse(updatedDraft);
@@ -623,8 +641,13 @@ export class DraftStateService {
           const pickAssets = await pickAssetRepo.findByDraftIdWithClient(client, draftId);
           const actualPicker = engine.getActualPickerForPickNumber(draft, draftOrder, pickAssets, computedPrevPick);
           computedPrevPickerRosterId = actualPicker?.rosterId || null;
-        } catch {
+        } catch (err) {
           // Fallback to original picker if pick assets not available
+          logger.warn('Failed to resolve actual picker via pick assets during undo, falling back to original picker', {
+            error: err instanceof Error ? err.message : String(err),
+            draftId,
+            pickNumber: computedPrevPick,
+          });
           const prevPicker = engine.getPickerForPickNumber(draft, draftOrder, computedPrevPick);
           computedPrevPickerRosterId = prevPicker?.rosterId || null;
         }

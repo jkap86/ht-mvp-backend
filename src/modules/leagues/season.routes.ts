@@ -24,7 +24,7 @@ export function createSeasonRoutes(pool: Pool): Router {
 
   const rolloverUseCase = new RolloverToNewSeasonUseCase(pool, leagueRepo, leagueSeasonRepo);
   const submitKeepersUseCase = new SubmitKeeperSelectionUseCase(pool, leagueSeasonRepo, keeperRepo, leagueRepo);
-  const applyKeepersUseCase = new ApplyKeepersToRostersUseCase(pool, keeperRepo, leagueSeasonRepo);
+  const applyKeepersUseCase = new ApplyKeepersToRostersUseCase(pool, keeperRepo, leagueSeasonRepo, leagueRepo);
 
   /**
    * GET /leagues/:leagueId/seasons

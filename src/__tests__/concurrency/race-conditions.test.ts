@@ -50,6 +50,10 @@ jest.mock('../../shared/transaction-runner', () => ({
     const mockClient = { query: jest.fn().mockResolvedValue({ rows: [] }) } as unknown as PoolClient;
     return fn(mockClient);
   }),
+  runWithLocks: jest.fn(async (_pool: any, _locks: any, fn: any) => {
+    const mockClient = { query: jest.fn().mockResolvedValue({ rows: [] }) } as unknown as PoolClient;
+    return fn(mockClient);
+  }),
   LockDomain: {
     DRAFT: 700_000_000,
     ROSTER: 200_000_000,

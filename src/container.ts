@@ -86,6 +86,7 @@ export const KEYS = {
   FAAB_BUDGET_REPO: 'faabBudgetRepo',
   WAIVER_CLAIMS_REPO: 'waiverClaimsRepo',
   WAIVER_WIRE_REPO: 'waiverWireRepo',
+  WAIVER_PROCESSING_RUNS_REPO: 'waiverProcessingRunsRepo',
   PLAYOFF_REPO: 'playoffRepo',
   INVITATIONS_REPO: 'invitationsRepo',
   DUES_REPO: 'duesRepo',

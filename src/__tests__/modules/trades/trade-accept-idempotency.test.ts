@@ -16,6 +16,10 @@ jest.mock('../../../shared/transaction-runner', () => ({
     const mockClient = { query: jest.fn() } as unknown as PoolClient;
     return fn(mockClient);
   }),
+  runWithLocks: jest.fn(async (_pool: any, _locks: any, fn: any) => {
+    const mockClient = { query: jest.fn() } as unknown as PoolClient;
+    return fn(mockClient);
+  }),
   LockDomain: { TRADE: 'TRADE', ROSTER: 'ROSTER' },
 }));
 

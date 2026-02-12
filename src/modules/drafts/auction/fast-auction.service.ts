@@ -374,6 +374,9 @@ export class FastAuctionService {
           );
           if (existing.rows.length > 0) {
             const currentLotResult = await client.query('SELECT * FROM auction_lots WHERE id = $1', [lotId]);
+            if (!currentLotResult.rows[0]) {
+              throw new NotFoundException(`Auction lot not found: ${lotId}`);
+            }
             const currentLot = auctionLotFromDatabase(currentLotResult.rows[0]);
             return { finalLot: currentLot, outbidNotifications: [], playerId: currentLot.playerId };
           }

@@ -227,10 +227,18 @@ export class LoggingMiddleware implements CommandMiddleware {
 export class IdempotencyMiddleware implements CommandMiddleware {
   private processedKeys = new Map<string, { timestamp: number; result: unknown }>();
   private readonly ttlMs: number;
+  private readonly maxResultBytes: number;
+  private readonly cleanupInterval: ReturnType<typeof setInterval>;
 
-  constructor(ttlMs: number = 5 * 60 * 1000) {
-    // Default 5 minutes
+  constructor(ttlMs: number = 5 * 60 * 1000, maxResultBytes: number = 102_400) {
+    // Default 5 minutes TTL, 100KB max result size
     this.ttlMs = ttlMs;
+    this.maxResultBytes = maxResultBytes;
+
+    // Periodic cleanup every 5 minutes to remove expired entries
+    this.cleanupInterval = setInterval(() => this.cleanup(), 5 * 60 * 1000);
+    // unref() so the interval doesn't prevent Node.js from shutting down
+    this.cleanupInterval.unref();
   }
 
   async before(command: Command): Promise<void> {
@@ -247,9 +255,25 @@ export class IdempotencyMiddleware implements CommandMiddleware {
     const key = command.metadata?.idempotencyKey;
     if (!key) return;
 
+    // Skip caching if the serialized result exceeds the size limit
+    try {
+      const serialized = JSON.stringify(result);
+      if (Buffer.byteLength(serialized, 'utf8') > this.maxResultBytes) {
+        logger.warn('Idempotency result too large, skipping cache', {
+          key,
+          limit: this.maxResultBytes,
+        });
+        return;
+      }
+    } catch {
+      // If serialization fails (circular refs, etc.), skip caching
+      logger.warn('Idempotency result not serializable, skipping cache', { key });
+      return;
+    }
+
     this.processedKeys.set(key, { timestamp: Date.now(), result });
 
-    // Cleanup old entries periodically
+    // Cleanup old entries if map grows too large
     if (this.processedKeys.size > 1000) {
       this.cleanup();
     }
@@ -262,6 +286,11 @@ export class IdempotencyMiddleware implements CommandMiddleware {
         this.processedKeys.delete(key);
       }
     }
+  }
+
+  /** Stop the periodic cleanup interval. Call when shutting down. */
+  dispose(): void {
+    clearInterval(this.cleanupInterval);
   }
 }
 

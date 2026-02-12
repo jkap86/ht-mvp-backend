@@ -9,6 +9,7 @@ import { KeeperSelectionRepository, CreateKeeperSelectionParams } from '../keepe
 import { LeagueRepository } from '../leagues.repository';
 import { KeeperSelection } from '../keeper-selection.model';
 import { NotFoundException, ValidationException, ConflictException } from '../../../utils/exceptions';
+import { runWithLock, LockDomain } from '../../../shared/transaction-runner';
 
 export interface SubmitKeepersParams {
   leagueSeasonId: number;
@@ -30,11 +31,7 @@ export class SubmitKeeperSelectionUseCase {
   ) {}
 
   async execute(params: SubmitKeepersParams): Promise<KeeperSelection[]> {
-    const client = await this.pool.connect();
-
-    try {
-      await client.query('BEGIN');
-
+    return runWithLock(this.pool, LockDomain.ROSTER, params.rosterId, async (client) => {
       // 1. Get season and validate it exists
       const season = await this.leagueSeasonRepo.findById(params.leagueSeasonId, client);
       if (!season) {
@@ -92,16 +89,8 @@ export class SubmitKeeperSelectionUseCase {
         createdKeepers.push(...keepers);
       }
 
-      await client.query('COMMIT');
-
       return createdKeepers;
-
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   /**

@@ -198,15 +198,15 @@ describe('DmService', () => {
       );
     });
 
-    it('should throw ValidationException for message exceeding 1000 characters', async () => {
+    it('should throw ValidationException for message exceeding 1500 characters', async () => {
       mockDmRepo.isUserParticipant.mockResolvedValue(true);
-      const longMessage = 'a'.repeat(1001);
+      const longMessage = 'a'.repeat(1501);
 
       await expect(dmService.sendMessage('user-123', 1, longMessage)).rejects.toThrow(
         ValidationException
       );
       await expect(dmService.sendMessage('user-123', 1, longMessage)).rejects.toThrow(
-        'Message cannot exceed 1000 characters'
+        'Message cannot exceed 1500 characters'
       );
     });
 
