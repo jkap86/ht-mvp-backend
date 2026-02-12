@@ -59,7 +59,25 @@ export class RosterPlayersRepository {
   }
 
   /**
-   * Get a specific player on a roster
+   * Get a specific player on a roster.
+   *
+   * @param rosterId - Roster ID
+   * @param playerId - Player ID
+   * @param client - Optional client for use within transactions.
+   *                 **WARNING: Caller MUST ensure connection release via try/finally.**
+   *                 Prefer using transaction helpers (runInTransaction, runWithLock) instead.
+   * @returns RosterPlayer or null if not found
+   *
+   * @example
+   * // PREFERRED: Use transaction helpers
+   * await runInTransaction(pool, async (client) => {
+   *   const rosterPlayer = await repo.findByRosterAndPlayer(rosterId, playerId, client);
+   *   if (rosterPlayer) await repo.removePlayer(rosterId, playerId, client);
+   * });
+   *
+   * @example
+   * // ACCEPTABLE: Single read without transaction
+   * const rosterPlayer = await repo.findByRosterAndPlayer(rosterId, playerId);
    */
   async findByRosterAndPlayer(
     rosterId: number,
@@ -77,7 +95,15 @@ export class RosterPlayersRepository {
   }
 
   /**
-   * Check if a player is on any roster in a league (current season)
+   * Check if a player is on any roster in a league (current season).
+   *
+   * @param leagueId - League ID
+   * @param playerId - Player ID
+   * @param client - Optional client for use within transactions.
+   *                 **WARNING: Caller MUST ensure connection release via try/finally.**
+   *                 Prefer using transaction helpers instead.
+   * @param leagueSeasonId - Optional league season ID for more precise scoping
+   * @returns Roster ID owning the player, or null if free agent
    */
   async findOwner(leagueId: number, playerId: number, client?: PoolClient, leagueSeasonId?: number): Promise<number | null> {
     const db = client || this.db;
@@ -106,7 +132,22 @@ export class RosterPlayersRepository {
   }
 
   /**
-   * Add a player to a roster
+   * Add a player to a roster.
+   *
+   * @param rosterId - Roster ID
+   * @param playerId - Player ID
+   * @param acquiredType - How the player was acquired (draft, waiver, trade, etc.)
+   * @param client - Optional client for use within transactions.
+   *                 **WARNING: Caller MUST ensure connection release via try/finally.**
+   *                 Prefer using transaction helpers (runWithLock) instead.
+   * @returns Created RosterPlayer record
+   *
+   * @example
+   * // PREFERRED: Use transaction helpers with locking
+   * await runWithLock(pool, LockDomain.ROSTER, rosterId, async (client) => {
+   *   const rosterPlayer = await repo.addPlayer(rosterId, playerId, 'draft', client);
+   *   await logTransaction(client, rosterId, 'add', playerId);
+   * });
    */
   async addPlayer(
     rosterId: number,
@@ -126,7 +167,14 @@ export class RosterPlayersRepository {
   }
 
   /**
-   * Remove a player from a roster
+   * Remove a player from a roster.
+   *
+   * @param rosterId - Roster ID
+   * @param playerId - Player ID
+   * @param client - Optional client for use within transactions.
+   *                 **WARNING: Caller MUST ensure connection release via try/finally.**
+   *                 Prefer using transaction helpers (runWithLock) instead.
+   * @returns true if player was removed, false if not found
    */
   async removePlayer(rosterId: number, playerId: number, client?: PoolClient): Promise<boolean> {
     const db = client || this.db;
@@ -139,7 +187,12 @@ export class RosterPlayersRepository {
   }
 
   /**
-   * Get roster player count
+   * Get roster player count.
+   *
+   * @param rosterId - Roster ID
+   * @param client - Optional client for use within transactions.
+   *                 **WARNING: Caller MUST ensure connection release via try/finally.**
+   * @returns Number of players on the roster
    */
   async getPlayerCount(rosterId: number, client?: PoolClient): Promise<number> {
     const db = client || this.db;

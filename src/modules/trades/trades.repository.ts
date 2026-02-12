@@ -19,7 +19,31 @@ export class TradesRepository {
   constructor(private readonly db: Pool) {}
 
   /**
-   * Create a new trade
+   * Create a new trade.
+   *
+   * @param leagueId - League ID
+   * @param proposerRosterId - Roster ID of trade proposer
+   * @param recipientRosterId - Roster ID of trade recipient
+   * @param expiresAt - Expiration timestamp
+   * @param season - League season
+   * @param week - League week
+   * @param message - Optional trade message
+   * @param parentTradeId - Optional parent trade ID for counter-offers
+   * @param client - Optional client for use within transactions.
+   *                 **WARNING: Caller MUST ensure connection release via try/finally.**
+   *                 Prefer using transaction helpers (runWithLock) instead.
+   * @param notifyLeagueChat - Whether to notify league chat
+   * @param notifyDm - Whether to notify via DM
+   * @param leagueChatMode - Chat notification mode
+   * @param leagueSeasonId - Optional league season ID
+   * @returns Created trade record
+   *
+   * @example
+   * // PREFERRED: Use transaction helpers
+   * await runWithLock(pool, LockDomain.TRADE, leagueId, async (client) => {
+   *   const trade = await repo.create(leagueId, proposerId, recipientId, expiresAt, season, week, null, null, client);
+   *   await repo.addTradeItems(trade.id, items, client);
+   * });
    */
   async create(
     leagueId: number,
@@ -63,7 +87,13 @@ export class TradesRepository {
   }
 
   /**
-   * Find trade by ID
+   * Find trade by ID.
+   *
+   * @param tradeId - Trade ID
+   * @param client - Optional client for use within transactions.
+   *                 **WARNING: Caller MUST ensure connection release via try/finally.**
+   *                 Prefer using transaction helpers instead.
+   * @returns Trade or null if not found
    */
   async findById(tradeId: number, client?: PoolClient): Promise<Trade | null> {
     const conn = client || this.db;

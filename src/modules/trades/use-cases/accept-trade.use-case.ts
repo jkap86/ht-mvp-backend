@@ -15,8 +15,9 @@ import {
   ValidationException,
   ConflictException,
 } from '../../../utils/exceptions';
-import { runWithLock, LockDomain } from '../../../shared/transaction-runner';
+import { runWithLocks, LockDomain } from '../../../shared/transaction-runner';
 import { batchValidateRosterPlayers } from '../../../shared/batch-queries';
+import { getMaxRosterSize } from '../../../shared/roster-defaults';
 import type { EventListenerService } from '../../chat/event-listener.service';
 import { logger } from '../../../config/logger.config';
 
@@ -39,11 +40,12 @@ export interface AcceptTradeContext {
  * Accept a trade
  *
  * LOCK CONTRACT:
- * - Acquires TRADE lock (300M + leagueId) via runWithLock — serializes trade state changes per league
- * - When executing immediately (no review), executeTrade() runs inside the same TRADE lock
- *   (no additional advisory locks; uses row-level mutations only)
+ * - Acquires ROSTER locks (200M + rosterId) for both participating rosters (sorted order)
+ * - Acquires TRADE lock (300M + leagueId) — serializes trade state changes per league
+ * - Lock acquisition follows domain priority order (ROSTER before TRADE) to prevent deadlocks
+ * - When executing immediately (no review), executeTrade() runs inside these locks
  *
- * Only one lock domain (TRADE) is acquired. No nested cross-domain advisory locks.
+ * Locks are acquired in correct priority order per transactions.md rules.
  */
 export async function acceptTrade(
   ctx: AcceptTradeContext,
@@ -72,10 +74,18 @@ export async function acceptTrade(
   let updatedTrade: Trade | undefined;
   let pickTradedEvents: PickTradedEvent[] = [];
 
-  const tradeWithDetails = await runWithLock(
+  // Acquire locks in correct domain priority order to prevent deadlocks:
+  // 1. ROSTER locks (priority 2) - acquired in sorted order
+  // 2. TRADE lock (priority 3)
+  const rosterIds = [trade.proposerRosterId, trade.recipientRosterId].sort((a, b) => a - b);
+  const locks = [
+    ...rosterIds.map((id) => ({ domain: LockDomain.ROSTER, id })),
+    { domain: LockDomain.TRADE, id: trade.leagueId },
+  ];
+
+  const tradeWithDetails = await runWithLocks(
     ctx.db,
-    LockDomain.TRADE,
-    trade.leagueId,
+    locks,
     async (client) => {
       // Re-verify status after acquiring lock (another transaction may have changed it)
       const currentTrade = await ctx.tradesRepo.findById(tradeId, client);
@@ -298,35 +308,87 @@ export async function executeTrade(
     }
   }
 
-  // Execute player movements using two-pass pattern via mutation service
-  // CRITICAL: Two-pass execution allows for 1-for-1 swaps even when rosters are full.
+  // Execute player movements using atomic single-pass swap
+  // CRITICAL: Single-pass atomic update prevents waiver claims from creating duplicate ownership
+  // during the gap between remove and add operations.
   if (playerItems.length > 0) {
-    // Pass 1: Remove all players from source rosters to free up space
-    // bulkRemovePlayers validates all exist before removing any
-    await mutationService.bulkRemovePlayers(
-      {
-        leagueId: trade.leagueId,
-        removals: playerItems.map((item) => ({
-          rosterId: item.fromRosterId,
-          playerId: item.playerId!,
-        })),
-      },
-      client
+    // Validate all players exist on expected rosters BEFORE the atomic swap
+    // This prevents partial updates if a player was already moved/dropped
+    const validationResults = await Promise.all(
+      playerItems.map((item) =>
+        ctx.rosterPlayersRepo.findByRosterAndPlayer(item.fromRosterId, item.playerId!, client)
+      )
+    );
+    const missingIdx = validationResults.findIndex((result) => !result);
+    if (missingIdx !== -1) {
+      const item = playerItems[missingIdx];
+      throw new ConflictException(
+        `Player ${item.playerId} is no longer on roster ${item.fromRosterId} - trade cannot be executed`
+      );
+    }
+
+    // Validate roster sizes after the trade completes
+    // Group players by destination roster to calculate net changes
+    const rosterDeltas = new Map<number, number>();
+    for (const item of playerItems) {
+      // Players leaving (negative delta)
+      rosterDeltas.set(item.fromRosterId, (rosterDeltas.get(item.fromRosterId) || 0) - 1);
+      // Players arriving (positive delta)
+      rosterDeltas.set(item.toRosterId, (rosterDeltas.get(item.toRosterId) || 0) + 1);
+    }
+
+    // Check each roster's final size won't exceed max
+    const leagueData = await ctx.leagueRepo.findById(trade.leagueId, client);
+    if (!leagueData) throw new NotFoundException('League not found');
+    const maxRosterSize = getMaxRosterSize(leagueData.settings);
+
+    for (const [rosterId, delta] of rosterDeltas) {
+      if (delta > 0) {
+        // Roster is receiving more players than it's giving
+        const currentSize = await ctx.rosterPlayersRepo.getPlayerCount(rosterId, client);
+        const finalSize = currentSize + delta;
+        if (finalSize > maxRosterSize) {
+          throw new ValidationException(
+            `Roster ${rosterId} would exceed max size (${maxRosterSize}). Current: ${currentSize}, would be: ${finalSize}`
+          );
+        }
+      }
+    }
+
+    // Build atomic swap using SQL CASE statement
+    // This updates all roster_id values in a single atomic operation
+    const playerIds = playerItems.map((item) => item.playerId!);
+
+    // Build WHEN clauses for CASE statement - map each player to its destination roster
+    const whenClauses = playerItems.map((item, idx) =>
+      `WHEN player_id = $${idx + 1} THEN $${playerIds.length + idx + 1}`
+    ).join(' ');
+
+    // Build parameters array: [playerIds..., toRosterIds...]
+    const params: number[] = [
+      ...playerIds,
+      ...playerItems.map((item) => item.toRosterId)
+    ];
+
+    // Execute atomic swap - all players move simultaneously, preventing duplicate ownership
+    const swapResult = await client.query(
+      `UPDATE roster_players
+       SET roster_id = CASE
+         ${whenClauses}
+       END,
+       acquired_type = 'trade'
+       WHERE player_id = ANY($${params.length + 1})
+       RETURNING player_id, roster_id`,
+      [...params, playerIds]
     );
 
-    // Pass 2: Add players to destination rosters
-    // bulkAddPlayers validates roster size for each add
-    await mutationService.bulkAddPlayers(
-      {
-        leagueId: trade.leagueId,
-        additions: playerItems.map((item) => ({
-          rosterId: item.toRosterId,
-          playerId: item.playerId!,
-          acquiredType: 'trade' as const,
-        })),
-      },
-      client
-    );
+    // Validate all players were swapped
+    if (swapResult.rowCount !== playerItems.length) {
+      throw new ConflictException(
+        `Trade failed: expected ${playerItems.length} players to move, but only ${swapResult.rowCount} were updated. ` +
+        'One or more players may have been traded or dropped.'
+      );
+    }
 
     // Record transactions for all player movements
     for (const item of playerItems) {

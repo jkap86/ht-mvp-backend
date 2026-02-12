@@ -630,7 +630,8 @@ export class AuctionLotRepository {
        WHERE draft_id = $1 AND (
          (status = 'won' AND winning_roster_id = $2) OR
          (status = 'active' AND current_bidder_roster_id = $2)
-       )`,
+       )
+       FOR UPDATE`,
       [draftId, rosterId]
     );
 

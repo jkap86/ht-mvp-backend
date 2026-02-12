@@ -193,157 +193,156 @@ export abstract class BaseDraftEngine implements IDraftEngine {
    * Process a tick - check for expired picks and autopick if needed
    */
   async tick(draftId: number): Promise<DraftTickResult> {
-    const draft = await this.draftRepo.findById(draftId);
+    // Initial lightweight check (outside lock) - allows early exit for completed/non-existent drafts
+    const draftSnapshot = await this.draftRepo.findById(draftId);
 
-    if (!draft) {
+    if (!draftSnapshot) {
       throw new Error(`Draft not found: ${draftId}`);
     }
 
-    if (draft.status !== 'in_progress') {
+    if (draftSnapshot.status !== 'in_progress') {
       return {
         actionTaken: false,
-        draftCompleted: draft.status === 'completed',
-        draft,
+        draftCompleted: draftSnapshot.status === 'completed',
+        draft: draftSnapshot,
         reason: 'none',
       };
     }
 
-    // Check if current picker has autodraft enabled (should pick immediately)
-    const draftOrder = await this.draftRepo.getDraftOrder(draftId);
-    const currentPicker = draftOrder.find((o) => o.rosterId === draft.currentRosterId);
-    const isAutodraftEnabled = currentPicker?.isAutodraftEnabled ?? false;
+    // Acquire lock and read fresh state to prevent race conditions
+    const pool = container.resolve<Pool>(KEYS.POOL);
+    const { runWithLock, LockDomain: RunnerLockDomain } = await import('../shared/transaction-runner');
 
-    // Check if current roster is empty (no user assigned) - should autopick immediately
-    let isEmptyRoster = false;
-    if (draft.currentRosterId) {
-      const roster = await this.rosterRepo.findById(draft.currentRosterId);
-      isEmptyRoster = roster !== null && roster.userId === null;
-    }
+    type TickInternalResult = {
+      actionTaken: boolean;
+      reason: 'timeout' | 'autodraft' | 'empty_roster' | 'none';
+      pick?: DraftPick;
+      advanced?: boolean;
+      nextPickInfo?: NextPickDetails;
+    };
 
-    // Autopick if: deadline expired OR autodraft enabled OR empty roster
-    if (!this.shouldAutoPick(draft) && !isAutodraftEnabled && !isEmptyRoster) {
-      return {
-        actionTaken: false,
-        draftCompleted: false,
-        draft,
-        reason: 'none',
-      };
-    }
+    const result = await runWithLock<TickInternalResult>(
+      pool,
+      RunnerLockDomain.DRAFT,
+      draftId,
+      async (client) => {
+        // Read FRESH draft state INSIDE the lock
+        const draft = await this.draftRepo.findByIdWithClient(client, draftId);
 
-    // Determine reason for autopick (priority: empty_roster > autodraft > timeout)
-    const deadlineExpired = this.shouldAutoPick(draft);
-    let reason: 'timeout' | 'autodraft' | 'empty_roster' = 'timeout';
-    if (isEmptyRoster) {
-      reason = 'empty_roster';
-    } else if (isAutodraftEnabled && !deadlineExpired) {
-      reason = 'autodraft';
-    }
-
-    // Check if pick already exists (race condition: pick was made but draft state not updated)
-    const pickAlreadyExists = await this.draftRepo.pickExists(draftId, draft.currentPick);
-    if (pickAlreadyExists) {
-      // Use runWithLock for proper transaction management
-      const pool = container.resolve<Pool>(KEYS.POOL);
-      const { runWithLock, LockDomain: RunnerLockDomain } = await import('../shared/transaction-runner');
-
-      const result = await runWithLock(
-        pool,
-        RunnerLockDomain.DRAFT,
-        draftId,
-        async (client) => {
-          // Re-check under lock using client-aware methods to ensure consistency
-          const stillExists = await this.draftRepo.pickExistsWithClient(client, draftId, draft.currentPick);
-          const currentDraft = await this.draftRepo.findByIdWithClient(client, draftId);
-
-          if (stillExists && currentDraft && currentDraft.currentPick === draft.currentPick) {
-            // Pick was made but draft state is stale - advance to next pick
-            logger.info(
-              `Draft ${draftId}: pick ${draft.currentPick} already exists, recovering stale state`
-            );
-
-            // Re-fetch draftOrder INSIDE the lock for consistency
-            const freshDraftOrder = await this.getDraftOrderWithClient(client, draftId);
-
-            // Use client-aware advance method to ensure atomicity
-            const nextPickInfo = await this.advanceToNextPickWithClient(client, currentDraft, freshDraftOrder);
-
-            return { advanced: true, nextPickInfo };
-          } else {
-            // State was already updated by another ticker, nothing to do
-            return { advanced: false };
-          }
-        }
-      );
-
-      // Publish domain events AFTER transaction commits
-      if (result.advanced) {
-        const eventBus = tryGetEventBus();
-        if (result.nextPickInfo) {
-          eventBus?.publish({
-            type: EventTypes.DRAFT_NEXT_PICK,
-            payload: {
-              draftId,
-              ...result.nextPickInfo,
-            },
-          });
-        } else {
-          const completedDraft = await this.draftRepo.findById(draftId);
-          if (completedDraft) {
-            eventBus?.publish({
-              type: EventTypes.DRAFT_COMPLETED,
-              payload: {
-                draftId,
-                ...draftToResponse(completedDraft),
-              },
-            });
-          }
+        if (!draft) {
+          throw new Error(`Draft not found: ${draftId}`);
         }
 
-        const updatedDraft = await this.draftRepo.findById(draftId);
+        // Double-check status under lock (could have changed)
+        if (draft.status !== 'in_progress') {
+          return {
+            actionTaken: false,
+            reason: 'none' as const,
+          };
+        }
+
+        // Read draft order with fresh state
+        const draftOrder = await this.getDraftOrderWithClient(client, draftId);
+        const currentPicker = draftOrder.find((o) => o.rosterId === draft.currentRosterId);
+        const isAutodraftEnabled = currentPicker?.isAutodraftEnabled ?? false;
+
+        // Check if current roster is empty (no user assigned) - should autopick immediately
+        let isEmptyRoster = false;
+        if (draft.currentRosterId) {
+          const roster = await this.rosterRepo.findByIdWithClient(client, draft.currentRosterId);
+          isEmptyRoster = roster !== null && roster.userId === null;
+        }
+
+        // Autopick if: deadline expired OR autodraft enabled OR empty roster
+        if (!this.shouldAutoPick(draft) && !isAutodraftEnabled && !isEmptyRoster) {
+          return {
+            actionTaken: false,
+            reason: 'none' as const,
+          };
+        }
+
+        // Determine reason for autopick (priority: empty_roster > autodraft > timeout)
+        const deadlineExpired = this.shouldAutoPick(draft);
+        let reason: 'timeout' | 'autodraft' | 'empty_roster' = 'timeout';
+        if (isEmptyRoster) {
+          reason = 'empty_roster';
+        } else if (isAutodraftEnabled && !deadlineExpired) {
+          reason = 'autodraft';
+        }
+
+        // Check if pick already exists (race condition recovery: pick was made but draft state not updated)
+        const pickAlreadyExists = await this.draftRepo.pickExistsWithClient(client, draftId, draft.currentPick);
+        if (pickAlreadyExists) {
+          // Pick was made but draft state is stale - advance to next pick
+          logger.info(
+            `Draft ${draftId}: pick ${draft.currentPick} already exists, recovering stale state`
+          );
+
+          // Use client-aware advance method to ensure atomicity
+          const nextPickInfo = await this.advanceToNextPickWithClient(client, draft, draftOrder);
+
+          return {
+            actionTaken: true,
+            reason,
+            advanced: true,
+            nextPickInfo: nextPickInfo ?? undefined,
+          };
+        }
+
+        // Perform autopick with fresh state (due to deadline expired or autodraft enabled)
+        logger.info(
+          `Draft ${draftId}: performing autopick for roster ${draft.currentRosterId} (reason: ${reason})`
+        );
+
+        // Call performAutoPickInternal which expects to run within an existing transaction
+        const pick = await this.performAutoPickInternal(client, draft, draftOrder);
+
         return {
           actionTaken: true,
-          draftCompleted: updatedDraft?.status === 'completed',
-          draft: updatedDraft!,
           reason,
-        };
-      } else {
-        const updatedDraft = await this.draftRepo.findById(draftId);
-        return {
-          actionTaken: false,
-          draftCompleted: updatedDraft?.status === 'completed',
-          draft: updatedDraft!,
-          reason: 'none',
+          pick,
+          advanced: false,
         };
       }
-    }
-
-    // Perform autopick (due to deadline expired or autodraft enabled)
-    logger.info(
-      `Draft ${draftId}: performing autopick for roster ${draft.currentRosterId} (reason: ${reason})`
     );
-    const pick = await this.performAutoPick(draft);
-    const updatedDraft = await this.draftRepo.findById(draftId);
 
-    // Re-fetch draft order to get the updated state after the pick
+    // Publish domain events AFTER transaction commits
+    const eventBus = tryGetEventBus();
+    if (result.actionTaken && result.advanced && result.nextPickInfo) {
+      // State recovery case - publish next pick event
+      eventBus?.publish({
+        type: EventTypes.DRAFT_NEXT_PICK,
+        payload: {
+          draftId,
+          ...result.nextPickInfo,
+        },
+      });
+    }
+    // Note: performAutoPickInternal publishes its own events internally via performAutoPickPlayer
+
+    // Re-fetch final state outside lock for return value
+    const finalDraft = await this.draftRepo.findById(draftId);
     const updatedDraftOrder = await this.draftRepo.getDraftOrder(draftId);
     const nextPicker =
-      updatedDraft?.status === 'in_progress' && updatedDraft.currentRosterId
-        ? updatedDraftOrder.find((o) => o.rosterId === updatedDraft.currentRosterId)
+      finalDraft?.status === 'in_progress' && finalDraft.currentRosterId
+        ? updatedDraftOrder.find((o) => o.rosterId === finalDraft.currentRosterId)
         : null;
 
     return {
-      actionTaken: true,
-      pick,
-      draftCompleted: updatedDraft?.status === 'completed',
-      draft: updatedDraft!,
-      nextPicker,
-      reason,
+      actionTaken: result.actionTaken,
+      pick: result.pick,
+      draftCompleted: finalDraft?.status === 'completed',
+      draft: finalDraft!,
+      nextPicker: result.actionTaken ? nextPicker : undefined,
+      reason: result.reason,
     };
   }
 
   /**
    * Perform an autopick for the current picker.
    * Supports both player picks and pick asset selections (for vet drafts with includeRookiePicks).
+   *
+   * This is the public API that acquires its own lock.
    */
   protected async performAutoPick(draft: Draft): Promise<DraftPick | any> {
     if (!draft.currentRosterId) {
@@ -356,48 +355,64 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     const pool = container.resolve<Pool>(KEYS.POOL);
     return runInDraftTransaction(pool, draft.id, async (client) => {
       const draftOrder = await this.draftRepo.getDraftOrderWithClient(client, draft.id);
-      const settings = draft.settings as DraftSettings;
-      const includeRookiePicks = settings?.includeRookiePicks ?? false;
-
-      // Get selected pick asset IDs if this draft includes rookie picks
-      let draftedPickAssetIds: Set<number> | undefined;
-      if (includeRookiePicks) {
-        const vetPickSelectionRepo = container.resolve<VetDraftPickSelectionRepository>(
-          KEYS.VET_PICK_SELECTION_REPO
-        );
-        draftedPickAssetIds = await vetPickSelectionRepo.getSelectedAssetIdsWithClient(client, draft.id);
-      }
-
-      // Get the user's queue and drafted player IDs
-      const queue = await this.draftRepo.getQueueWithClient(client, draft.id, draft.currentRosterId!);
-      const draftedPlayerIds = await this.draftRepo.getDraftedPlayerIdsWithClient(client, draft.id);
-
-      // Find first available queue item (player or pick asset)
-      for (const queueItem of queue) {
-        if (queueItem.playerId !== null) {
-          // Player entry
-          if (!draftedPlayerIds.has(queueItem.playerId)) {
-            // Found available player - use player pick flow
-            // Queue cleanup happens atomically inside makePickAndAdvanceTxWithClient
-            return await this.performAutoPickPlayer(draft, draftOrder, queueItem.playerId, true, client);
-          }
-          // Player already drafted - remove from queue
-          await this.draftRepo.removeFromQueueWithClient(client, queueItem.id);
-        } else if (queueItem.pickAssetId !== null && includeRookiePicks) {
-          // Pick asset entry (only if draft allows)
-          if (!draftedPickAssetIds?.has(queueItem.pickAssetId)) {
-            // Found available pick asset - use pick asset flow
-            // Queue cleanup happens atomically inside makePickAssetSelectionTxWithClient
-            return await this.performAutoPickAsset(draft, draftOrder, queueItem.pickAssetId, client);
-          }
-          // Pick asset already drafted - remove from queue
-          await this.draftRepo.removeFromQueueWithClient(client, queueItem.id);
-        }
-      }
-
-      // Fall back to best available player
-      return await this.performAutoPickPlayer(draft, draftOrder, null, false, client);
+      return this.performAutoPickInternal(client, draft, draftOrder);
     });
+  }
+
+  /**
+   * Internal autopick implementation that runs within an existing transaction/lock.
+   * Used by both performAutoPick (which acquires its own lock) and tick() (which already has a lock).
+   */
+  protected async performAutoPickInternal(
+    client: PoolClient,
+    draft: Draft,
+    draftOrder: DraftOrderEntry[]
+  ): Promise<DraftPick | any> {
+    if (!draft.currentRosterId) {
+      throw new Error('No current roster to pick for');
+    }
+
+    const settings = draft.settings as DraftSettings;
+    const includeRookiePicks = settings?.includeRookiePicks ?? false;
+
+    // Get selected pick asset IDs if this draft includes rookie picks
+    let draftedPickAssetIds: Set<number> | undefined;
+    if (includeRookiePicks) {
+      const vetPickSelectionRepo = container.resolve<VetDraftPickSelectionRepository>(
+        KEYS.VET_PICK_SELECTION_REPO
+      );
+      draftedPickAssetIds = await vetPickSelectionRepo.getSelectedAssetIdsWithClient(client, draft.id);
+    }
+
+    // Get the user's queue and drafted player IDs
+    const queue = await this.draftRepo.getQueueWithClient(client, draft.id, draft.currentRosterId!);
+    const draftedPlayerIds = await this.draftRepo.getDraftedPlayerIdsWithClient(client, draft.id);
+
+    // Find first available queue item (player or pick asset)
+    for (const queueItem of queue) {
+      if (queueItem.playerId !== null) {
+        // Player entry
+        if (!draftedPlayerIds.has(queueItem.playerId)) {
+          // Found available player - use player pick flow
+          // Queue cleanup happens atomically inside makePickAndAdvanceTxWithClient
+          return await this.performAutoPickPlayer(draft, draftOrder, queueItem.playerId, true, client);
+        }
+        // Player already drafted - remove from queue
+        await this.draftRepo.removeFromQueueWithClient(client, queueItem.id);
+      } else if (queueItem.pickAssetId !== null && includeRookiePicks) {
+        // Pick asset entry (only if draft allows)
+        if (!draftedPickAssetIds?.has(queueItem.pickAssetId)) {
+          // Found available pick asset - use pick asset flow
+          // Queue cleanup happens atomically inside makePickAssetSelectionTxWithClient
+          return await this.performAutoPickAsset(draft, draftOrder, queueItem.pickAssetId, client);
+        }
+        // Pick asset already drafted - remove from queue
+        await this.draftRepo.removeFromQueueWithClient(client, queueItem.id);
+      }
+    }
+
+    // Fall back to best available player
+    return await this.performAutoPickPlayer(draft, draftOrder, null, false, client);
   }
 
   /**

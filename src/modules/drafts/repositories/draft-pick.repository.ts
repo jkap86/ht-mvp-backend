@@ -304,7 +304,16 @@ export class DraftPickRepository {
         throw new ConflictException('Draft is not in progress');
       }
 
-      // Check idempotency FIRST - return existing pick if found
+      // Critical: Validate expected pick number matches current state BEFORE idempotency check
+      // This ensures retries with a different pick number (after draft advances) fail fast
+      // instead of returning a stale cached pick from the previous pick number
+      if (currentDraft.currentPick !== params.expectedPickNumber) {
+        throw new ConflictException(
+          `Pick already made. Expected pick ${params.expectedPickNumber}, but draft is at pick ${currentDraft.currentPick}`
+        );
+      }
+
+      // Check idempotency - return existing pick if found (safe now that pick number is validated)
       if (params.idempotencyKey) {
         const existing = await client.query(
           `SELECT * FROM draft_picks
@@ -317,13 +326,6 @@ export class DraftPickRepository {
             draft: currentDraft,
           };
         }
-      }
-
-      // Critical: Validate expected pick number matches current state
-      if (currentDraft.currentPick !== params.expectedPickNumber) {
-        throw new ConflictException(
-          `Pick already made. Expected pick ${params.expectedPickNumber}, but draft is at pick ${currentDraft.currentPick}`
-        );
       }
 
       // Validate it's the correct roster's turn
@@ -445,7 +447,16 @@ export class DraftPickRepository {
         throw new ConflictException('Draft is not in progress');
       }
 
-      // Check idempotency FIRST - return existing selection if found
+      // Critical: Validate expected pick number matches current state BEFORE idempotency check
+      // This ensures retries with a different pick number (after draft advances) fail fast
+      // instead of returning a stale cached selection from the previous pick number
+      if (currentDraft.currentPick !== params.expectedPickNumber) {
+        throw new ConflictException(
+          `Pick already made. Expected pick ${params.expectedPickNumber}, but draft is at pick ${currentDraft.currentPick}`
+        );
+      }
+
+      // Check idempotency - return existing selection if found (safe now that pick number is validated)
       if (params.idempotencyKey) {
         const existing = await client.query(
           `SELECT * FROM vet_draft_pick_selections
@@ -460,13 +471,6 @@ export class DraftPickRepository {
             draft: currentDraft,
           };
         }
-      }
-
-      // Critical: Validate expected pick number matches current state
-      if (currentDraft.currentPick !== params.expectedPickNumber) {
-        throw new ConflictException(
-          `Pick already made. Expected pick ${params.expectedPickNumber}, but draft is at pick ${currentDraft.currentPick}`
-        );
       }
 
       // Validate it's the correct roster's turn

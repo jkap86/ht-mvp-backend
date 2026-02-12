@@ -1,4 +1,4 @@
-import { Pool } from 'pg';
+import { Pool, QueryResult, QueryResultRow } from 'pg';
 import { getDatabaseConfig } from '../config/database.config';
 import { logger } from '../config/logger.config';
 import { getQueryContext } from '../shared/query-context';
@@ -21,12 +21,20 @@ export function getPoolMetrics() {
 
 // Wrap pool.query to measure timing and log slow queries with context
 const originalQuery = pool.query.bind(pool);
-(pool as any).query = async function (text: string | any, params?: any[]) {
+
+// Create a type-safe wrapper function
+// Note: The assignment to pool.query requires a cast because Pool.query has multiple overloads
+// (callback-style, promise-style, streaming, etc.) that are difficult to replicate exactly.
+// However, the wrapper function itself is properly typed for the promise-based usage we actually use.
+async function queryWithLogging<T extends QueryResultRow = any>(
+  text: string | { text: string; values?: any[] },
+  params?: any[]
+): Promise<QueryResult<T>> {
   const start = Date.now();
   const context = getQueryContext();
 
   try {
-    return await originalQuery(text, params);
+    return await originalQuery<T>(text, params);
   } finally {
     const duration = Date.now() - start;
     const queryText = typeof text === 'string' ? text : text.text;
@@ -48,7 +56,13 @@ const originalQuery = pool.query.bind(pool);
       }
     }
   }
-};
+}
+
+// Override pool.query with our logging wrapper
+// SAFETY: This cast is required because Pool.query has 10+ overloads including callback-style variants.
+// Our wrapper covers the promise-based overloads that the codebase actually uses.
+// The wrapper function itself maintains full type safety with generics.
+(pool as any).query = queryWithLogging;
 
 // Log connection events in development
 pool.on('connect', () => {

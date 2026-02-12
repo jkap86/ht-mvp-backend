@@ -657,6 +657,20 @@ export class FastAuctionService {
             continue;
           }
 
+          // Re-verify eligibility immediately before selection to prevent race conditions
+          // A concurrent lot settlement could have filled this roster after we loaded budget data
+          const freshBudgetData = await this.lotRepo.getRosterBudgetDataWithClient(client, draftId, rosterId);
+
+          // Re-check roster not full with fresh data
+          if (freshBudgetData.wonCount >= rosterSlots) {
+            continue;
+          }
+
+          // Re-check can afford minBid with fresh data
+          if (!canAffordMinBid(totalBudget, rosterSlots, freshBudgetData, minBid)) {
+            continue;
+          }
+
           // This team is eligible - set them as next nominator
           const nominationDeadline = new Date(Date.now() + nominationSeconds * 1000);
           await client.query(

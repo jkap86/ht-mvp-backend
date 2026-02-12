@@ -12,7 +12,6 @@ import { DraftRepository } from '../modules/drafts/drafts.repository';
 import { SOCKET_EVENTS, ROOM_NAMES } from '../constants/socket-events';
 import {
   socketRateLimitMiddleware,
-  trackUserConnections,
   checkEventRateLimit,
 } from '../middleware/socket-rate-limit.middleware';
 
@@ -32,6 +31,11 @@ export class SocketService {
 
   // In-memory membership cache fallback (used when Redis unavailable)
   private membershipCache = new Map<string, { isMember: boolean; expiresAt: number }>();
+
+  // Per-user connection tracking (DoS prevention)
+  private userConnections = new Map<string, Set<string>>(); // userId -> Set<socketId>
+  private readonly MAX_CONNECTIONS_PER_USER = 5; // Allow legitimate multi-tab use
+  private readonly USER_CONNECTIONS_REDIS_PREFIX = 'socket_user_connections:';
 
   /**
    * Check if a user is a member of a league with caching.
@@ -101,6 +105,106 @@ export class SocketService {
     this.membershipCache.delete(cacheKey);
   }
 
+  /**
+   * Check if user has reached per-user connection limit.
+   * Uses Redis when available for horizontal scaling, falls back to in-memory.
+   * This prevents DoS attacks where a single user opens many connections to bypass rate limits.
+   */
+  private async checkUserConnectionLimit(
+    userId: string,
+    socketId: string
+  ): Promise<{ allowed: boolean; currentConnections?: number; maxConnections?: number }> {
+    if (isRedisAvailable()) {
+      try {
+        const redis = getRedisClient();
+        const key = `${this.USER_CONNECTIONS_REDIS_PREFIX}${userId}`;
+
+        // Get current connection count
+        const count = await redis.scard(key);
+
+        if (count >= this.MAX_CONNECTIONS_PER_USER) {
+          return {
+            allowed: false,
+            currentConnections: count,
+            maxConnections: this.MAX_CONNECTIONS_PER_USER,
+          };
+        }
+
+        return { allowed: true };
+      } catch (error) {
+        logger.error('Redis connection limit check failed, falling back to in-memory', { error });
+        // Fall through to in-memory check
+      }
+    }
+
+    // In-memory check (fallback or no Redis)
+    const connections = this.userConnections.get(userId);
+    const currentCount = connections?.size || 0;
+
+    if (currentCount >= this.MAX_CONNECTIONS_PER_USER) {
+      return {
+        allowed: false,
+        currentConnections: currentCount,
+        maxConnections: this.MAX_CONNECTIONS_PER_USER,
+      };
+    }
+
+    return { allowed: true };
+  }
+
+  /**
+   * Track a user connection and set up cleanup on disconnect.
+   * Uses Redis when available for horizontal scaling.
+   */
+  private async trackConnection(socket: AuthenticatedSocket): Promise<void> {
+    if (!socket.userId) return;
+
+    const userId = socket.userId;
+    const socketId = socket.id;
+
+    if (isRedisAvailable()) {
+      try {
+        const redis = getRedisClient();
+        const key = `${this.USER_CONNECTIONS_REDIS_PREFIX}${userId}`;
+
+        // Add this connection
+        await redis.sadd(key, socketId);
+        // Set expiry to clean up stale entries (24 hours)
+        await redis.expire(key, 86400);
+
+        // Clean up on disconnect
+        socket.on('disconnect', async () => {
+          try {
+            await redis.srem(key, socketId);
+          } catch (error) {
+            logger.error('Failed to remove socket from Redis tracking', { error, userId, socketId });
+          }
+        });
+
+        return;
+      } catch (error) {
+        logger.error('Redis connection tracking failed, falling back to in-memory', { error });
+        // Fall through to in-memory tracking
+      }
+    }
+
+    // In-memory tracking (fallback or no Redis)
+    if (!this.userConnections.has(userId)) {
+      this.userConnections.set(userId, new Set());
+    }
+
+    const connections = this.userConnections.get(userId)!;
+    connections.add(socketId);
+
+    // Clean up on disconnect
+    socket.on('disconnect', () => {
+      connections.delete(socketId);
+      if (connections.size === 0) {
+        this.userConnections.delete(userId);
+      }
+    });
+  }
+
   constructor(httpServer: HttpServer) {
     this.io = new Server(httpServer, {
       cors: {
@@ -166,6 +270,28 @@ export class SocketService {
         next(new Error('Invalid token'));
       }
     });
+
+    // Per-user connection limit middleware (applied after authentication to access userId)
+    this.io.use(async (socket: AuthenticatedSocket, next) => {
+      if (!socket.userId) {
+        return next(); // Allow unauthenticated sockets to be rejected by handlers
+      }
+
+      // Check if user has reached connection limit
+      const connectionCheckResult = await this.checkUserConnectionLimit(socket.userId, socket.id);
+
+      if (!connectionCheckResult.allowed) {
+        logger.warn('User connection limit exceeded', {
+          userId: socket.userId,
+          socketId: socket.id,
+          currentConnections: connectionCheckResult.currentConnections,
+          maxConnections: connectionCheckResult.maxConnections,
+        });
+        return next(new Error(`Maximum connections exceeded (${connectionCheckResult.maxConnections} allowed)`));
+      }
+
+      next();
+    });
   }
 
   /**
@@ -197,8 +323,8 @@ export class SocketService {
     this.io.on('connection', (socket: AuthenticatedSocket) => {
       logger.info(`Socket connected: ${socket.id} (user: ${socket.userId})`);
 
-      // Track concurrent connections per user (prevent resource exhaustion)
-      trackUserConnections(socket);
+      // Track connection for cleanup (limit enforcement done in middleware)
+      this.trackConnection(socket);
 
       // Join user-specific room for targeted emissions (works across instances with Redis adapter)
       if (socket.userId) {

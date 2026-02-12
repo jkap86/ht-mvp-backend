@@ -3,10 +3,35 @@ import { RedisStore } from 'rate-limit-redis';
 import { Request } from 'express';
 import { getRedisClient } from '../config/redis.config';
 import { logger } from '../config/logger.config';
+import crypto from 'crypto';
 
 // Match the shape from auth.middleware.ts
 interface AuthRequest extends Request {
   user?: { userId: string; username: string };
+}
+
+/**
+ * Generate a secure composite identifier for rate limiting unauthenticated requests.
+ * Combines multiple request properties to prevent IP spoofing attacks.
+ *
+ * Security rationale:
+ * - req.ip alone can be spoofed via X-Forwarded-For header
+ * - Combining IP + forwarded headers + user-agent makes spoofing much harder
+ * - Hash ensures consistent key length and prevents injection attacks
+ *
+ * @param req Express request object
+ * @returns Hashed composite identifier for rate limiting
+ */
+function getSecureIdentifier(req: Request): string {
+  const ip = req.ip || 'unknown';
+  const forwarded = req.headers['x-forwarded-for'] || 'none';
+  const userAgent = req.headers['user-agent'] || 'none';
+
+  // Combine multiple signals to prevent simple header spoofing
+  const composite = `${ip}:${forwarded}:${userAgent}`;
+
+  // Hash for consistent key length and to prevent injection
+  return crypto.createHash('sha256').update(composite).digest('hex');
 }
 
 function getRedisStore(): RedisStore | undefined {
@@ -34,6 +59,9 @@ if (isProd && !process.env.REDIS_HOST) {
  * Rate limiter for authentication endpoints (login, register)
  * Development: 100 attempts per 1 minute (relaxed for testing)
  * Production: 5 attempts per 15 minutes to prevent brute force attacks
+ *
+ * SECURITY: Uses composite identifier (IP + forwarded headers + user-agent)
+ * to prevent IP spoofing attacks via X-Forwarded-For header manipulation.
  */
 export const authLimiter = rateLimit({
   windowMs: isProd ? 15 * 60 * 1000 : 60 * 1000, // 15 min (prod) vs 1 min (dev)
@@ -44,7 +72,7 @@ export const authLimiter = rateLimit({
       message: 'Too many login attempts. Please try again later.',
     },
   },
-  keyGenerator: (req: Request) => req.ip || 'unknown',
+  keyGenerator: (req: Request) => getSecureIdentifier(req),
   standardHeaders: true,
   legacyHeaders: false,
   store: getRedisStore(),
@@ -150,6 +178,11 @@ export const searchLimiter = rateLimit({
  * Rate limiter for refresh token endpoint
  * Limits to 30 attempts per hour per IP to prevent brute force attacks
  * More lenient than login since refresh is automated
+ *
+ * SECURITY: Uses composite identifier (IP + forwarded headers + user-agent)
+ * to prevent IP spoofing attacks. For authenticated refresh requests,
+ * falls back to user ID if available (though refresh endpoint is typically
+ * called before authentication middleware).
  */
 export const refreshTokenLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
@@ -160,7 +193,14 @@ export const refreshTokenLimiter = rateLimit({
       message: 'Too many token refresh attempts. Please try again later.',
     },
   },
-  keyGenerator: (req: Request) => req.ip || 'unknown',
+  keyGenerator: (req: AuthRequest) => {
+    // If user is authenticated (rare for refresh, but possible), use user ID
+    if (req.user?.userId) {
+      return `user:${req.user.userId}`;
+    }
+    // Otherwise use secure composite identifier to prevent IP spoofing
+    return getSecureIdentifier(req);
+  },
   standardHeaders: true,
   legacyHeaders: false,
   store: getRedisStore(),

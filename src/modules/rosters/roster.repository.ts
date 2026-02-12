@@ -105,6 +105,16 @@ export class RosterRepository {
   }
 
   /**
+   * Find roster by ID with a specific client (for use within transactions).
+   */
+  async findByIdWithClient(client: PoolClient, id: number): Promise<Roster | null> {
+    const result = await client.query('SELECT * FROM rosters WHERE id = $1', [id]);
+
+    if (result.rows.length === 0) return null;
+    return RosterMapper.fromRow(result.rows[0]);
+  }
+
+  /**
    * Find multiple rosters by IDs in a single query.
    * Batch lookup to avoid N+1 queries.
    */

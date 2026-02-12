@@ -9,7 +9,24 @@ export class DraftPickAssetRepository {
   constructor(private readonly db: Pool) {}
 
   /**
-   * Find a single pick asset by ID
+   * Find a single pick asset by ID.
+   *
+   * @param id - Pick asset ID
+   * @param client - Optional client for use within transactions.
+   *                 **WARNING: Caller MUST ensure connection release via try/finally.**
+   *                 Prefer using transaction helpers (runInTransaction, runInDraftTransaction) instead.
+   * @returns DraftPickAsset or null if not found
+   *
+   * @example
+   * // PREFERRED: Use transaction helpers
+   * await runInDraftTransaction(pool, draftId, async (client) => {
+   *   const pickAsset = await repo.findById(assetId, client);
+   *   if (pickAsset) await selectPickAsset(client, draftId, pickAsset);
+   * });
+   *
+   * @example
+   * // ACCEPTABLE: Single read without transaction
+   * const pickAsset = await repo.findById(assetId);
    */
   async findById(id: number, client?: PoolClient): Promise<DraftPickAsset | null> {
     const queryRunner = client || this.db;

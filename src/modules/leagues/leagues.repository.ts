@@ -20,6 +20,15 @@ export interface CreateLeagueParams {
 export class LeagueRepository {
   constructor(private readonly db: Pool) {}
 
+  /**
+   * Find league by ID.
+   *
+   * @param id - League ID
+   * @param client - Optional client for use within transactions.
+   *                 **WARNING: Caller MUST ensure connection release via try/finally.**
+   *                 Prefer using transaction helpers instead.
+   * @returns League or null if not found
+   */
   async findById(id: number, client?: PoolClient): Promise<League | null> {
     const db = client || this.db;
     const result = await db.query('SELECT * FROM leagues WHERE id = $1', [id]);
@@ -31,6 +40,14 @@ export class LeagueRepository {
     return League.fromDatabase(result.rows[0]);
   }
 
+  /**
+   * Find multiple leagues by IDs.
+   *
+   * @param ids - Array of league IDs
+   * @param client - Optional client for use within transactions.
+   *                 **WARNING: Caller MUST ensure connection release via try/finally.**
+   * @returns Array of leagues
+   */
   async findByIds(ids: number[], client?: PoolClient): Promise<League[]> {
     if (ids.length === 0) return [];
     const db = client || this.db;
@@ -38,6 +55,15 @@ export class LeagueRepository {
     return result.rows.map((row: any) => League.fromDatabase(row));
   }
 
+  /**
+   * Find league by ID with user's roster information.
+   *
+   * @param id - League ID
+   * @param userId - User ID
+   * @param client - Optional client for use within transactions.
+   *                 **WARNING: Caller MUST ensure connection release via try/finally.**
+   * @returns League with user roster info or null if not found
+   */
   async findByIdWithUserRoster(id: number, userId: string, client?: PoolClient): Promise<League | null> {
     const db = client || this.db;
     const result = await db.query(
