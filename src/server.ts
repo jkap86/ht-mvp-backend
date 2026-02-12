@@ -106,7 +106,10 @@ server.listen(PORT, '0.0.0.0', () => {
 });
 
 // Graceful shutdown
+let isShuttingDown = false;
 const gracefulShutdown = () => {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
   logger.info('Shutting down gracefully...');
 
   // Stop background jobs
