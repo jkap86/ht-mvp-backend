@@ -100,6 +100,27 @@ export class DraftCoreRepository {
   }
 
   /**
+   * Create a new draft within an existing transaction.
+   */
+  async createWithClient(
+    client: PoolClient,
+    leagueId: number,
+    draftType: string,
+    rounds: number,
+    pickTimeSeconds: number,
+    settings?: DraftSettings,
+    scheduledStart?: Date
+  ): Promise<Draft> {
+    const result = await client.query(
+      `INSERT INTO drafts (league_id, draft_type, rounds, pick_time_seconds, settings, scheduled_start)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING *`,
+      [leagueId, draftType, rounds, pickTimeSeconds, settings ? JSON.stringify(settings) : null, scheduledStart || null]
+    );
+    return draftFromDatabase(result.rows[0]);
+  }
+
+  /**
    * Update a draft with partial updates.
    */
   async update(id: number, updates: Partial<Draft>): Promise<Draft> {
@@ -119,6 +140,7 @@ export class DraftCoreRepository {
     if (updates.pickTimeSeconds !== undefined) dbUpdates.pickTimeSeconds = updates.pickTimeSeconds;
     if (updates.draftType !== undefined) dbUpdates.draftType = updates.draftType;
     if (updates.scheduledStart !== undefined) dbUpdates.scheduledStart = updates.scheduledStart;
+    if (updates.rosterPopulationStatus !== undefined) dbUpdates.rosterPopulationStatus = updates.rosterPopulationStatus;
 
     if (Object.keys(dbUpdates).length === 0) {
       const existing = await this.findById(id);
@@ -170,6 +192,7 @@ export class DraftCoreRepository {
       if (updates.pickTimeSeconds !== undefined) dbUpdates.pickTimeSeconds = updates.pickTimeSeconds;
       if (updates.draftType !== undefined) dbUpdates.draftType = updates.draftType;
       if (updates.scheduledStart !== undefined) dbUpdates.scheduledStart = updates.scheduledStart;
+      if (updates.rosterPopulationStatus !== undefined) dbUpdates.rosterPopulationStatus = updates.rosterPopulationStatus;
 
       if (Object.keys(dbUpdates).length === 0) {
         const existing = await this.findByIdWithClient(client, id);
@@ -209,6 +232,7 @@ export class DraftCoreRepository {
     if (updates.pickTimeSeconds !== undefined) dbUpdates.pickTimeSeconds = updates.pickTimeSeconds;
     if (updates.draftType !== undefined) dbUpdates.draftType = updates.draftType;
     if (updates.scheduledStart !== undefined) dbUpdates.scheduledStart = updates.scheduledStart;
+    if (updates.rosterPopulationStatus !== undefined) dbUpdates.rosterPopulationStatus = updates.rosterPopulationStatus;
 
     if (Object.keys(dbUpdates).length === 0) {
       const existing = await this.findByIdWithClient(client, id);
@@ -276,13 +300,13 @@ export class DraftCoreRepository {
     // Build WHERE clause based on playerPool
     const conditions: string[] = [];
     if (playerPool.includes('veteran')) {
-      conditions.push("(player_type = 'nfl' AND (years_exp > 0 OR years_exp IS NULL))");
+      conditions.push("(p.player_type = 'nfl' AND (p.years_exp > 0 OR p.years_exp IS NULL))");
     }
     if (playerPool.includes('rookie')) {
-      conditions.push("(player_type = 'nfl' AND years_exp = 0)");
+      conditions.push("(p.player_type = 'nfl' AND p.years_exp = 0)");
     }
     if (playerPool.includes('college')) {
-      conditions.push("(player_type = 'college')");
+      conditions.push("(p.player_type = 'college')");
     }
 
     const playerFilter = conditions.length > 0
@@ -290,11 +314,49 @@ export class DraftCoreRepository {
       : '';
 
     const result = await this.db.query(
-      `SELECT id FROM players
-       WHERE active = true
+      `SELECT p.id FROM players p
+       WHERE p.active = true
        ${playerFilter}
-       AND id NOT IN (SELECT player_id FROM draft_picks WHERE draft_id = $1 AND player_id IS NOT NULL)
-       ORDER BY adp ASC NULLS LAST, id ASC
+       AND NOT EXISTS (SELECT 1 FROM draft_picks dp WHERE dp.draft_id = $1 AND dp.player_id = p.id)
+       ORDER BY p.adp ASC NULLS LAST, p.id ASC
+       LIMIT 1`,
+      [draftId]
+    );
+    return result.rows.length > 0 ? result.rows[0].id : null;
+  }
+
+  /**
+   * Get best available player for autopick using an existing client (for transactions).
+   * Ranks by ADP (average draft position) with player id as tiebreaker.
+   * Respects playerPool filtering and only considers active players.
+   */
+  async getBestAvailablePlayerWithClient(
+    client: PoolClient,
+    draftId: number,
+    playerPool: string[] = ['veteran', 'rookie']
+  ): Promise<number | null> {
+    // Build WHERE clause based on playerPool
+    const conditions: string[] = [];
+    if (playerPool.includes('veteran')) {
+      conditions.push("(p.player_type = 'nfl' AND (p.years_exp > 0 OR p.years_exp IS NULL))");
+    }
+    if (playerPool.includes('rookie')) {
+      conditions.push("(p.player_type = 'nfl' AND p.years_exp = 0)");
+    }
+    if (playerPool.includes('college')) {
+      conditions.push("(p.player_type = 'college')");
+    }
+
+    const playerFilter = conditions.length > 0
+      ? `AND (${conditions.join(' OR ')})`
+      : '';
+
+    const result = await client.query(
+      `SELECT p.id FROM players p
+       WHERE p.active = true
+       ${playerFilter}
+       AND NOT EXISTS (SELECT 1 FROM draft_picks dp WHERE dp.draft_id = $1 AND dp.player_id = p.id)
+       ORDER BY p.adp ASC NULLS LAST, p.id ASC
        LIMIT 1`,
       [draftId]
     );

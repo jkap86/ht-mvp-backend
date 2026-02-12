@@ -13,7 +13,7 @@ import type { PlayerRepository } from '../../players/players.repository';
 import { ValidationException, NotFoundException } from '../../../utils/exceptions';
 import { resolvePriceWithClient, OutbidNotification } from './auction-price-resolver';
 import { runInTransaction, runWithLock, runWithLocks, LockDomain } from '../../../shared/transaction-runner';
-import { getLockId, LockDomain as SharedLockDomain } from '../../../shared/locks';
+import { withLocks, LockDomain as SharedLockDomain } from '../../../shared/locks';
 import { EventTypes, tryGetEventBus } from '../../../shared/events';
 import { auctionLotToResponse } from './auction.models';
 import { logger } from '../../../config/logger.config';
@@ -56,10 +56,10 @@ function getEasternDateString(): string {
  * LOCK CONTRACT:
  * - nominate() locks ROSTER(rosterId) + DRAFT(draftId) — serializes nominations per roster and draft
  *   Lock ordering: ROSTER (priority 2) before DRAFT (priority 7), per shared/locks.ts
- * - setMaxBid() locks ROSTER(rosterId) via pg_advisory_xact_lock(200M + rosterId) — serializes bids per roster
+ * - setMaxBid() locks ROSTER(rosterId) via runWithLock() — serializes bids per roster
  *   Also acquires row-level FOR UPDATE lock on the lot
- * - settleLot() locks ROSTER(rosterId) for all bidders (sorted by ID) + DRAFT(draftId) — serializes settlement
- *   Lock ordering: ROSTER (priority 2) before DRAFT (priority 7), per shared/locks.ts
+ * - settleLot() locks ROSTER(rosterId) for all bidders + DRAFT(draftId) via withLocks() — serializes settlement
+ *   Lock ordering automatically enforced by withLocks() helper (ROSTER before DRAFT)
  *
  * nominate() holds both ROSTER and DRAFT simultaneously (safe: ROSTER < DRAFT in priority).
  * settleLot() holds multiple ROSTER locks + DRAFT simultaneously (safe: all ROSTER before DRAFT).
@@ -181,7 +181,7 @@ export class SlowAuctionService {
 
       return {
         rosterId: roster.id,
-        username: (roster as any).username || `Team ${roster.id}`,
+        username: roster.username || `Team ${roster.id}`,
         totalBudget,
         spent: budgetData.spent,
         leadingCommitment: budgetData.leadingCommitment,
@@ -361,9 +361,9 @@ export class SlowAuctionService {
           return { lot, message: 'Player nominated successfully' };
         }
       );
-    } catch (error: any) {
+    } catch (error: unknown) {
       // Handle unique constraint violation from partial index on (draft_id, player_id)
-      if (error.code === '23505') {
+      if (error instanceof Error && 'code' in error && (error as { code: string }).code === '23505') {
         throw new ValidationException('Player has already been nominated in this draft');
       }
       throw error;
@@ -390,10 +390,8 @@ export class SlowAuctionService {
     maxBid: number,
     idempotencyKey?: string
   ): Promise<SetMaxBidResult> {
-    const bidResult = await runInTransaction(this.pool, async (client) => {
-      // 0. Acquire roster-level lock to prevent cross-lot race conditions
-      // Use modern LockDomain for consistency with fast auction
-      await client.query('SELECT pg_advisory_xact_lock($1)', [getLockId(SharedLockDomain.ROSTER, rosterId)]);
+    const bidResult = await runWithLock(this.pool, LockDomain.ROSTER, rosterId, async (client) => {
+      // Roster-level lock acquired by runWithLock to prevent cross-lot race conditions
 
       // Idempotency check: return existing result if same key was already used
       if (idempotencyKey) {
@@ -650,123 +648,122 @@ export class SlowAuctionService {
       // Collect all unique roster IDs from proxy bids for lock acquisition
       const allRosterIds = [...new Set(proxyBids.map((pb) => pb.roster_id))].sort((a, b) => a - b);
 
-      // Acquire locks in correct priority order: ROSTER (priority 2) before DRAFT (priority 7)
-      // Lock all participating rosters first (sorted by ID to prevent deadlocks between concurrent settlements)
-      for (const rosterId of allRosterIds) {
-        await client.query('SELECT pg_advisory_xact_lock($1)', [
-          getLockId(SharedLockDomain.ROSTER, rosterId),
-        ]);
-      }
-      // Then acquire draft-level lock
-      await client.query('SELECT pg_advisory_xact_lock($1)', [getLockId(LockDomain.DRAFT, lot.draftId)]);
+      // Acquire locks via withLocks helper (automatically enforces domain priority order:
+      // ROSTER before DRAFT, and sorts roster IDs to prevent deadlocks)
+      const lockSpecs = [
+        ...allRosterIds.map((rid) => ({ domain: SharedLockDomain.ROSTER, id: rid })),
+        { domain: SharedLockDomain.DRAFT, id: lot.draftId },
+      ];
 
-      // Try each bidder in order until one can afford
-      for (let i = 0; i < proxyBids.length; i++) {
-        const candidateRosterId = proxyBids[i].roster_id;
-        const candidateMaxBid = proxyBids[i].max_bid;
+      return withLocks(client, lockSpecs, async () => {
+        // Try each bidder in order until one can afford
+        for (let i = 0; i < proxyBids.length; i++) {
+          const candidateRosterId = proxyBids[i].roster_id;
+          const candidateMaxBid = proxyBids[i].max_bid;
 
-        // Calculate second-price auction price for this candidate
-        let price: number;
-        if (i === proxyBids.length - 1) {
-          // Last bidder (or only bidder) - price is minBid
-          price = settings.minBid;
-        } else {
-          // Price is next highest bid + increment, capped at candidate's max
-          const nextHighestBid = proxyBids[i + 1].max_bid;
-          price = Math.min(candidateMaxBid, nextHighestBid + settings.minIncrement);
+          // Calculate second-price auction price for this candidate
+          let price: number;
+          if (i === proxyBids.length - 1) {
+            // Last bidder (or only bidder) - price is minBid
+            price = settings.minBid;
+          } else {
+            // Price is next highest bid + increment, capped at candidate's max
+            const nextHighestBid = proxyBids[i + 1].max_bid;
+            price = Math.min(candidateMaxBid, nextHighestBid + settings.minIncrement);
+          }
+
+          // Floor guard: settlement price must never be below the lot's current_bid.
+          // In fast auction, lot.currentBid is the opening bid set at nomination.
+          price = Math.max(price, lot.currentBid ?? settings.minBid);
+
+          // Roster already locked above - proceed with budget validation
+
+          // Validate budget and slots
+          const budgetData = await this.lotRepo.getRosterBudgetDataWithClient(client, lot.draftId, candidateRosterId);
+
+          // Check roster not full
+          if (budgetData.wonCount >= rosterSlots) {
+            logger.warn('Auction lot settlement: bidder roster full, trying next', {
+              lotId,
+              rosterId: candidateRosterId,
+              wonCount: budgetData.wonCount,
+              rosterSlots,
+            });
+            continue;
+          }
+
+          // Check budget: spent + price + reserve for remaining slots <= total
+          const remainingAfterWin = rosterSlots - budgetData.wonCount - 1;
+          const requiredReserve = remainingAfterWin * settings.minBid;
+          if (budgetData.spent + price + requiredReserve > totalBudget) {
+            logger.warn('Auction lot settlement: bidder cannot afford, trying next', {
+              lotId,
+              rosterId: candidateRosterId,
+              price,
+              spent: budgetData.spent,
+              requiredReserve,
+            });
+            continue;
+          }
+
+          // This bidder can afford - settle to them
+          // Idempotent: AND status = 'active' ensures we don't re-settle a lot
+          const settleResult = await client.query(
+            `UPDATE auction_lots
+             SET status = 'won', winning_roster_id = $2, winning_bid = $3,
+                 current_bidder_roster_id = $2, current_bid = $3, updated_at = CURRENT_TIMESTAMP
+             WHERE id = $1 AND status = 'active'
+             RETURNING *`,
+            [lotId, candidateRosterId, price]
+          );
+
+          if (settleResult.rowCount === 0) {
+            throw new ValidationException('Lot already settled or no longer active');
+          }
+          const settledLot = auctionLotFromDatabase(settleResult.rows[0]);
+
+          // Create draft pick entry
+          await client.query(
+            `INSERT INTO draft_picks (draft_id, roster_id, player_id, pick_number, round, pick_in_round)
+             VALUES ($1, $2, $3,
+               (SELECT COALESCE(MAX(pick_number), 0) + 1 FROM draft_picks WHERE draft_id = $1),
+               1,
+               (SELECT COALESCE(MAX(pick_number), 0) + 1 FROM draft_picks WHERE draft_id = $1))`,
+            [lot.draftId, candidateRosterId, lot.playerId]
+          );
+
+          // Remove the player from all draft queues
+          await client.query('DELETE FROM draft_queue WHERE draft_id = $1 AND player_id = $2', [
+            lot.draftId,
+            lot.playerId,
+          ]);
+
+          // Clean up proxy bids for this lot (lot is settled)
+          await client.query('DELETE FROM auction_proxy_bids WHERE lot_id = $1', [lotId]);
+
+          return {
+            lot: settledLot,
+            winner: { rosterId: candidateRosterId, amount: price },
+            passed: false,
+          };
         }
 
-        // Floor guard: settlement price must never be below the lot's current_bid.
-        // In fast auction, lot.currentBid is the opening bid set at nomination.
-        price = Math.max(price, lot.currentBid ?? settings.minBid);
-
-        // Roster already locked above - proceed with budget validation
-
-        // Validate budget and slots
-        const budgetData = await this.lotRepo.getRosterBudgetDataWithClient(client, lot.draftId, candidateRosterId);
-
-        // Check roster not full
-        if (budgetData.wonCount >= rosterSlots) {
-          logger.warn('Auction lot settlement: bidder roster full, trying next', {
-            lotId,
-            rosterId: candidateRosterId,
-            wonCount: budgetData.wonCount,
-            rosterSlots,
-          });
-          continue;
-        }
-
-        // Check budget: spent + price + reserve for remaining slots <= total
-        const remainingAfterWin = rosterSlots - budgetData.wonCount - 1;
-        const requiredReserve = remainingAfterWin * settings.minBid;
-        if (budgetData.spent + price + requiredReserve > totalBudget) {
-          logger.warn('Auction lot settlement: bidder cannot afford, trying next', {
-            lotId,
-            rosterId: candidateRosterId,
-            price,
-            spent: budgetData.spent,
-            requiredReserve,
-          });
-          continue;
-        }
-
-        // This bidder can afford - settle to them
-        // Idempotent: AND status = 'active' ensures we don't re-settle a lot
-        const settleResult = await client.query(
+        // No bidder could afford - pass the lot
+        logger.warn('Auction lot settlement: no bidder could afford, marking as passed', { lotId });
+        const passResult = await client.query(
           `UPDATE auction_lots
-           SET status = 'won', winning_roster_id = $2, winning_bid = $3,
-               current_bidder_roster_id = $2, current_bid = $3, updated_at = CURRENT_TIMESTAMP
-           WHERE id = $1 AND status = 'active'
+           SET status = 'passed', updated_at = CURRENT_TIMESTAMP
+           WHERE id = $1
            RETURNING *`,
-          [lotId, candidateRosterId, price]
+          [lotId]
         );
+        const passedLot = auctionLotFromDatabase(passResult.rows[0]);
 
-        if (settleResult.rowCount === 0) {
-          throw new ValidationException('Lot already settled or no longer active');
-        }
-        const settledLot = auctionLotFromDatabase(settleResult.rows[0]);
-
-        // Create draft pick entry
-        await client.query(
-          `INSERT INTO draft_picks (draft_id, roster_id, player_id, pick_number, round, pick_in_round)
-           VALUES ($1, $2, $3,
-             (SELECT COALESCE(MAX(pick_number), 0) + 1 FROM draft_picks WHERE draft_id = $1),
-             1,
-             (SELECT COALESCE(MAX(pick_number), 0) + 1 FROM draft_picks WHERE draft_id = $1))`,
-          [lot.draftId, candidateRosterId, lot.playerId]
-        );
-
-        // Remove the player from all draft queues
-        await client.query('DELETE FROM draft_queue WHERE draft_id = $1 AND player_id = $2', [
-          lot.draftId,
-          lot.playerId,
-        ]);
-
-        // Clean up proxy bids for this lot (lot is settled)
+        // Clean up proxy bids for this lot (lot is passed)
         await client.query('DELETE FROM auction_proxy_bids WHERE lot_id = $1', [lotId]);
 
-        return {
-          lot: settledLot,
-          winner: { rosterId: candidateRosterId, amount: price },
-          passed: false,
-        };
-      }
-
-      // No bidder could afford - pass the lot
-      logger.warn('Auction lot settlement: no bidder could afford, marking as passed', { lotId });
-      const passResult = await client.query(
-        `UPDATE auction_lots
-         SET status = 'passed', updated_at = CURRENT_TIMESTAMP
-         WHERE id = $1
-         RETURNING *`,
-        [lotId]
-      );
-      const passedLot = auctionLotFromDatabase(passResult.rows[0]);
-
-      // Clean up proxy bids for this lot (lot is passed)
-      await client.query('DELETE FROM auction_proxy_bids WHERE lot_id = $1', [lotId]);
-
-      return { lot: passedLot, winner: null, passed: true };
+        return { lot: passedLot, winner: null, passed: true };
+      });
     });
   }
 
@@ -809,7 +806,7 @@ export class SlowAuctionService {
 
     // Get rosters for username lookup
     const rosters = await this.rosterRepo.findByLeagueId(draft.leagueId);
-    const rosterMap = new Map(rosters.map((r) => [r.id, (r as any).username || `Team ${r.id}`]));
+    const rosterMap = new Map(rosters.map((r) => [r.id, r.username || `Team ${r.id}`]));
 
     // Combine history with usernames
     return history.map((entry) => ({

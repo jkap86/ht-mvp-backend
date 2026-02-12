@@ -119,6 +119,21 @@ export class VetDraftPickSelectionRepository {
   }
 
   /**
+   * Get the set of pick asset IDs that have been selected in a vet draft
+   * using an existing client (for transactions).
+   */
+  async getSelectedAssetIdsWithClient(
+    client: PoolClient,
+    draftId: number
+  ): Promise<Set<number>> {
+    const result = await client.query(
+      `SELECT draft_pick_asset_id FROM vet_draft_pick_selections WHERE draft_id = $1`,
+      [draftId]
+    );
+    return new Set(result.rows.map((row) => row.draft_pick_asset_id));
+  }
+
+  /**
    * Get selections made by a specific roster in a vet draft
    */
   async findByRoster(draftId: number, rosterId: number): Promise<VetDraftPickSelectionWithDetails[]> {

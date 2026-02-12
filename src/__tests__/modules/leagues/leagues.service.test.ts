@@ -370,7 +370,7 @@ describe('LeagueService', () => {
   describe('joinPublicLeague', () => {
     it('should allow joining a public league', async () => {
       mockLeagueRepo.findById.mockResolvedValue(mockPublicLeague);
-      mockRosterService.joinLeague.mockResolvedValue({ message: 'Joined', roster: mockRoster });
+      mockRosterService.joinLeague.mockResolvedValue({ message: 'Joined', roster: { roster_id: 1, league_id: 1 } });
       mockLeagueRepo.findByIdWithUserRoster.mockResolvedValue(mockPublicLeague);
 
       const result = await leagueService.joinPublicLeague(2, 'user-456');

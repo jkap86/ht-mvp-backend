@@ -161,8 +161,9 @@ export class WaiverClaimsRepository {
   /**
    * Get pending claims for a roster with details, ordered by claim_order
    */
-  async getPendingByRoster(rosterId: number): Promise<WaiverClaimWithDetails[]> {
-    const result = await this.db.query(
+  async getPendingByRoster(rosterId: number, client?: PoolClient): Promise<WaiverClaimWithDetails[]> {
+    const conn = client || this.db;
+    const result = await conn.query(
       `SELECT wc.*,
         r.settings->>'team_name' as team_name,
         u.username as username,
@@ -286,6 +287,22 @@ export class WaiverClaimsRepository {
       [claimId, status, failureReason || null, processedAt]
     );
     return waiverClaimFromDatabase(result.rows[0]);
+  }
+
+  /**
+   * Conditionally cancel a claim only if it is still pending.
+   * Returns true if the claim was cancelled, false if it was no longer pending.
+   * Uses WHERE status = 'pending' to prevent race with concurrent waiver processing.
+   */
+  async cancelIfPending(claimId: number, client?: PoolClient): Promise<boolean> {
+    const conn = client || this.db;
+    const result = await conn.query(
+      `UPDATE waiver_claims
+       SET status = 'cancelled', processed_at = NOW()
+       WHERE id = $1 AND status = 'pending'`,
+      [claimId]
+    );
+    return (result.rowCount ?? 0) > 0;
   }
 
   /**

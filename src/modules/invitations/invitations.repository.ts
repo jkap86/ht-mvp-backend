@@ -192,7 +192,9 @@ export class InvitationsRepository {
     query: string,
     limit: number = 10
   ): Promise<UserSearchResult[]> {
-    const searchQuery = `%${query}%`;
+    // Escape LIKE wildcards to prevent enumeration via % or _
+    const escapedQuery = query.replace(/[%_\\]/g, '\\$&');
+    const searchQuery = `%${escapedQuery}%`;
     const result = await this.db.query(
       `SELECT
         u.id,
@@ -209,7 +211,7 @@ export class InvitationsRepository {
           WHERE r.league_id = $1 AND r.user_id = u.id
         ) as is_member
        FROM users u
-       WHERE u.username ILIKE $2
+       WHERE u.username ILIKE $2 ESCAPE '\\'
        ORDER BY u.username
        LIMIT $3`,
       [leagueId, searchQuery, limit]

@@ -47,6 +47,22 @@ export class DraftPickRepository {
   }
 
   /**
+   * Get all picks for a draft using an existing client (for use within transactions).
+   */
+  async getDraftPicksWithClient(client: PoolClient, draftId: number): Promise<DraftPick[]> {
+    const query = `SELECT dp.*, p.full_name as player_name, p.position as player_position, p.team as player_team, u.username
+       FROM draft_picks dp
+       LEFT JOIN players p ON dp.player_id = p.id
+       LEFT JOIN rosters r ON dp.roster_id = r.id
+       LEFT JOIN users u ON r.user_id = u.id
+       WHERE dp.draft_id = $1
+       ORDER BY dp.pick_number`;
+
+    const result = await client.query(query, [draftId]);
+    return DraftPickMapper.fromRows(result.rows);
+  }
+
+  /**
    * Create a simple draft pick (without transaction or cleanup).
    */
   async createDraftPick(
@@ -168,6 +184,20 @@ export class DraftPickRepository {
    */
   async getDraftedPlayerIds(draftId: number): Promise<Set<number>> {
     const result = await this.db.query(
+      'SELECT player_id FROM draft_picks WHERE draft_id = $1 AND player_id IS NOT NULL',
+      [draftId]
+    );
+    return new Set(result.rows.map((row) => row.player_id));
+  }
+
+  /**
+   * Get all drafted player IDs for a draft using an existing client (for transactions).
+   */
+  async getDraftedPlayerIdsWithClient(
+    client: PoolClient,
+    draftId: number
+  ): Promise<Set<number>> {
+    const result = await client.query(
       'SELECT player_id FROM draft_picks WHERE draft_id = $1 AND player_id IS NOT NULL',
       [draftId]
     );
@@ -608,6 +638,15 @@ export class DraftPickRepository {
       } else {
         // Undo pick-asset selection
         await client.query('DELETE FROM vet_draft_pick_selections WHERE id = $1', [lastAssetSelection.id]);
+
+        // Revert pick asset ownership back to original roster
+        await client.query(
+          `UPDATE draft_pick_assets
+           SET current_owner_roster_id = original_roster_id, updated_at = CURRENT_TIMESTAMP
+           WHERE id = $1`,
+          [lastAssetSelection.draft_pick_asset_id]
+        );
+
         undoneSelection = {
           id: lastAssetSelection.id,
           draftPickAssetId: lastAssetSelection.draft_pick_asset_id,

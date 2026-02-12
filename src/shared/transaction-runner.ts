@@ -157,6 +157,12 @@ export async function runWithLocks<T>(
 }
 
 /**
+ * Valid PostgreSQL isolation levels for runtime validation.
+ * TypeScript types are erased at runtime, so we need a runtime check too.
+ */
+const VALID_ISOLATION_LEVELS = ['READ COMMITTED', 'REPEATABLE READ', 'SERIALIZABLE'] as const;
+
+/**
  * Transaction options for advanced use cases.
  */
 export interface TransactionOptions {
@@ -165,7 +171,7 @@ export interface TransactionOptions {
   /** Multiple locks to acquire (sorted automatically) */
   locks?: LockSpec[];
   /** Isolation level (defaults to READ COMMITTED) */
-  isolationLevel?: 'READ COMMITTED' | 'REPEATABLE READ' | 'SERIALIZABLE';
+  isolationLevel?: (typeof VALID_ISOLATION_LEVELS)[number];
 }
 
 /**
@@ -196,6 +202,9 @@ export async function runTransaction<T>(
   try {
     // Start transaction with optional isolation level
     if (options.isolationLevel) {
+      if (!VALID_ISOLATION_LEVELS.includes(options.isolationLevel)) {
+        throw new Error(`Invalid isolation level: ${options.isolationLevel}`);
+      }
       await client.query(`BEGIN ISOLATION LEVEL ${options.isolationLevel}`);
     } else {
       await client.query('BEGIN');

@@ -13,6 +13,7 @@ import {
   tradeItemFromDatabase,
   tradeVoteFromDatabase,
 } from './trades.model';
+import { buildBatchInsertQuery } from '../../shared/query-builder';
 
 export class TradesRepository {
   constructor(private readonly db: Pool) {}
@@ -393,6 +394,38 @@ export class TradesRepository {
   }
 
   /**
+   * Update trade status with a failure reason
+   * Used when a trade cannot be executed (e.g., roster size changed during review period)
+   * @param expectedStatus - If provided, only update if current status matches (prevents race conditions)
+   * @returns Trade if updated, null if expectedStatus didn't match
+   */
+  async updateStatusWithReason(
+    tradeId: number,
+    status: TradeStatus,
+    reason: string,
+    client?: PoolClient,
+    expectedStatus?: TradeStatus
+  ): Promise<Trade | null> {
+    const conn = client || this.db;
+
+    let query: string;
+    let params: any[];
+
+    if (expectedStatus) {
+      query = `UPDATE trades SET status = $1, failure_reason = $2, updated_at = NOW()
+        WHERE id = $3 AND status = $4 RETURNING *`;
+      params = [status, reason, tradeId, expectedStatus];
+    } else {
+      query = `UPDATE trades SET status = $1, failure_reason = $2, updated_at = NOW()
+        WHERE id = $3 RETURNING *`;
+      params = [status, reason, tradeId];
+    }
+
+    const result = await conn.query(query, params);
+    return result.rows.length > 0 ? tradeFromDatabase(result.rows[0]) : null;
+  }
+
+  /**
    * Set review period for a trade
    * Only updates if trade is still in 'pending' status (prevents race conditions)
    * @returns Trade if updated, null if trade was no longer pending
@@ -507,37 +540,35 @@ export class TradeItemsRepository {
     if (items.length === 0) return [];
 
     const conn = client || this.db;
-    const createdItems: TradeItem[] = [];
 
-    // Insert items one by one to handle mixed types cleanly
-    for (const item of items) {
-      const result = await conn.query(
-        `INSERT INTO trade_items (
-          trade_id, item_type,
-          player_id, player_name, player_position, player_team,
-          draft_pick_asset_id, pick_season, pick_round, pick_original_team,
-          from_roster_id, to_roster_id
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-        RETURNING *`,
-        [
-          tradeId,
-          item.itemType,
-          item.playerId || null,
-          item.playerName || null,
-          item.playerPosition || null,
-          item.playerTeam || null,
-          item.draftPickAssetId || null,
-          item.pickSeason || null,
-          item.pickRound || null,
-          item.pickOriginalTeam || null,
-          item.fromRosterId,
-          item.toRosterId,
-        ]
-      );
-      createdItems.push(tradeItemFromDatabase(result.rows[0]));
-    }
+    const columns = [
+      'trade_id', 'item_type',
+      'player_id', 'player_name', 'player_position', 'player_team',
+      'draft_pick_asset_id', 'pick_season', 'pick_round', 'pick_original_team',
+      'from_roster_id', 'to_roster_id',
+    ];
 
-    return createdItems;
+    const rows = items.map((item) => [
+      tradeId,
+      item.itemType,
+      item.playerId || null,
+      item.playerName || null,
+      item.playerPosition || null,
+      item.playerTeam || null,
+      item.draftPickAssetId || null,
+      item.pickSeason || null,
+      item.pickRound || null,
+      item.pickOriginalTeam || null,
+      item.fromRosterId,
+      item.toRosterId,
+    ]);
+
+    const { query, values } = buildBatchInsertQuery('trade_items', columns, rows, {
+      returning: true,
+    });
+
+    const result = await conn.query(query, values);
+    return result.rows.map(tradeItemFromDatabase);
   }
 
   /**

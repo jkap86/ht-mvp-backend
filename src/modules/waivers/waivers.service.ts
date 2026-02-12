@@ -21,6 +21,7 @@ import {
   SubmitClaimRequest,
   UpdateClaimRequest,
 } from './waivers.model';
+import { NotFoundException } from '../../utils/exceptions';
 
 // Import use-cases
 import {
@@ -94,6 +95,7 @@ export class WaiversService {
   async getMyClaims(leagueId: number, userId: string): Promise<WaiverClaimWithDetails[]> {
     return getMyClaimsUseCase(
       {
+        db: this.db,
         faabRepo: this.faabRepo,
         claimsRepo: this.claimsRepo,
         rosterRepo: this.rosterRepo,
@@ -111,6 +113,7 @@ export class WaiversService {
   async cancelClaim(claimId: number, userId: string): Promise<void> {
     return cancelClaimUseCase(
       {
+        db: this.db,
         faabRepo: this.faabRepo,
         claimsRepo: this.claimsRepo,
         rosterRepo: this.rosterRepo,
@@ -132,6 +135,7 @@ export class WaiversService {
   ): Promise<WaiverClaimWithDetails> {
     return updateClaimUseCase(
       {
+        db: this.db,
         faabRepo: this.faabRepo,
         claimsRepo: this.claimsRepo,
         rosterRepo: this.rosterRepo,
@@ -154,6 +158,7 @@ export class WaiversService {
   ): Promise<WaiverClaimWithDetails[]> {
     return reorderClaimsUseCase(
       {
+        db: this.db,
         faabRepo: this.faabRepo,
         claimsRepo: this.claimsRepo,
         rosterRepo: this.rosterRepo,
@@ -213,7 +218,7 @@ export class WaiversService {
     if (actualSeason === undefined) {
       const league = await this.leagueRepo.findById(leagueId);
       if (!league) {
-        throw new Error('League not found');
+        throw new NotFoundException('League not found');
       }
       actualSeason = parseInt(league.season, 10);
     }

@@ -1,9 +1,13 @@
+import { PoolClient } from 'pg';
 import { TradesRepository, TradeVotesRepository } from '../trades.repository';
+import { Trade } from '../trades.model';
 import { EventTypes, tryGetEventBus } from '../../../shared/events';
 import { runWithLock, LockDomain } from '../../../shared/transaction-runner';
 import { executeTrade, AcceptTradeContext, PickTradedEvent } from './accept-trade.use-case';
 import type { EventListenerService } from '../../chat/event-listener.service';
+import { getMaxRosterSize } from '../../../shared/roster-defaults';
 import { logger } from '../../../config/logger.config';
+import { invalidateTradesForPlayer, invalidateTradesForPickAsset } from '../trade-invalidation.utils';
 
 const DEFAULT_VETO_COUNT = 4;
 
@@ -13,11 +17,11 @@ export interface ProcessTradesContext extends AcceptTradeContext {
 }
 
 /**
- * Invalidate pending trades containing a dropped player
- * Uses TRADE lock to prevent race conditions during invalidation
+ * Invalidate active trades containing a dropped player.
+ * Uses TRADE lock to prevent race conditions during invalidation.
  *
  * LOCK CONTRACT:
- * - Acquires TRADE lock (300M + leagueId) via runWithLock — serializes trade invalidation per league
+ * - Acquires TRADE lock (300M + leagueId) via runWithLock -- serializes trade invalidation per league
  *
  * Only one lock domain (TRADE) is acquired. No nested cross-domain advisory locks.
  */
@@ -27,23 +31,10 @@ export async function invalidateTradesWithPlayer(
   playerId: number
 ): Promise<void> {
   // Collect trades that were invalidated to emit events after commit
-  const invalidatedTrades: Array<{ id: number; leagueId: number }> = [];
+  let invalidatedTrades: Array<{ id: number; leagueId: number }> = [];
 
   await runWithLock(ctx.db, LockDomain.TRADE, leagueId, async (client) => {
-    const pendingTrades = await ctx.tradesRepo.findPendingByPlayer(leagueId, playerId, client);
-
-    for (const trade of pendingTrades) {
-      // Try to expire - only succeeds if still in an active state
-      // Try 'pending' first, then 'in_review' if that fails
-      let updated = await ctx.tradesRepo.updateStatus(trade.id, 'expired', client, 'pending');
-      if (!updated) {
-        updated = await ctx.tradesRepo.updateStatus(trade.id, 'expired', client, 'in_review');
-      }
-
-      if (updated) {
-        invalidatedTrades.push({ id: trade.id, leagueId: trade.leagueId });
-      }
-    }
+    invalidatedTrades = await invalidateTradesForPlayer(ctx.tradesRepo, leagueId, playerId, client);
   });
 
   // Emit events AFTER transaction commits (per gotchas.md)
@@ -61,12 +52,12 @@ export async function invalidateTradesWithPlayer(
 }
 
 /**
- * Invalidate pending trades containing a pick asset that is no longer tradeable
- * (e.g., pick was used, round passed)
- * Uses TRADE lock to prevent race conditions during invalidation
+ * Invalidate active trades containing a pick asset that is no longer tradeable
+ * (e.g., pick was used, round passed).
+ * Uses TRADE lock to prevent race conditions during invalidation.
  *
  * LOCK CONTRACT:
- * - Acquires TRADE lock (300M + leagueId) via runWithLock — serializes trade invalidation per league
+ * - Acquires TRADE lock (300M + leagueId) via runWithLock -- serializes trade invalidation per league
  *
  * Only one lock domain (TRADE) is acquired. No nested cross-domain advisory locks.
  */
@@ -76,23 +67,10 @@ export async function invalidateTradesWithPick(
   pickAssetId: number
 ): Promise<void> {
   // Collect trades that were invalidated to emit events after commit
-  const invalidatedTrades: Array<{ id: number; leagueId: number }> = [];
+  let invalidatedTrades: Array<{ id: number; leagueId: number }> = [];
 
   await runWithLock(ctx.db, LockDomain.TRADE, leagueId, async (client) => {
-    const pendingTrades = await ctx.tradesRepo.findPendingByPickAsset(leagueId, pickAssetId, client);
-
-    for (const trade of pendingTrades) {
-      // Try to expire - only succeeds if still in an active state
-      // Try 'pending' first, then 'in_review' if that fails
-      let updated = await ctx.tradesRepo.updateStatus(trade.id, 'expired', client, 'pending');
-      if (!updated) {
-        updated = await ctx.tradesRepo.updateStatus(trade.id, 'expired', client, 'in_review');
-      }
-
-      if (updated) {
-        invalidatedTrades.push({ id: trade.id, leagueId: trade.leagueId });
-      }
-    }
+    invalidatedTrades = await invalidateTradesForPickAsset(ctx.tradesRepo, leagueId, pickAssetId, client);
   });
 
   // Emit events AFTER transaction commits (per gotchas.md)
@@ -163,8 +141,9 @@ export async function processReviewCompleteTrades(ctx: ProcessTradesContext): Pr
     const vetoThreshold = league.settings?.trade_veto_count || DEFAULT_VETO_COUNT;
 
     // Collect events to emit AFTER commit
-    let pendingEvent: 'vetoed' | 'completed' | null = null;
+    let pendingEvent: 'vetoed' | 'completed' | 'failed' | null = null;
     let pickTradedEvents: PickTradedEvent[] = [];
+    let failureReason: string | undefined;
 
     try {
       const result = await runWithLock(
@@ -187,6 +166,24 @@ export async function processReviewCompleteTrades(ctx: ProcessTradesContext): Pr
             if (!lockedTrade || lockedTrade.status !== 'in_review') {
               return { skipped: true };
             }
+
+            // Re-validate roster sizes before execution — rosters may have changed
+            // during the review period (via waivers, free agency, etc.)
+            const rosterSizeError = await validateRosterSizesForTrade(ctx, trade, league, client);
+            if (rosterSizeError) {
+              const updated = await ctx.tradesRepo.updateStatusWithReason(
+                trade.id,
+                'failed',
+                rosterSizeError,
+                client,
+                'in_review'
+              );
+              if (!updated) {
+                return { skipped: true };
+              }
+              return { skipped: false, event: 'failed' as const, pickEvents: [], reason: rosterSizeError };
+            }
+
             const pickEvents = await executeTrade(ctx, trade, client);
             const updated = await ctx.tradesRepo.updateStatus(
               trade.id,
@@ -209,6 +206,7 @@ export async function processReviewCompleteTrades(ctx: ProcessTradesContext): Pr
 
       pendingEvent = result.event ?? null;
       pickTradedEvents = result.pickEvents ?? [];
+      failureReason = (result as { reason?: string }).reason;
 
       // Emit domain events AFTER successful commit
       const eventBus = tryGetEventBus();
@@ -229,6 +227,17 @@ export async function processReviewCompleteTrades(ctx: ProcessTradesContext): Pr
               error: err.message
             }));
         }
+      } else if (pendingEvent === 'failed') {
+        eventBus?.publish({
+          type: EventTypes.TRADE_FAILED,
+          leagueId: trade.leagueId,
+          payload: { tradeId: trade.id, reason: failureReason || 'Trade could not be executed' },
+        });
+        logger.warn('Trade failed roster size validation after review period', {
+          tradeId: trade.id,
+          leagueId: trade.leagueId,
+          reason: failureReason,
+        });
       } else if (pendingEvent === 'completed') {
         eventBus?.publish({
           type: EventTypes.TRADE_COMPLETED,
@@ -269,4 +278,50 @@ export async function processReviewCompleteTrades(ctx: ProcessTradesContext): Pr
   }
 
   return processed;
+}
+
+/**
+ * Validate that roster sizes can accommodate the trade at execution time.
+ * Calculates the net player change per roster and checks against the max roster size.
+ *
+ * Returns null if validation passes, or a descriptive error message if it fails.
+ */
+async function validateRosterSizesForTrade(
+  ctx: ProcessTradesContext,
+  trade: Trade,
+  league: { settings: Record<string, any> },
+  client: PoolClient
+): Promise<string | null> {
+  const items = await ctx.tradeItemsRepo.findByTrade(trade.id, client);
+  const playerItems = items.filter((item) => item.itemType === 'player' && item.playerId);
+
+  // No player items means no roster size impact (pick-only trades)
+  if (playerItems.length === 0) return null;
+
+  // Calculate net player change per roster (players gained - players lost)
+  const netChangeByRoster = new Map<number, number>();
+  for (const item of playerItems) {
+    netChangeByRoster.set(item.fromRosterId, (netChangeByRoster.get(item.fromRosterId) || 0) - 1);
+    netChangeByRoster.set(item.toRosterId, (netChangeByRoster.get(item.toRosterId) || 0) + 1);
+  }
+
+  const maxRosterSize = getMaxRosterSize(league.settings);
+
+  // Only check rosters that would gain players (net positive change)
+  for (const [rosterId, netChange] of netChangeByRoster) {
+    if (netChange <= 0) continue;
+
+    const currentSize = await ctx.rosterPlayersRepo.getPlayerCount(rosterId, client);
+    const projectedSize = currentSize + netChange;
+
+    if (projectedSize > maxRosterSize) {
+      return (
+        `Trade cannot be completed: roster ${rosterId} would have ${projectedSize} players ` +
+        `(currently ${currentSize}, gaining ${netChange} net), which exceeds the league limit of ${maxRosterSize}. ` +
+        `Roster sizes changed during the review period.`
+      );
+    }
+  }
+
+  return null;
 }

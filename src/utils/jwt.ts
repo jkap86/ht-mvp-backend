@@ -8,10 +8,10 @@ export interface JwtPayload {
   type?: 'access' | 'refresh';
 }
 
-export function signToken(payload: JwtPayload, options?: { expiresIn?: string }): string {
+export function signToken(payload: JwtPayload, options: { expiresIn: string }): string {
   const signOptions: jwt.SignOptions = {
     algorithm: 'HS256',
-    expiresIn: (options?.expiresIn || env.JWT_EXPIRES_IN) as jwt.SignOptions['expiresIn'],
+    expiresIn: options.expiresIn as jwt.SignOptions['expiresIn'],
   };
 
   return jwt.sign(payload, env.JWT_SECRET as jwt.Secret, signOptions);

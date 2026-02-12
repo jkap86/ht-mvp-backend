@@ -36,6 +36,7 @@ const mockDraft: Draft = {
   settings: {},
   draftState: {},
   orderConfirmed: false,
+  rosterPopulationStatus: null,
   createdAt: new Date(),
   updatedAt: new Date(),
 };

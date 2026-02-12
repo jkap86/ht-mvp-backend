@@ -137,9 +137,78 @@ export class PlayerStatsRepository {
     if (statsList.length === 0) return;
 
     await runInTransaction(this.db, async (client) => {
+      const columns = [
+        'player_id', 'season', 'week',
+        'pass_yards', 'pass_td', 'pass_int',
+        'rush_yards', 'rush_td',
+        'receptions', 'rec_yards', 'rec_td',
+        'fumbles_lost', 'two_pt_conversions',
+        'fg_made', 'fg_missed', 'pat_made', 'pat_missed',
+        'def_td', 'def_int', 'def_sacks', 'def_fumble_rec', 'def_safety', 'def_points_allowed',
+      ];
+
+      const values: any[] = [];
+      const placeholders: string[] = [];
+      let paramIndex = 1;
+
       for (const stats of statsList) {
-        await this.upsert(stats, client);
+        const row = [
+          stats.playerId,
+          stats.season,
+          stats.week,
+          stats.passYards || 0,
+          stats.passTd || 0,
+          stats.passInt || 0,
+          stats.rushYards || 0,
+          stats.rushTd || 0,
+          stats.receptions || 0,
+          stats.recYards || 0,
+          stats.recTd || 0,
+          stats.fumblesLost || 0,
+          stats.twoPtConversions || 0,
+          stats.fgMade || 0,
+          stats.fgMissed || 0,
+          stats.patMade || 0,
+          stats.patMissed || 0,
+          stats.defTd || 0,
+          stats.defInt || 0,
+          stats.defSacks || 0,
+          stats.defFumbleRec || 0,
+          stats.defSafety || 0,
+          stats.defPointsAllowed || 0,
+        ];
+        const rowPlaceholders = row.map(() => `$${paramIndex++}`);
+        placeholders.push(`(${rowPlaceholders.join(', ')})`);
+        values.push(...row);
       }
+
+      const query = `INSERT INTO player_stats (${columns.join(', ')})
+        VALUES ${placeholders.join(', ')}
+        ON CONFLICT (player_id, season, week)
+        DO UPDATE SET
+          pass_yards = EXCLUDED.pass_yards,
+          pass_td = EXCLUDED.pass_td,
+          pass_int = EXCLUDED.pass_int,
+          rush_yards = EXCLUDED.rush_yards,
+          rush_td = EXCLUDED.rush_td,
+          receptions = EXCLUDED.receptions,
+          rec_yards = EXCLUDED.rec_yards,
+          rec_td = EXCLUDED.rec_td,
+          fumbles_lost = EXCLUDED.fumbles_lost,
+          two_pt_conversions = EXCLUDED.two_pt_conversions,
+          fg_made = EXCLUDED.fg_made,
+          fg_missed = EXCLUDED.fg_missed,
+          pat_made = EXCLUDED.pat_made,
+          pat_missed = EXCLUDED.pat_missed,
+          def_td = EXCLUDED.def_td,
+          def_int = EXCLUDED.def_int,
+          def_sacks = EXCLUDED.def_sacks,
+          def_fumble_rec = EXCLUDED.def_fumble_rec,
+          def_safety = EXCLUDED.def_safety,
+          def_points_allowed = EXCLUDED.def_points_allowed,
+          updated_at = CURRENT_TIMESTAMP`;
+
+      await client.query(query, values);
     });
   }
 }

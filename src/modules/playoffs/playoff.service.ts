@@ -5,9 +5,11 @@ import type { LeagueRepository } from '../leagues/leagues.repository';
 import {
   PlayoffBracketView,
   PlayoffMatchup,
+  PlayoffMatchupRow,
   PlayoffRound,
   PlayoffTeamInfo,
   PlayoffBracket,
+  PlayoffSeed,
   PlayoffSettings,
   ConsolationSeed,
   BracketType,
@@ -22,6 +24,7 @@ import {
   generateBracketConfig,
   generateConsolationBracketConfig,
 } from './playoff.model';
+import type { Standing } from '../matchups/matchups.model';
 import { v4 as uuidv4 } from 'uuid';
 import {
   NotFoundException,
@@ -459,7 +462,7 @@ export class PlayoffService {
     leagueId: number,
     season: number,
     bracket: PlayoffBracket,
-    matchups: any[],
+    matchups: PlayoffMatchupRow[],
     week: number
   ): Promise<void> {
     // Validate all matchups are from the same round
@@ -541,7 +544,7 @@ export class PlayoffService {
     leagueId: number,
     season: number,
     bracket: PlayoffBracket,
-    semifinalMatchups: any[],
+    semifinalMatchups: PlayoffMatchupRow[],
     championshipWeek: number
   ): Promise<void> {
     // Check if already exists
@@ -594,7 +597,7 @@ export class PlayoffService {
     leagueId: number,
     season: number,
     bracket: PlayoffBracket,
-    matchups: any[],
+    matchups: PlayoffMatchupRow[],
     week: number
   ): Promise<void> {
     // Validate all matchups are from the same round
@@ -664,7 +667,7 @@ export class PlayoffService {
     leagueId: number,
     season: number,
     bracket: PlayoffBracket,
-    previousMatchups: any[],
+    previousMatchups: PlayoffMatchupRow[],
     nextRound: number,
     nextWeek: number,
     bracketType: BracketType,
@@ -790,7 +793,7 @@ export class PlayoffService {
    * Validate that all matchups are from the same playoff round.
    * Prevents advancing matchups that span multiple rounds.
    */
-  private validateSingleRound(matchups: any[], bracketType: string): void {
+  private validateSingleRound(matchups: PlayoffMatchupRow[], bracketType: string): void {
     if (matchups.length === 0) return;
 
     const rounds = new Set(matchups.map((m) => m.playoff_round));
@@ -806,7 +809,7 @@ export class PlayoffService {
    * @param matchup The matchup to determine winner for
    * @param requirePoints If true, throws if points are missing (for advancement flows)
    */
-  private determineWinner(matchup: any, requirePoints: boolean = false): number {
+  private determineWinner(matchup: PlayoffMatchupRow, requirePoints: boolean = false): number {
     const p1 = matchup.roster1_points;
     const p2 = matchup.roster2_points;
 
@@ -839,7 +842,7 @@ export class PlayoffService {
    * @param matchup The matchup to determine loser for
    * @param requirePoints If true, throws if points are missing (for advancement flows)
    */
-  private determineLoser(matchup: any, requirePoints: boolean = false): number {
+  private determineLoser(matchup: PlayoffMatchupRow, requirePoints: boolean = false): number {
     const winnerId = this.determineWinner(matchup, requirePoints);
     return winnerId === matchup.roster1_id ? matchup.roster2_id : matchup.roster1_id;
   }
@@ -1041,11 +1044,11 @@ export class PlayoffService {
   private async createNextRoundMatchups(
     leagueId: number,
     season: number,
-    bracket: any,
-    previousMatchups: any[],
+    bracket: PlayoffBracket,
+    previousMatchups: PlayoffMatchupRow[],
     nextRound: number,
     nextWeek: number,
-    client: any
+    client: PoolClient
   ): Promise<void> {
     const seeds = await this.playoffRepo.getSeeds(bracket.id);
 
@@ -1241,8 +1244,8 @@ export class PlayoffService {
    * Build rounds array from matchups with series support
    */
   private buildRoundsFromMatchups(
-    matchupsRaw: any[],
-    seedByRoster: Map<number, any>,
+    matchupsRaw: PlayoffMatchupRow[],
+    seedByRoster: Map<number, PlayoffSeed>,
     bracket: PlayoffBracket,
     bracketType: BracketType
   ): PlayoffRound[] {
@@ -1285,7 +1288,7 @@ export class PlayoffService {
    * Build consolation rounds for display with series support
    */
   private buildConsolationRounds(
-    matchupsRaw: any[],
+    matchupsRaw: PlayoffMatchupRow[],
     bracket: PlayoffBracket,
     consolationTotalRounds: number
   ): PlayoffRound[] {
@@ -1372,7 +1375,7 @@ export class PlayoffService {
   /**
    * Extract consolation seeds from matchups
    */
-  private extractConsolationSeeds(matchupsRaw: any[]): ConsolationSeed[] {
+  private extractConsolationSeeds(matchupsRaw: PlayoffMatchupRow[]): ConsolationSeed[] {
     const seedMap = new Map<number, ConsolationSeed>();
 
     for (const m of matchupsRaw) {
@@ -1401,8 +1404,8 @@ export class PlayoffService {
    * Build a single playoff matchup from raw data
    */
   private buildPlayoffMatchup(
-    m: any,
-    seedByRoster: Map<number, any>,
+    m: PlayoffMatchupRow,
+    seedByRoster: Map<number, PlayoffSeed>,
     bracketType: BracketType
   ): PlayoffMatchup {
     const seed1 = seedByRoster.get(m.roster1_id);
@@ -1488,7 +1491,7 @@ export class PlayoffService {
     season: number,
     startWeek: number,
     consolationTeams: number,
-    standings: any[],
+    standings: Standing[],
     playoffTeams: number,
     bracketId: number,
     weeksByRound: number[] | null

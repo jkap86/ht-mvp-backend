@@ -66,6 +66,21 @@ export class DraftOrderRepository {
   }
 
   /**
+   * Set autodraft enabled/disabled using an existing client (for transactions).
+   */
+  async setAutodraftEnabledWithClient(
+    client: PoolClient,
+    draftId: number,
+    rosterId: number,
+    enabled: boolean
+  ): Promise<void> {
+    await client.query(
+      `UPDATE draft_order SET is_autodraft_enabled = $1 WHERE draft_id = $2 AND roster_id = $3`,
+      [enabled, draftId, rosterId]
+    );
+  }
+
+  /**
    * Get autodraft status for a roster in a draft.
    */
   async getAutodraftEnabled(draftId: number, rosterId: number): Promise<boolean> {
@@ -117,6 +132,33 @@ export class DraftOrderRepository {
         await client.query(query, values);
       }
     });
+  }
+
+  /**
+   * Atomically updates the draft order within an existing transaction.
+   * Clears existing order and inserts new positions using the provided client.
+   * @param client - The PoolClient for the existing transaction
+   * @param draftId - The draft ID
+   * @param rosterIds - Array of roster IDs in desired order (index 0 = position 1)
+   */
+  async updateDraftOrderAtomicWithClient(
+    client: PoolClient,
+    draftId: number,
+    rosterIds: number[]
+  ): Promise<void> {
+    // Clear existing order
+    await client.query('DELETE FROM draft_order WHERE draft_id = $1', [draftId]);
+
+    // Insert new order using batch insert
+    if (rosterIds.length > 0) {
+      const rows = rosterIds.map((rosterId, index) => [draftId, rosterId, index + 1]);
+      const { query, values } = buildBatchInsertQuery(
+        'draft_order',
+        ['draft_id', 'roster_id', 'draft_position'],
+        rows
+      );
+      await client.query(query, values);
+    }
   }
 
   /**

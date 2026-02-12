@@ -330,8 +330,12 @@ export async function lockDraft<T>(
 }
 
 /**
- * Helper: Acquire a job-level lock (for singleton jobs like autopick, waiver processing).
- * Uses session-level advisory lock (not transaction-level) for long-running jobs.
+ * Helper: Acquire a job-level transaction lock.
+ * Uses pg_advisory_xact_lock (transaction-level, auto-released on commit/rollback).
+ *
+ * NOTE: This is NOT suitable for long-running singleton jobs (autopick, waiver processing, etc.)
+ * which need session-level locks via pg_try_advisory_lock/pg_advisory_unlock directly.
+ * Use this only for short transactional job coordination.
  */
 export async function lockJob<T>(
   client: PoolClient,

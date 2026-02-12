@@ -5,7 +5,8 @@ import { RosterService } from './roster.service';
 import { DashboardService } from './dashboard.service';
 import { ValidationException, ForbiddenException } from '../../utils/exceptions';
 import { requireUserId, requireLeagueId } from '../../utils/controller-helpers';
-import { deleteLeagueSchema, seasonControlsSchema } from './leagues.schemas';
+import { deleteLeagueSchema, seasonControlsSchema, UpdateLeagueInput } from './leagues.schemas';
+import type { LeagueMode, LeagueSettings } from './leagues.model';
 
 export class LeagueController {
   constructor(
@@ -81,15 +82,28 @@ export class LeagueController {
     const userId = requireUserId(req);
     const leagueId = requireLeagueId(req);
 
-    const updates: any = {};
-    if (req.body.name !== undefined) updates.name = req.body.name;
-    if (req.body.mode !== undefined) updates.mode = req.body.mode;
-    if (req.body.settings !== undefined) updates.settings = req.body.settings;
-    if (req.body.league_settings !== undefined) updates.leagueSettings = req.body.league_settings;
-    if (req.body.scoring_settings !== undefined) updates.scoringSettings = req.body.scoring_settings;
-    if (req.body.status !== undefined) updates.status = req.body.status;
-    if (req.body.is_public !== undefined) updates.isPublic = req.body.is_public;
-    if (req.body.total_rosters !== undefined) updates.totalRosters = req.body.total_rosters;
+    // req.body is already validated and stripped by validateRequest(updateLeagueSchema)
+    const body = req.body as UpdateLeagueInput;
+
+    const updates: {
+      name?: string;
+      mode?: LeagueMode;
+      settings?: Record<string, any>;
+      leagueSettings?: LeagueSettings;
+      scoringSettings?: Record<string, any>;
+      status?: string;
+      isPublic?: boolean;
+      totalRosters?: number;
+    } = {};
+
+    if (body.name !== undefined) updates.name = body.name;
+    if (body.mode !== undefined) updates.mode = body.mode;
+    if (body.settings !== undefined) updates.settings = body.settings;
+    if (body.league_settings !== undefined) updates.leagueSettings = body.league_settings;
+    if (body.scoring_settings !== undefined) updates.scoringSettings = body.scoring_settings;
+    if (body.status !== undefined) updates.status = body.status;
+    if (body.is_public !== undefined) updates.isPublic = body.is_public;
+    if (body.total_rosters !== undefined) updates.totalRosters = body.total_rosters;
 
     const league = await this.leagueService.updateLeague(leagueId, userId, updates);
     res.status(200).json(league);

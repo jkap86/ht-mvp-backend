@@ -36,6 +36,29 @@ export class RosterPlayersRepository {
   }
 
   /**
+   * Get all players on a roster with their details using an existing client (for transactions)
+   */
+  async getByRosterIdWithClient(client: PoolClient, rosterId: number): Promise<RosterPlayerWithDetails[]> {
+    const result = await client.query(
+      `SELECT rp.*, p.full_name, p.position, p.team, p.status, p.injury_status
+       FROM roster_players rp
+       JOIN players p ON rp.player_id = p.id
+       WHERE rp.roster_id = $1
+       ORDER BY p.position, p.full_name`,
+      [rosterId]
+    );
+
+    return result.rows.map((row) => ({
+      ...rosterPlayerFromDatabase(row),
+      fullName: row.full_name,
+      position: row.position,
+      team: row.team,
+      status: row.status,
+      injuryStatus: row.injury_status,
+    }));
+  }
+
+  /**
    * Get a specific player on a roster
    */
   async findByRosterAndPlayer(
@@ -160,8 +183,10 @@ export class RosterPlayersRepository {
     }
 
     if (search) {
-      params.push(`%${search}%`);
-      whereClause += ` AND p.full_name ILIKE $${params.length}`;
+      // Escape LIKE wildcards to prevent enumeration via % or _
+      const escapedSearch = search.replace(/[%_\\]/g, '\\$&');
+      params.push(`%${escapedSearch}%`);
+      whereClause += ` AND p.full_name ILIKE $${params.length} ESCAPE '\\'`;
     }
 
     const result = await this.db.query(

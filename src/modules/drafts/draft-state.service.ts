@@ -1,6 +1,6 @@
 import { Pool, PoolClient } from 'pg';
 import { DraftRepository } from './drafts.repository';
-import { Draft, DraftOrderEntry, DraftSettings, draftToResponse } from './drafts.model';
+import { Draft, DraftOrderEntry, DraftPick, DraftSettings, DraftResponse, DraftResponseWithWarnings, draftToResponse } from './drafts.model';
 import { validatePlayerPoolEligibility } from './draft-validation.utils';
 import type { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import type { RosterPlayersRepository } from '../rosters/rosters.repository';
@@ -60,11 +60,25 @@ export interface ApplyTimeoutActionParams {
  * Result of applying a pick
  */
 export interface ApplyPickResult {
-  pick: any;
-  draft: any;
+  pick: DraftPick;
+  draft: Draft;
   nextPickState: NextPickState;
   player?: Player | null;
 }
+
+/**
+ * An undone pick asset selection (when a pick asset was drafted instead of a player)
+ */
+export interface UndonePickAssetSelection {
+  id: number;
+  pickNumber: number;
+  rosterId: number;
+  draftPickAssetId: number;
+  isPickAsset: true;
+}
+
+/** Union type for undone items (either a regular pick or a pick asset selection) */
+export type UndoneItem = DraftPick | UndonePickAssetSelection;
 
 // NextPickState is now defined in './draft-pick-state.utils' and imported above.
 
@@ -94,7 +108,7 @@ export class DraftStateService {
     private readonly pickAssetRepo?: DraftPickAssetRepository
   ) {}
 
-  async startDraft(draftId: number, userId: string, idempotencyKey?: string): Promise<any> {
+  async startDraft(draftId: number, userId: string, idempotencyKey?: string): Promise<DraftResponse> {
     // Idempotency check: return existing result if same key was already used
     if (idempotencyKey) {
       const existing = await this.db.query(
@@ -240,7 +254,7 @@ export class DraftStateService {
     return response;
   }
 
-  async pauseDraft(draftId: number, userId: string): Promise<any> {
+  async pauseDraft(draftId: number, userId: string): Promise<DraftResponse> {
     const draft = await this.draftRepo.findById(draftId);
     if (!draft) throw new NotFoundException('Draft not found');
 
@@ -351,7 +365,7 @@ export class DraftStateService {
     return response;
   }
 
-  async resumeDraft(draftId: number, userId: string): Promise<any> {
+  async resumeDraft(draftId: number, userId: string): Promise<DraftResponse> {
     const draft = await this.draftRepo.findById(draftId);
     if (!draft) throw new NotFoundException('Draft not found');
 
@@ -378,7 +392,7 @@ export class DraftStateService {
 
         // Restore active lot bid_deadline from pausedLotState
         const pausedLotState = draft.draftState?.pausedLotState as { lotId: number; remainingBidSeconds: number } | null;
-        let restoredLotData: any = null;
+        let restoredLotData: Record<string, unknown> | null = null;
 
         if (pausedLotState) {
           const newBidDeadline = new Date();
@@ -472,7 +486,7 @@ export class DraftStateService {
     return response;
   }
 
-  async completeDraft(draftId: number, userId: string): Promise<any> {
+  async completeDraft(draftId: number, userId: string): Promise<DraftResponseWithWarnings> {
     const draft = await this.draftRepo.findById(draftId);
     if (!draft) throw new NotFoundException('Draft not found');
 
@@ -493,15 +507,18 @@ export class DraftStateService {
     // If this fails, no side effects have occurred yet.
     // If finalization fails after this, a retry can detect "completed" status
     // and re-run finalization (idempotent).
+    // Pass expectedStatus to make the status check atomic with the update,
+    // preventing TOCTOU race where another process completes the draft between
+    // our check above and the lock acquisition inside updateWithLock.
     const updatedDraft = await this.draftRepo.updateWithLock(draftId, {
       status: 'completed',
       completedAt: new Date(),
       pickDeadline: null,
       currentRosterId: null,
-    });
+    }, draft.status);
 
     // Run unified finalization (rosters, league status, schedule) AFTER status update
-    await finalizeDraftCompletion(
+    const completionResult = await finalizeDraftCompletion(
       {
         draftRepo: this.draftRepo,
         leagueRepo: this.leagueRepo,
@@ -512,7 +529,21 @@ export class DraftStateService {
       draft.leagueId
     );
 
-    const response = draftToResponse(updatedDraft);
+    const response: DraftResponseWithWarnings = draftToResponse(updatedDraft);
+
+    // Include schedule generation failure info in the response so the
+    // commissioner knows manual intervention is needed
+    if (completionResult.scheduleGenerationFailed) {
+      response.warnings = [
+        {
+          code: 'SCHEDULE_GENERATION_FAILED',
+          message:
+            'Draft completed successfully but schedule generation failed. ' +
+            'Please generate the schedule manually from league settings.',
+          error: completionResult.scheduleError,
+        },
+      ];
+    }
 
     const eventBus = tryGetEventBus();
     eventBus?.publish({
@@ -543,7 +574,7 @@ export class DraftStateService {
     await this.draftRepo.delete(draftId);
   }
 
-  async undoPick(leagueId: number, draftId: number, userId: string): Promise<{ draft: any; undone: any }> {
+  async undoPick(leagueId: number, draftId: number, userId: string): Promise<{ draft: DraftResponse; undone: UndoneItem }> {
     // Get the pool for running the transaction
     const pool = container.resolve<Pool>(KEYS.POOL);
 
@@ -629,12 +660,12 @@ export class DraftStateService {
         }
 
         // Build the undone item for socket event
-        const computedUndoneItem = undonePick || {
+        const computedUndoneItem: UndoneItem = undonePick || {
           id: undoneSelection!.id,
           pickNumber: undoneSelection!.pickNumber,
           rosterId: undoneSelection!.rosterId,
           draftPickAssetId: undoneSelection!.draftPickAssetId,
-          isPickAsset: true,
+          isPickAsset: true as const,
         };
 
         return {
@@ -769,7 +800,8 @@ export class DraftStateService {
               scheduleGeneratorService: this.scheduleGeneratorService,
             },
             draftId,
-            leagueId
+            leagueId,
+            client
           );
         }
 
@@ -799,9 +831,11 @@ export class DraftStateService {
     const { draftId, reason } = params;
 
     const pool = container.resolve<Pool>(KEYS.POOL);
+    const playerRepo = container.resolve<PlayerRepository>(KEYS.PLAYER_REPO);
 
-    // First, determine what to pick
-    const pickDecision = await runInDraftTransaction(pool, draftId, async (client) => {
+    // Combine decision and execution in a single transaction to prevent TOCTOU race
+    // where state could change between determining what to pick and applying the pick.
+    const result = await runInDraftTransaction(pool, draftId, async (client) => {
       const draft = await this.draftRepo.findByIdWithClient(client, draftId);
       if (!draft) throw new NotFoundException('Draft not found');
 
@@ -831,41 +865,81 @@ export class DraftStateService {
       }
 
       // Get best available player from queue or rankings
-      const playerRepo = container.resolve<PlayerRepository>(KEYS.PLAYER_REPO);
       const bestPlayer = await this.getBestAvailablePlayer(client, draft, currentRosterId, playerRepo);
 
       if (!bestPlayer) {
         return { actionTaken: false as const, reason: 'no_available_players' };
       }
 
-      return {
-        actionTaken: true as const,
-        leagueId: draft.leagueId,
+      // --- Execute the pick within the same transaction ---
+
+      // Validate player pool eligibility
+      await validatePlayerPoolEligibility(client, draft, bestPlayer.id, playerRepo);
+
+      // Calculate pick position
+      const totalRosters = draftOrder.length;
+      const pickInRound = engine.getPickInRound(draft.currentPick, totalRosters);
+
+      // Compute next pick state with fresh data inside the lock
+      const computedNextPickState = this.computeNextPickState(draft, draftOrder, engine, pickAssets);
+
+      const idempotencyKey = `autopick-${draftId}-${draft.currentPick}`;
+
+      // Make the pick using the client that already holds the lock
+      const pickResult = await this.draftRepo.makePickAndAdvanceTxWithClient(client, {
+        draftId,
+        expectedPickNumber: draft.currentPick,
+        round: draft.currentRound,
+        pickInRound,
         rosterId: currentRosterId,
         playerId: bestPlayer.id,
+        nextPickState: computedNextPickState,
+        idempotencyKey,
+        isAutoPick: true,
+      });
+
+      // If draft completed, run unified finalization inside the transaction
+      if (computedNextPickState.status === 'completed') {
+        await finalizeDraftCompletion(
+          {
+            draftRepo: this.draftRepo,
+            leagueRepo: this.leagueRepo,
+            rosterPlayersRepo: this.rosterPlayersRepo,
+            scheduleGeneratorService: this.scheduleGeneratorService,
+          },
+          draftId,
+          draft.leagueId,
+          client
+        );
+      }
+
+      // Fetch player info for socket event
+      const player = await playerRepo.findByIdWithClient(client, bestPlayer.id);
+
+      return {
+        actionTaken: true as const,
+        pick: pickResult.pick,
+        updatedDraft: pickResult.draft,
+        nextPickState: computedNextPickState,
+        player,
       };
     });
 
-    if (!pickDecision.actionTaken) {
-      return pickDecision;
+    if (!result.actionTaken) {
+      return result;
     }
 
-    // Now apply the pick
-    return await this.applyPick({
-      leagueId: pickDecision.leagueId,
-      draftId,
-      rosterId: pickDecision.rosterId,
-      playerId: pickDecision.playerId,
-      isAutoPick: true,
-      idempotencyKey: `autopick-${draftId}-${Date.now()}`,
-    });
+    // Emit events AFTER transaction commits
+    this.emitPickEvents(draftId, result.pick, result.updatedDraft, result.nextPickState, result.player, true);
+
+    return { pick: result.pick, draft: result.updatedDraft, nextPickState: result.nextPickState, player: result.player };
   }
 
   /**
    * Advance to the next turn without making a pick.
    * Used for recovery scenarios or commissioner skip.
    */
-  async advanceTurn(params: AdvanceTurnParams): Promise<{ draft: any; nextPickState: NextPickState }> {
+  async advanceTurn(params: AdvanceTurnParams): Promise<{ draft: DraftResponse; nextPickState: NextPickState }> {
     const { draftId } = params;
     const pool = container.resolve<Pool>(KEYS.POOL);
 
@@ -905,7 +979,8 @@ export class DraftStateService {
             scheduleGeneratorService: this.scheduleGeneratorService,
           },
           draftId,
-          draft.leagueId
+          draft.leagueId,
+          client
         );
       }
 
@@ -1057,7 +1132,7 @@ export class DraftStateService {
    */
   private emitPickEvents(
     draftId: number,
-    pick: any,
+    pick: DraftPick,
     updatedDraft: Draft,
     nextPickState: NextPickState,
     player: Player | null | undefined,

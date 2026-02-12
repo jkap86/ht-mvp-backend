@@ -15,7 +15,17 @@ import {
 } from '../../utils/exceptions';
 import { runWithLock, LockDomain } from '../../shared/transaction-runner';
 import { logger } from '../../config/logger.config';
-import { League } from './leagues.model';
+import { League, Roster } from './leagues.model';
+
+interface LeagueMemberInfo {
+  id: number;
+  league_id: number;
+  user_id: string | null;
+  roster_id: number;
+  team_name: string | null;
+  username: string;
+  is_benched: boolean;
+}
 
 /**
  * Check if a user can join a league at the current time.
@@ -106,7 +116,7 @@ export class RosterService {
     return { rosterId: roster.rosterId };
   }
 
-  async joinLeague(leagueId: number, userId: string, client?: PoolClient): Promise<{ message: string; roster: any; joinedAsBench?: boolean }> {
+  async joinLeague(leagueId: number, userId: string, client?: PoolClient): Promise<{ message: string; roster: { roster_id: number; league_id: number }; joinedAsBench?: boolean }> {
     // If client is provided, use it directly (caller already has lock)
     // Otherwise, acquire lock and call internal method
     const { roster, joinedAsBench } = client
@@ -162,7 +172,7 @@ export class RosterService {
     );
 
     // Group by draft and emit settings update for each
-    const draftOrders = new Map<number, any[]>();
+    const draftOrders = new Map<number, Array<{ draftPosition: number; rosterId: number; username: string; userId: string }>>();
     for (const row of draftsResult.rows) {
       if (!draftOrders.has(row.id)) {
         draftOrders.set(row.id, []);
@@ -202,7 +212,7 @@ export class RosterService {
     client: PoolClient,
     leagueId: number,
     userId: string
-  ): Promise<{ roster: any; joinedAsBench: boolean }> {
+  ): Promise<{ roster: Roster; joinedAsBench: boolean }> {
     // Fetch league inside the lock with the transaction client for fresh data
     const league = await this.leagueRepo.findById(leagueId, client);
     if (!league) {
@@ -267,7 +277,7 @@ export class RosterService {
   private async canJoinAsBench(
     leagueId: number,
     activeRosterCount: number,
-    client: any
+    client: PoolClient
   ): Promise<boolean> {
     return this.canJoinAsBenchWithClient(client, leagueId, activeRosterCount);
   }
@@ -276,7 +286,7 @@ export class RosterService {
    * Check if a user can join a paid league as bench (with explicit client parameter)
    */
   private async canJoinAsBenchWithClient(
-    client: any,
+    client: PoolClient,
     leagueId: number,
     activeRosterCount: number
   ): Promise<boolean> {
@@ -306,7 +316,7 @@ export class RosterService {
     return paidCount < activeRosterCount;
   }
 
-  async getLeagueMembers(leagueId: number, userId: string): Promise<any[]> {
+  async getLeagueMembers(leagueId: number, userId: string): Promise<LeagueMemberInfo[]> {
     // Get all rosters AND check membership in one query to avoid race condition
     const rosters = await this.rosterRepo.findByLeagueIdWithMembershipCheck(leagueId, userId);
 
@@ -320,7 +330,7 @@ export class RosterService {
       league_id: r.leagueId,
       user_id: r.userId,
       roster_id: r.rosterId,
-      team_name: (r as any).teamName || null,
+      team_name: r.teamName || null,
       username: r.username || 'Unknown',
       is_benched: r.isBenched || false,
     }));
@@ -460,8 +470,9 @@ async devBulkAddUsers(
         });
 
         results.push({ username, success: true });
-      } catch (error: any) {
-        results.push({ username, success: false, error: error.message || 'Unknown error' });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        results.push({ username, success: false, error: message });
       }
     }
 
@@ -567,7 +578,7 @@ async devBulkAddUsers(
    * Called when a roster joins a league to handle late-joiner initialization.
    */
   private async ensureWaiverRowsForRoster(
-    league: { id: number; settings: any; season: string },
+    league: Pick<League, 'id' | 'settings' | 'season'>,
     rosterId: number,
     client: PoolClient
   ): Promise<void> {

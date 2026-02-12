@@ -97,6 +97,13 @@ export class DraftQueueRepository {
   }
 
   /**
+   * Remove a queue entry by ID using an existing client (for transactions).
+   */
+  async removeFromQueueWithClient(client: PoolClient, queueId: number): Promise<void> {
+    await client.query('DELETE FROM draft_queue WHERE id = $1', [queueId]);
+  }
+
+  /**
    * Remove a player from a roster's queue.
    */
   async removeFromQueueByPlayer(
@@ -219,6 +226,31 @@ export class DraftQueueRepository {
         }
       }
     });
+  }
+
+  /**
+   * Get queue entries for a roster in a draft using an existing client (for transactions).
+   */
+  async getQueueWithClient(
+    client: PoolClient,
+    draftId: number,
+    rosterId: number
+  ): Promise<QueueEntry[]> {
+    const result = await client.query(
+      `SELECT dq.*,
+              p.full_name as player_name, p.position as player_position, p.team as player_team,
+              dpa.season as pick_asset_season, dpa.round as pick_asset_round,
+              COALESCE(orig_r.settings->>'team_name', orig_u.username, 'Team ' || orig_r.id) as original_team_name
+       FROM draft_queue dq
+       LEFT JOIN players p ON dq.player_id = p.id
+       LEFT JOIN draft_pick_assets dpa ON dq.pick_asset_id = dpa.id
+       LEFT JOIN rosters orig_r ON dpa.original_roster_id = orig_r.id
+       LEFT JOIN users orig_u ON orig_r.user_id = orig_u.id
+       WHERE dq.draft_id = $1 AND dq.roster_id = $2
+       ORDER BY dq.queue_position`,
+      [draftId, rosterId]
+    );
+    return this.mapQueueRows(result.rows);
   }
 
   /**

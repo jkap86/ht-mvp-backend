@@ -6,6 +6,37 @@ export type PlayoffStatus = 'pending' | 'active' | 'completed';
 export type BracketType = 'WINNERS' | 'THIRD_PLACE' | 'CONSOLATION';
 export type ConsolationType = 'NONE' | 'CONSOLATION';
 
+/**
+ * Raw database row shape returned by playoff matchup queries.
+ * These queries join matchups with rosters to include team names.
+ */
+export interface PlayoffMatchupRow {
+  id: number;
+  league_id: number;
+  season: number;
+  week: number;
+  roster1_id: number;
+  roster2_id: number;
+  roster1_points: string | null;
+  roster2_points: string | null;
+  is_playoff: boolean;
+  is_final: boolean;
+  playoff_round: number;
+  playoff_seed1: number;
+  playoff_seed2: number;
+  bracket_position: number;
+  bracket_type: BracketType;
+  series_id: string | null;
+  series_game: number | null;
+  series_length: number | null;
+  created_at: Date;
+  // Joined fields from rosters
+  roster1_team_name: string | null;
+  roster2_team_name: string | null;
+  roster1_user_id?: string;
+  roster2_user_id?: string;
+}
+
 export interface PlayoffSettings {
   enableThirdPlaceGame: boolean;
   consolationType: ConsolationType;

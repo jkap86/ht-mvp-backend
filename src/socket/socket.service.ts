@@ -13,6 +13,7 @@ import { SOCKET_EVENTS, ROOM_NAMES } from '../constants/socket-events';
 import {
   socketRateLimitMiddleware,
   trackUserConnections,
+  checkEventRateLimit,
 } from '../middleware/socket-rate-limit.middleware';
 
 // Membership cache configuration
@@ -152,6 +153,12 @@ export class SocketService {
         }
 
         const payload = verifyToken(token as string);
+
+        // Reject refresh tokens - only access tokens may authenticate sockets
+        if (payload.type === 'refresh') {
+          return next(new Error('Refresh tokens cannot be used for socket authentication'));
+        }
+
         socket.userId = payload.userId;
         socket.username = payload.username;
         next();
@@ -159,6 +166,31 @@ export class SocketService {
         next(new Error('Invalid token'));
       }
     });
+  }
+
+  /**
+   * Check per-event rate limit for the socket user.
+   * Returns true if the event is allowed, false if rate exceeded (error already emitted).
+   */
+  private checkEventRate(socket: AuthenticatedSocket, eventName: string): boolean {
+    if (!socket.userId) return true; // Unauthenticated sockets are rejected elsewhere
+
+    const result = checkEventRateLimit(socket.userId, eventName);
+    if (!result.allowed) {
+      const retryAfterSeconds = Math.ceil(result.retryAfterMs / 1000);
+      logger.warn('Socket event rate limit exceeded', {
+        userId: socket.userId,
+        event: eventName,
+        retryAfterSeconds,
+      });
+      socket.emit(SOCKET_EVENTS.APP.ERROR, {
+        message: `Rate limit exceeded for ${eventName}. Try again in ${retryAfterSeconds}s.`,
+        code: 'RATE_LIMIT_EXCEEDED',
+        retryAfterSeconds,
+      });
+      return false;
+    }
+    return true;
   }
 
   private setupEventHandlers(): void {
@@ -175,6 +207,8 @@ export class SocketService {
 
       // Join league room (with membership verification)
       socket.on(SOCKET_EVENTS.LEAGUE.JOIN, async (leagueId: number) => {
+        if (!this.checkEventRate(socket, SOCKET_EVENTS.LEAGUE.JOIN)) return;
+
         if (!socket.userId) {
           socket.emit(SOCKET_EVENTS.APP.ERROR, { message: 'Not authenticated' });
           return;
@@ -207,6 +241,8 @@ export class SocketService {
 
       // Leave league room
       socket.on(SOCKET_EVENTS.LEAGUE.LEAVE, (leagueId: number) => {
+        if (!this.checkEventRate(socket, SOCKET_EVENTS.LEAGUE.LEAVE)) return;
+
         // Validate leagueId is a positive integer
         if (typeof leagueId !== 'number' || !Number.isInteger(leagueId) || leagueId <= 0) {
           socket.emit(SOCKET_EVENTS.APP.ERROR, { message: 'Invalid league ID' });
@@ -220,6 +256,8 @@ export class SocketService {
 
       // Join draft room (with membership verification)
       socket.on(SOCKET_EVENTS.DRAFT.JOIN, async (draftId: number) => {
+        if (!this.checkEventRate(socket, SOCKET_EVENTS.DRAFT.JOIN)) return;
+
         if (!socket.userId) {
           socket.emit(SOCKET_EVENTS.APP.ERROR, { message: 'Not authenticated' });
           return;
@@ -266,6 +304,8 @@ export class SocketService {
 
       // Leave draft room
       socket.on(SOCKET_EVENTS.DRAFT.LEAVE, (draftId: number) => {
+        if (!this.checkEventRate(socket, SOCKET_EVENTS.DRAFT.LEAVE)) return;
+
         // Validate draftId is a positive integer
         if (typeof draftId !== 'number' || !Number.isInteger(draftId) || draftId <= 0) {
           socket.emit(SOCKET_EVENTS.APP.ERROR, { message: 'Invalid draft ID' });
@@ -495,6 +535,11 @@ export class SocketService {
   // Emit trade vote cast event
   emitTradeVoteCast(leagueId: number, data: any): void {
     this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.TRADE.VOTE_CAST, data);
+  }
+
+  // Emit trade failed event (could not execute after review period)
+  emitTradeFailed(leagueId: number, data: { tradeId: number; reason: string }): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.TRADE.FAILED, data);
   }
 
   // Emit trade invalidated event (player dropped)

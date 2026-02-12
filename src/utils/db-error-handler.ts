@@ -1,5 +1,5 @@
 import { logger } from '../config/logger.config';
-import { DatabaseException } from './exceptions';
+import { AppException, DatabaseException } from './exceptions';
 
 /**
  * Wraps a database operation and converts raw database errors to sanitized DatabaseException.
@@ -34,20 +34,7 @@ export async function withDbErrorHandling<T>(
  * Checks if an error is already an application-level error (not a raw db error)
  */
 function isAppError(error: unknown): boolean {
-  if (error instanceof Error) {
-    // Check for our known exception types by checking constructor name patterns
-    const knownErrors = [
-      'AppException',
-      'ValidationException',
-      'InvalidCredentialsException',
-      'ForbiddenException',
-      'NotFoundException',
-      'ConflictException',
-      'DatabaseException',
-    ];
-    return knownErrors.some((name) => error.constructor.name === name);
-  }
-  return false;
+  return error instanceof AppException;
 }
 
 /**

@@ -25,6 +25,7 @@ import {
 import { NotFoundException, ConflictException } from '../../../utils/exceptions';
 import { runWithLock, LockDomain } from '../../../shared/transaction-runner';
 import { addToWaiverWire, WaiverInfoContext } from './waiver-info.use-case';
+import { invalidateTradesForPlayer } from '../../trades/trade-invalidation.utils';
 import type { EventListenerService } from '../../chat/event-listener.service';
 import { logger } from '../../../config/logger.config';
 
@@ -275,13 +276,13 @@ export async function processLeagueClaims(
 
               // Invalidate pending trades
               if (ctx.tradesRepo) {
-                const invalidatedTrades = await invalidateTradesForPlayer(ctx, leagueId, playerId, client);
+                const invalidatedTrades = await invalidateTradesForPlayer(ctx.tradesRepo, leagueId, playerId, client);
                 for (const trade of invalidatedTrades) {
                   pendingEvents.push(() => emitTradeInvalidated(trade.leagueId, trade.id));
                 }
                 if (claim.dropPlayerId) {
                   const droppedPlayerTrades = await invalidateTradesForPlayer(
-                    ctx,
+                    ctx.tradesRepo,
                     leagueId,
                     claim.dropPlayerId,
                     client
@@ -643,40 +644,6 @@ async function executeClaim(
   if (waiverType === 'standard') {
     await ctx.priorityRepo.rotatePriority(claim.leagueId, season, claim.rosterId, client);
   }
-}
-
-/**
- * Invalidate pending trades involving a player (called after roster changes)
- * Returns the list of invalidated trades for deferred socket emission
- */
-async function invalidateTradesForPlayer(
-  ctx: ProcessWaiversContext,
-  leagueId: number,
-  playerId: number,
-  client: PoolClient
-): Promise<Array<{ id: number; leagueId: number }>> {
-  if (!ctx.tradesRepo) return [];
-
-  // Find pending trades involving this player
-  const pendingTrades = await ctx.tradesRepo.findPendingByPlayer(leagueId, playerId, client);
-  const invalidatedTrades: Array<{ id: number; leagueId: number }> = [];
-
-  for (const trade of pendingTrades) {
-    // Conditional update - only expire if still in pending/accepted/in_review status
-    const result = await client.query(
-      `UPDATE trades SET status = 'expired', updated_at = NOW()
-       WHERE id = $1 AND status IN ('pending', 'accepted', 'in_review')
-       RETURNING id`,
-      [trade.id]
-    );
-
-    // Only add to list if actually updated (was still in eligible status)
-    if (result.rowCount && result.rowCount > 0) {
-      invalidatedTrades.push({ id: trade.id, leagueId: trade.leagueId });
-    }
-  }
-
-  return invalidatedTrades;
 }
 
 /**

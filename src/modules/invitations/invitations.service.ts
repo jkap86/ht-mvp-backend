@@ -103,7 +103,7 @@ export class InvitationsService {
     // Get full invitation details
     const invitationWithDetails = await this.invitationsRepo.findByIdWithDetails(invitation.id);
     if (!invitationWithDetails) {
-      throw new Error('Failed to retrieve invitation details');
+      throw new NotFoundException('Failed to retrieve invitation details');
     }
 
     // Emit event to invited user

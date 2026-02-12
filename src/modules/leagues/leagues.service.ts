@@ -13,6 +13,23 @@ import { LockDomain } from '../../shared/locks';
 import { EventTypes, tryGetEventBus } from '../../shared/events';
 import { logger } from '../../config/logger.config';
 
+type LeagueResponse = ReturnType<League['toResponse']>;
+
+interface PublicLeagueInfo {
+  id: number;
+  name: string;
+  season: string;
+  mode: string;
+  total_rosters: number;
+  is_public: boolean;
+  member_count: number;
+  has_dues: boolean;
+  buy_in_amount: number | null;
+  currency: string | null;
+  paid_count: number;
+  fill_status: 'open' | 'waiting_payment' | 'filled';
+}
+
 export class LeagueService {
   constructor(
     private readonly db: Pool,
@@ -24,12 +41,12 @@ export class LeagueService {
     private readonly matchupsRepo?: MatchupsRepository
   ) {}
 
-  async getUserLeagues(userId: string, limit?: number, offset?: number): Promise<any[]> {
+  async getUserLeagues(userId: string, limit?: number, offset?: number): Promise<LeagueResponse[]> {
     const leagues = await this.leagueRepo.findByUserId(userId, limit, offset);
     return leagues.map((l) => l.toResponse());
   }
 
-  async getLeagueById(leagueId: number, userId: string): Promise<any> {
+  async getLeagueById(leagueId: number, userId: string): Promise<LeagueResponse> {
     const league = await this.leagueRepo.findByIdWithUserRoster(leagueId, userId);
 
     if (!league) {
@@ -52,7 +69,7 @@ export class LeagueService {
     params: CreateLeagueParams & { draftStructure?: string },
     userId: string,
     idempotencyKey?: string
-  ): Promise<any> {
+  ): Promise<LeagueResponse> {
     // Idempotency check: return existing league if same key was already used
     if (idempotencyKey) {
       const existing = await this.db.query(
@@ -88,7 +105,7 @@ export class LeagueService {
       throw new ValidationException('Invalid draft structure');
     }
 
-    // Create league and commissioner roster atomically in a transaction
+    // Create league, commissioner roster, and drafts atomically in a single transaction
     const league = await runInTransaction(this.db, async (client) => {
       // Create league with client
       const league = await this.leagueRepo.createWithClient(client, {
@@ -105,34 +122,18 @@ export class LeagueService {
       // Create first roster for the creator (commissioner) with client
       await this.rosterService.createInitialRosterWithClient(client, league.id, userId);
 
-      return league;
-    });
-
-    // Create drafts outside transaction (they have their own transaction logic)
-    // If draft creation fails, clean up by deleting the league
-    try {
+      // Create drafts within the same transaction
       for (const preset of structure.drafts) {
-        await this.draftService.createDraft(league.id, userId, {
+        await this.draftService.createDraftWithClient(client, league, {
           draftType: league.leagueSettings?.draftType || 'snake',
           pickTimeSeconds: 90,
           rounds: preset.defaultRounds,
           playerPool: preset.playerPool,
         });
       }
-    } catch (error) {
-      // Rollback: delete the league if draft creation fails
-      logger.error(`Draft creation failed for league ${league.id}, rolling back league creation`, {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      try {
-        await this.leagueRepo.delete(league.id);
-      } catch (deleteError) {
-        logger.error(`Failed to rollback league ${league.id}`, {
-          error: deleteError instanceof Error ? deleteError.message : String(deleteError),
-        });
-      }
-      throw error;
-    }
+
+      return league;
+    });
 
     // Get updated league with commissioner info
     const updatedLeague = await this.leagueRepo.findByIdWithUserRoster(league.id, userId);
@@ -162,7 +163,7 @@ export class LeagueService {
     leagueId: number,
     userId: string,
     updates: Partial<League> & { totalRosters?: number }
-  ): Promise<any> {
+  ): Promise<LeagueResponse> {
     // Check if user is commissioner
     const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
     if (!isCommissioner) {
@@ -301,8 +302,8 @@ export class LeagueService {
       };
 
       for (const [key, label] of Object.entries(leagueSettingLabels)) {
-        const newValue = (updates.leagueSettings as any)[key];
-        const oldValue = (currentSettings as any)[key];
+        const newValue = (updates.leagueSettings as Record<string, unknown>)[key];
+        const oldValue = (currentSettings as Record<string, unknown>)[key];
         if (newValue !== undefined && JSON.stringify(newValue) !== JSON.stringify(oldValue)) {
           changedSettings.push(label);
         }
@@ -420,7 +421,7 @@ export class LeagueService {
     leagueId: number,
     userId: string,
     input: { seasonStatus?: string; currentWeek?: number }
-  ): Promise<any> {
+  ): Promise<LeagueResponse> {
     // Check if user is commissioner
     const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
     if (!isCommissioner) {
@@ -482,7 +483,7 @@ export class LeagueService {
     return league.toResponse();
   }
 
-  async discoverPublicLeagues(userId: string, limit?: number, offset?: number): Promise<any[]> {
+  async discoverPublicLeagues(userId: string, limit?: number, offset?: number): Promise<PublicLeagueInfo[]> {
     return this.leagueRepo.findPublicLeagues(userId, limit, offset);
   }
 
@@ -490,7 +491,7 @@ export class LeagueService {
     leagueId: number,
     userId: string,
     idempotencyKey?: string
-  ): Promise<any> {
+  ): Promise<LeagueResponse> {
     const operationsRepo = new LeagueOperationsRepository(this.db);
 
     return await runWithLock(this.db, LockDomain.LEAGUE, leagueId, async (client) => {
@@ -546,7 +547,7 @@ export class LeagueService {
       confirmationName: string;
     },
     idempotencyKey?: string
-  ): Promise<any> {
+  ): Promise<LeagueResponse> {
     // Idempotency check: return existing result if same key was already used
     if (idempotencyKey) {
       const existing = await this.db.query(

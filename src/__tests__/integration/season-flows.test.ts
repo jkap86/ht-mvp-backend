@@ -1200,6 +1200,7 @@ describe('Season Sanity Integration Tests', () => {
       createdAt: new Date(),
       updatedAt: new Date(),
       completedAt: null,
+      failureReason: null,
       notifyLeagueChat: true,
       notifyDm: true,
       leagueChatMode: 'summary',

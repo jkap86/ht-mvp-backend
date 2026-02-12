@@ -128,8 +128,16 @@ export function socketRateLimitMiddleware(socket: Socket, next: (err?: Error) =>
         next();
       })
       .catch((error) => {
-        logger.error('Socket rate limit check failed', { error });
-        // Allow connection on error to prevent blocking all connections
+        logger.error('Socket rate limit check failed, using in-memory fallback', { error });
+        // Fall back to in-memory rate limiting instead of allowing all connections
+        const { allowed, remainingTime } = checkRateLimitInMemory(ip);
+        if (!allowed) {
+          logger.warn('Socket connection rate limit exceeded (in-memory fallback)', {
+            ip,
+            remainingSeconds: remainingTime,
+          });
+          return next(new Error(`Too many connection attempts. Please try again in ${remainingTime} seconds.`));
+        }
         next();
       });
   } else {
@@ -255,4 +263,78 @@ function trackUserConnectionsInMemory(
       userConnections.delete(userId);
     }
   });
+}
+
+// ============================================================================
+// Per-Event Rate Limiting
+// ============================================================================
+
+/**
+ * Per-user, per-event rate limits (requests per minute).
+ * Events not listed here use the 'default' limit.
+ */
+const SOCKET_EVENT_LIMITS: Record<string, { maxPerMinute: number }> = {
+  'draft:pick': { maxPerMinute: 30 },
+  'join:draft': { maxPerMinute: 10 },
+  'leave:draft': { maxPerMinute: 10 },
+  'join:league': { maxPerMinute: 10 },
+  'leave:league': { maxPerMinute: 10 },
+  'chat:message': { maxPerMinute: 60 },
+  'auction:bid': { maxPerMinute: 60 },
+  default: { maxPerMinute: 30 },
+};
+
+interface EventRateLimitEntry {
+  count: number;
+  resetAt: number;
+}
+
+/**
+ * In-memory sliding-window rate limit store.
+ * Keyed by "userId:eventName" -> { count, resetAt }
+ */
+const eventRateLimitStore = new Map<string, EventRateLimitEntry>();
+
+// Clean up expired event rate limit entries every 2 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of eventRateLimitStore.entries()) {
+    if (now > entry.resetAt) {
+      eventRateLimitStore.delete(key);
+    }
+  }
+}, 2 * 60 * 1000);
+
+const EVENT_RATE_WINDOW_MS = 60 * 1000; // 1 minute window
+
+/**
+ * Check per-event rate limit for a user.
+ * Returns { allowed: true } if the event is within limits,
+ * or { allowed: false, retryAfterMs } if rate exceeded.
+ */
+export function checkEventRateLimit(
+  userId: string,
+  eventName: string
+): { allowed: true } | { allowed: false; retryAfterMs: number } {
+  const limit = SOCKET_EVENT_LIMITS[eventName] || SOCKET_EVENT_LIMITS['default'];
+  const key = `${userId}:${eventName}`;
+  const now = Date.now();
+
+  let entry = eventRateLimitStore.get(key);
+
+  // Window expired or no entry -- start fresh
+  if (!entry || now > entry.resetAt) {
+    entry = { count: 1, resetAt: now + EVENT_RATE_WINDOW_MS };
+    eventRateLimitStore.set(key, entry);
+    return { allowed: true };
+  }
+
+  entry.count++;
+
+  if (entry.count > limit.maxPerMinute) {
+    const retryAfterMs = entry.resetAt - now;
+    return { allowed: false, retryAfterMs };
+  }
+
+  return { allowed: true };
 }

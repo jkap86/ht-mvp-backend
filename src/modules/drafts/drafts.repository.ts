@@ -65,6 +65,18 @@ export class DraftRepository {
     return this.core.create(leagueId, draftType, rounds, pickTimeSeconds, settings, scheduledStart);
   }
 
+  async createWithClient(
+    client: PoolClient,
+    leagueId: number,
+    draftType: string,
+    rounds: number,
+    pickTimeSeconds: number,
+    settings?: DraftSettings,
+    scheduledStart?: Date
+  ): Promise<Draft> {
+    return this.core.createWithClient(client, leagueId, draftType, rounds, pickTimeSeconds, settings, scheduledStart);
+  }
+
   async update(id: number, updates: Partial<Draft>): Promise<Draft> {
     return this.core.update(id, updates);
   }
@@ -104,6 +116,14 @@ export class DraftRepository {
     return this.core.getBestAvailablePlayer(draftId, playerPool);
   }
 
+  async getBestAvailablePlayerWithClient(
+    client: PoolClient,
+    draftId: number,
+    playerPool: string[] = ['veteran', 'rookie']
+  ): Promise<number | null> {
+    return this.core.getBestAvailablePlayerWithClient(client, draftId, playerPool);
+  }
+
   // ============================================
   // Draft Order Operations (delegated to DraftOrderRepository)
   // ============================================
@@ -127,6 +147,15 @@ export class DraftRepository {
     return this.order.setAutodraftEnabled(draftId, rosterId, enabled);
   }
 
+  async setAutodraftEnabledWithClient(
+    client: PoolClient,
+    draftId: number,
+    rosterId: number,
+    enabled: boolean
+  ): Promise<void> {
+    return this.order.setAutodraftEnabledWithClient(client, draftId, rosterId, enabled);
+  }
+
   async getAutodraftEnabled(draftId: number, rosterId: number): Promise<boolean> {
     return this.order.getAutodraftEnabled(draftId, rosterId);
   }
@@ -143,12 +172,24 @@ export class DraftRepository {
     return this.order.updateDraftOrderAtomic(draftId, rosterIds);
   }
 
+  async updateDraftOrderAtomicWithClient(
+    client: PoolClient,
+    draftId: number,
+    rosterIds: number[]
+  ): Promise<void> {
+    return this.order.updateDraftOrderAtomicWithClient(client, draftId, rosterIds);
+  }
+
   // ============================================
   // Draft Pick Operations (delegated to DraftPickRepository)
   // ============================================
 
   async getDraftPicks(draftId: number, limit?: number, offset?: number): Promise<DraftPick[]> {
     return this.pick.getDraftPicks(draftId, limit, offset);
+  }
+
+  async getDraftPicksWithClient(client: PoolClient, draftId: number): Promise<DraftPick[]> {
+    return this.pick.getDraftPicksWithClient(client, draftId);
   }
 
   async createDraftPick(
@@ -192,6 +233,13 @@ export class DraftRepository {
 
   async getDraftedPlayerIds(draftId: number): Promise<Set<number>> {
     return this.pick.getDraftedPlayerIds(draftId);
+  }
+
+  async getDraftedPlayerIdsWithClient(
+    client: PoolClient,
+    draftId: number
+  ): Promise<Set<number>> {
+    return this.pick.getDraftedPlayerIdsWithClient(client, draftId);
   }
 
   async markPickAsAutoPick(pickId: number): Promise<void> {
@@ -351,6 +399,14 @@ export class DraftRepository {
     return this.queue.getQueue(draftId, rosterId);
   }
 
+  async getQueueWithClient(
+    client: PoolClient,
+    draftId: number,
+    rosterId: number
+  ): Promise<QueueEntry[]> {
+    return this.queue.getQueueWithClient(client, draftId, rosterId);
+  }
+
   async addToQueue(
     draftId: number,
     rosterId: number,
@@ -362,6 +418,10 @@ export class DraftRepository {
 
   async removeFromQueue(queueId: number): Promise<void> {
     return this.queue.removeFromQueue(queueId);
+  }
+
+  async removeFromQueueWithClient(client: PoolClient, queueId: number): Promise<void> {
+    return this.queue.removeFromQueueWithClient(client, queueId);
   }
 
   async removeFromQueueByPlayer(

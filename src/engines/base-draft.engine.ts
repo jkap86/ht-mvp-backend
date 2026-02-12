@@ -355,7 +355,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     // between our queue read and the pick write.
     const pool = container.resolve<Pool>(KEYS.POOL);
     return runInDraftTransaction(pool, draft.id, async (client) => {
-      const draftOrder = await this.draftRepo.getDraftOrder(draft.id);
+      const draftOrder = await this.draftRepo.getDraftOrderWithClient(client, draft.id);
       const settings = draft.settings as DraftSettings;
       const includeRookiePicks = settings?.includeRookiePicks ?? false;
 
@@ -365,12 +365,12 @@ export abstract class BaseDraftEngine implements IDraftEngine {
         const vetPickSelectionRepo = container.resolve<VetDraftPickSelectionRepository>(
           KEYS.VET_PICK_SELECTION_REPO
         );
-        draftedPickAssetIds = await vetPickSelectionRepo.getSelectedAssetIds(draft.id);
+        draftedPickAssetIds = await vetPickSelectionRepo.getSelectedAssetIdsWithClient(client, draft.id);
       }
 
       // Get the user's queue and drafted player IDs
-      const queue = await this.draftRepo.getQueue(draft.id, draft.currentRosterId!);
-      const draftedPlayerIds = await this.draftRepo.getDraftedPlayerIds(draft.id);
+      const queue = await this.draftRepo.getQueueWithClient(client, draft.id, draft.currentRosterId!);
+      const draftedPlayerIds = await this.draftRepo.getDraftedPlayerIdsWithClient(client, draft.id);
 
       // Find first available queue item (player or pick asset)
       for (const queueItem of queue) {
@@ -382,7 +382,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
             return await this.performAutoPickPlayer(draft, draftOrder, queueItem.playerId, true, client);
           }
           // Player already drafted - remove from queue
-          await this.draftRepo.removeFromQueue(queueItem.id);
+          await this.draftRepo.removeFromQueueWithClient(client, queueItem.id);
         } else if (queueItem.pickAssetId !== null && includeRookiePicks) {
           // Pick asset entry (only if draft allows)
           if (!draftedPickAssetIds?.has(queueItem.pickAssetId)) {
@@ -391,7 +391,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
             return await this.performAutoPickAsset(draft, draftOrder, queueItem.pickAssetId, client);
           }
           // Pick asset already drafted - remove from queue
-          await this.draftRepo.removeFromQueue(queueItem.id);
+          await this.draftRepo.removeFromQueueWithClient(client, queueItem.id);
         }
       }
 
@@ -416,7 +416,9 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     // If no playerId, get best available
     if (!playerId) {
       const playerPool = (draft.settings as any)?.playerPool || ['veteran', 'rookie'];
-      playerId = await this.draftRepo.getBestAvailablePlayer(draft.id, playerPool);
+      playerId = client
+        ? await this.draftRepo.getBestAvailablePlayerWithClient(client, draft.id, playerPool)
+        : await this.draftRepo.getBestAvailablePlayer(draft.id, playerPool);
     }
 
     if (!playerId) {
@@ -425,7 +427,9 @@ export abstract class BaseDraftEngine implements IDraftEngine {
 
     // Load pick assets for computing next pick state
     const pickAssetRepo = container.resolve<DraftPickAssetRepository>(KEYS.PICK_ASSET_REPO);
-    const pickAssets = await pickAssetRepo.findByDraftId(draft.id);
+    const pickAssets = client
+      ? await pickAssetRepo.findByDraftIdWithClient(client, draft.id)
+      : await pickAssetRepo.findByDraftId(draft.id);
 
     // Pre-compute next pick state before the atomic transaction
     const nextPickState = this.computeNextPickState(draft, draftOrder, pickAssets);
@@ -459,12 +463,13 @@ export abstract class BaseDraftEngine implements IDraftEngine {
           rosterPlayersRepo: this.rosterPlayersRepo,
         },
         draft.id,
-        draft.leagueId
+        draft.leagueId,
+        client
       );
     }
 
     // Check if user had autodraft disabled - if so, force-enable it
-    await this.handleAutodraftForceEnable(draft, draftOrder);
+    await this.handleAutodraftForceEnable(draft, draftOrder, client);
 
     // Build next pick info for socket emission
     // When status is 'in_progress', pickDeadline is always set by computeNextPickState
@@ -501,7 +506,9 @@ export abstract class BaseDraftEngine implements IDraftEngine {
 
     // Load pick assets for computing next pick state
     const pickAssetRepo = container.resolve<DraftPickAssetRepository>(KEYS.PICK_ASSET_REPO);
-    const pickAssets = await pickAssetRepo.findByDraftId(draft.id);
+    const pickAssets = client
+      ? await pickAssetRepo.findByDraftIdWithClient(client, draft.id)
+      : await pickAssetRepo.findByDraftId(draft.id);
 
     // Compute next pick state
     const nextPickState = this.computeNextPickState(draft, draftOrder, pickAssets);
@@ -530,12 +537,13 @@ export abstract class BaseDraftEngine implements IDraftEngine {
           rosterPlayersRepo: this.rosterPlayersRepo,
         },
         draft.id,
-        draft.leagueId
+        draft.leagueId,
+        client
       );
     }
 
     // Check if user had autodraft disabled - if so, force-enable it
-    await this.handleAutodraftForceEnable(draft, draftOrder);
+    await this.handleAutodraftForceEnable(draft, draftOrder, client);
 
     // Get pick asset details for socket event
     const pickAsset = await pickAssetRepo.findByIdWithDetails(pickAssetId);
@@ -608,12 +616,17 @@ export abstract class BaseDraftEngine implements IDraftEngine {
    */
   protected async handleAutodraftForceEnable(
     draft: Draft,
-    draftOrder: DraftOrderEntry[]
+    draftOrder: DraftOrderEntry[],
+    client?: PoolClient
   ): Promise<void> {
     const currentPicker = draftOrder.find((o) => o.rosterId === draft.currentRosterId);
     if (currentPicker && !currentPicker.isAutodraftEnabled) {
       // Force-enable autodraft since they timed out
-      await this.draftRepo.setAutodraftEnabled(draft.id, draft.currentRosterId!, true);
+      if (client) {
+        await this.draftRepo.setAutodraftEnabledWithClient(client, draft.id, draft.currentRosterId!, true);
+      } else {
+        await this.draftRepo.setAutodraftEnabled(draft.id, draft.currentRosterId!, true);
+      }
 
       // Publish domain event to notify the user (and others) that autodraft was force-enabled
       const eventBus = tryGetEventBus();
@@ -758,7 +771,8 @@ export abstract class BaseDraftEngine implements IDraftEngine {
           rosterPlayersRepo: this.rosterPlayersRepo,
         },
         draft.id,
-        draft.leagueId
+        draft.leagueId,
+        client
       );
 
       await client.query(
@@ -772,11 +786,11 @@ export abstract class BaseDraftEngine implements IDraftEngine {
 
     const nextRound = this.getRound(nextPick, totalRosters);
 
-    // Fetch pick assets to check for traded picks
+    // Fetch pick assets to check for traded picks (using client for transaction consistency)
     let nextRosterId: number | null = null;
     try {
       const pickAssetRepo = container.resolve<DraftPickAssetRepository>(KEYS.PICK_ASSET_REPO);
-      const pickAssets = await pickAssetRepo.findByDraftId(draft.id);
+      const pickAssets = await pickAssetRepo.findByDraftIdWithClient(client, draft.id);
       const actualPicker = this.getActualPickerForPickNumber(draft, draftOrder, pickAssets, nextPick);
       nextRosterId = actualPicker?.rosterId || null;
     } catch (error) {

@@ -244,6 +244,7 @@ export const EventTypes = {
   TRADE_COUNTERED: 'trade:countered',
   TRADE_COMPLETED: 'trade:completed',
   TRADE_EXPIRED: 'trade:expired',
+  TRADE_FAILED: 'trade:failed',
   TRADE_INVALIDATED: 'trade:invalidated',
   TRADE_VOTE_CAST: 'trade:vote_cast',
   PICK_TRADED: 'trade:pick_traded',

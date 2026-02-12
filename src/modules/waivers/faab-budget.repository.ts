@@ -1,5 +1,6 @@
 import { Pool, PoolClient } from 'pg';
 import { FaabBudget, FaabBudgetWithDetails, faabBudgetFromDatabase } from './waivers.model';
+import { NotFoundException } from '../../utils/exceptions';
 
 /**
  * Repository for FAAB budget management
@@ -93,7 +94,7 @@ export class FaabBudgetRepository {
     );
 
     if (result.rows.length === 0) {
-      throw new Error(`FAAB budget not found for roster ${rosterId} season ${season}`);
+      throw new NotFoundException(`FAAB budget not found for roster ${rosterId} season ${season}`);
     }
 
     return faabBudgetFromDatabase(result.rows[0]);

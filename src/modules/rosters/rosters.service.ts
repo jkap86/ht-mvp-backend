@@ -12,6 +12,8 @@ import {
   ValidationException,
 } from '../../utils/exceptions';
 import { getMaxRosterSize } from '../../shared/roster-defaults';
+import { League } from '../leagues/leagues.model';
+import { playerFromDatabase, Player } from '../players/players.model';
 
 /**
  * LOCK CONTRACT:
@@ -30,15 +32,15 @@ export class RosterService {
     private readonly transactionsRepo: RosterTransactionsRepository,
     private readonly rosterRepo: RosterRepository,
     private readonly leagueRepo: LeagueRepository,
-    private readonly waiverWireRepo?: WaiverWireRepository,
-    private readonly rosterMutationService?: RosterMutationService
+    private readonly waiverWireRepo: WaiverWireRepository,
+    private readonly rosterMutationService: RosterMutationService
   ) {}
 
   /**
    * Add a player to the waiver wire if the league has waivers enabled
    */
   private async addToWaiverWireIfEnabled(
-    league: any,
+    league: League,
     playerId: number,
     droppedByRosterId: number,
     client?: PoolClient
@@ -130,7 +132,7 @@ export class RosterService {
       }
 
       // Use mutation service for validation and add
-      const rosterPlayer = await this.rosterMutationService!.addPlayerToRoster(
+      const rosterPlayer = await this.rosterMutationService.addPlayerToRoster(
         {
           rosterId: globalRosterId,
           playerId,
@@ -188,7 +190,7 @@ export class RosterService {
     // Use runWithLock with league lock to prevent race with waiver claims
     await runWithLock(this.db, LockDomain.LEAGUE, leagueId, async (client) => {
       // Use mutation service for validation and remove
-      await this.rosterMutationService!.removePlayerFromRoster(
+      await this.rosterMutationService.removePlayerFromRoster(
         { rosterId: globalRosterId, playerId },
         client
       );
@@ -251,7 +253,7 @@ export class RosterService {
       }
 
       // Use mutation service for validation and swap
-      const rosterPlayer = await this.rosterMutationService!.swapPlayers(
+      const rosterPlayer = await this.rosterMutationService.swapPlayers(
         {
           rosterId: globalRosterId,
           addPlayerId,
@@ -304,7 +306,7 @@ export class RosterService {
     search?: string,
     limit: number = 50,
     offset: number = 0
-  ): Promise<any[]> {
+  ): Promise<Player[]> {
     // Validate league membership
     const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
     if (!isMember) {
@@ -315,7 +317,8 @@ export class RosterService {
     const league = await this.leagueRepo.findById(leagueId);
     const leagueMode = league?.mode || 'redraft';
 
-    return this.rosterPlayersRepo.getFreeAgents(leagueId, position, search, limit, offset, leagueMode, league?.activeLeagueSeasonId);
+    const rows = await this.rosterPlayersRepo.getFreeAgents(leagueId, position, search, limit, offset, leagueMode, league?.activeLeagueSeasonId);
+    return rows.map(playerFromDatabase);
   }
 
   /**

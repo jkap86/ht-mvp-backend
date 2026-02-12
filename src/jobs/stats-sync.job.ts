@@ -8,12 +8,24 @@ import { LeagueRepository } from '../modules/leagues/leagues.repository';
 import { BestballService } from '../modules/bestball/bestball.service';
 import { LeaderLock } from '../shared/leader-lock';
 import { tryGetEventBus, EventTypes } from '../shared/events';
+import { getLockId, LockDomain } from '../shared/locks';
 import { logger } from '../config/logger.config';
 import { isInGameWindow, getOptimalSyncInterval, SYNC_INTERVALS } from '../utils/game-window';
 import { checkAndAdvanceWeek } from './week-advancement';
 
+/**
+ * LOCK CONTRACT:
+ * - executeStatsSync() acquires JOB lock (900M + 11) via pg_try_advisory_lock — singleton job execution
+ *   JOB lock is session-level (not transactional); released explicitly after processing
+ *   The LeaderLock mechanism provides an additional layer of leader election,
+ *   and the isRunning flag provides in-process re-entry protection.
+ */
+
 let timeoutId: NodeJS.Timeout | null = null;
 let isRunning = false;
+
+// Job lock ID in unified namespace (LockDomain.JOB = 900_000_000+)
+const STATS_SYNC_LOCK_ID = getLockId(LockDomain.JOB, 11);
 
 // Thursday 8:20 PM ET (20:20 in 24h format)
 const THURSDAY_LOCK_HOUR = 20;
@@ -118,22 +130,27 @@ async function generateBestballLineups(
   season: number,
   week: number
 ): Promise<void> {
+  if (leagueIds.length === 0) return;
+
+  // Bulk fetch all leagues at once instead of one-by-one
+  const leagues = await leagueRepo.findByIds(leagueIds);
+  const bestballLeagues = leagues.filter(
+    (league) => league.leagueSettings?.rosterType === 'bestball'
+  );
+
   let bestballCount = 0;
 
-  for (const leagueId of leagueIds) {
+  for (const league of bestballLeagues) {
     try {
-      const league = await leagueRepo.findById(leagueId);
-      if (league?.leagueSettings?.rosterType === 'bestball') {
-        await bestballService.generateBestballLineupsForLeague(
-          leagueId,
-          season,
-          week,
-          'live_projected'
-        );
-        bestballCount++;
-      }
+      await bestballService.generateBestballLineupsForLeague(
+        league.id,
+        season,
+        week,
+        'live_projected'
+      );
+      bestballCount++;
     } catch (error) {
-      logger.warn(`Failed to generate bestball lineups for league ${leagueId}: ${error}`);
+      logger.warn(`Failed to generate bestball lineups for league ${league.id}: ${error}`);
     }
   }
 
@@ -195,64 +212,85 @@ export async function runStatsSync(): Promise<void> {
 
 /**
  * Execute the actual stats sync logic (called by leader instance only)
+ * Uses pg_try_advisory_lock to ensure only one instance processes at a time.
  */
 async function executeStatsSync(): Promise<void> {
   isRunning = true;
+  const pool = container.resolve<Pool>(KEYS.POOL);
+  const client = await pool.connect();
   const tickStart = Date.now();
+
   try {
-    const inGameWindow = isInGameWindow();
-    logger.info(`Starting stats sync from Sleeper API (game window: ${inGameWindow})...`);
-
-    const statsService = container.resolve<StatsService>(KEYS.STATS_SERVICE);
-    const scoringService = container.resolve<ScoringService>(KEYS.SCORING_SERVICE);
-    const matchupsRepo = container.resolve<MatchupsRepository>(KEYS.MATCHUPS_REPO);
-
-    // Get current NFL week
-    const { season, week, seasonType } = await statsService.getCurrentNflWeek();
-    const seasonNum = parseInt(season, 10);
-    logger.info(`Current NFL week: ${season} week ${week}`);
-
-    // Auto-advance leagues to match NFL week/status
-    const pool = container.resolve<Pool>(KEYS.POOL);
-    await checkAndAdvanceWeek(pool, seasonNum, week, seasonType);
-
-    // Sync actual stats for the current week
-    const statsResult = await statsService.syncWeeklyStats(seasonNum, week);
-    logger.info(
-      `Stats sync complete: ${statsResult.synced} synced, ${statsResult.skipped} skipped`
+    // Try to acquire advisory lock (non-blocking)
+    const lockResult = await client.query<{ acquired: boolean }>(
+      'SELECT pg_try_advisory_lock($1) as acquired',
+      [STATS_SYNC_LOCK_ID]
     );
 
-    // Sync projections (writes to separate player_projections table)
-    const projResult = await statsService.syncWeeklyProjections(seasonNum, week);
-    logger.info(
-      `Projections sync complete: ${projResult.synced} synced, ${projResult.skipped} skipped`
-    );
-
-    // Get leagues with active matchups
-    const leagueIds = await matchupsRepo.getLeaguesWithActiveMatchups(seasonNum, week);
-
-    // Generate bestball lineups before calculating totals
-    if (leagueIds.length > 0) {
-      const bestballService = container.resolve<BestballService>(KEYS.BESTBALL_SERVICE);
-      const leagueRepo = container.resolve<LeagueRepository>(KEYS.LEAGUE_REPO);
-      await generateBestballLineups(bestballService, leagueRepo, leagueIds, seasonNum, week);
+    if (!lockResult.rows[0].acquired) {
+      // Another instance has the lock, skip this tick
+      logger.info('Stats sync advisory lock not acquired, another instance is running');
+      return;
     }
 
-    // Calculate live scoring totals for all leagues
-    if (leagueIds.length > 0) {
-      await calculateLiveScoringTotals(scoringService, leagueIds, seasonNum, week);
-    }
+    try {
+      const inGameWindow = isInGameWindow();
+      logger.info(`Starting stats sync from Sleeper API (game window: ${inGameWindow})...`);
 
-    // Notify leagues with active matchups for this week
-    if (statsResult.synced > 0 || projResult.synced > 0) {
-      await notifyLeaguesOfScoreUpdate(matchupsRepo, seasonNum, week);
-    }
+      const statsService = container.resolve<StatsService>(KEYS.STATS_SERVICE);
+      const scoringService = container.resolve<ScoringService>(KEYS.SCORING_SERVICE);
+      const matchupsRepo = container.resolve<MatchupsRepository>(KEYS.MATCHUPS_REPO);
 
-    // Check and lock lineups if past Thursday 8:20 PM ET
-    await checkAndLockLineups(seasonNum, week);
-  } catch (error) {
-    logger.error(`Stats sync error: ${error}`);
+      // Get current NFL week
+      const { season, week, seasonType } = await statsService.getCurrentNflWeek();
+      const seasonNum = parseInt(season, 10);
+      logger.info(`Current NFL week: ${season} week ${week}`);
+
+      // Auto-advance leagues to match NFL week/status
+      await checkAndAdvanceWeek(pool, seasonNum, week, seasonType);
+
+      // Sync actual stats for the current week
+      const statsResult = await statsService.syncWeeklyStats(seasonNum, week);
+      logger.info(
+        `Stats sync complete: ${statsResult.synced} synced, ${statsResult.skipped} skipped`
+      );
+
+      // Sync projections (writes to separate player_projections table)
+      const projResult = await statsService.syncWeeklyProjections(seasonNum, week);
+      logger.info(
+        `Projections sync complete: ${projResult.synced} synced, ${projResult.skipped} skipped`
+      );
+
+      // Get leagues with active matchups
+      const leagueIds = await matchupsRepo.getLeaguesWithActiveMatchups(seasonNum, week);
+
+      // Generate bestball lineups before calculating totals
+      if (leagueIds.length > 0) {
+        const bestballService = container.resolve<BestballService>(KEYS.BESTBALL_SERVICE);
+        const leagueRepo = container.resolve<LeagueRepository>(KEYS.LEAGUE_REPO);
+        await generateBestballLineups(bestballService, leagueRepo, leagueIds, seasonNum, week);
+      }
+
+      // Calculate live scoring totals for all leagues
+      if (leagueIds.length > 0) {
+        await calculateLiveScoringTotals(scoringService, leagueIds, seasonNum, week);
+      }
+
+      // Notify leagues with active matchups for this week
+      if (statsResult.synced > 0 || projResult.synced > 0) {
+        await notifyLeaguesOfScoreUpdate(matchupsRepo, seasonNum, week);
+      }
+
+      // Check and lock lineups if past Thursday 8:20 PM ET
+      await checkAndLockLineups(seasonNum, week);
+    } catch (error) {
+      logger.error(`Stats sync error: ${error}`);
+    } finally {
+      // Always release advisory lock
+      await client.query('SELECT pg_advisory_unlock($1)', [STATS_SYNC_LOCK_ID]);
+    }
   } finally {
+    client.release();
     isRunning = false;
     logger.info('Stats sync finished', { durationMs: Date.now() - tickStart });
   }

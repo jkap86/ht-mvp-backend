@@ -16,6 +16,46 @@ function assertSafeIdentifier(identifier: string, context: string): void {
 }
 
 /**
+ * Validates that an ON CONFLICT clause is safe for SQL concatenation.
+ * Allows patterns like:
+ *   - (column_name) DO NOTHING
+ *   - (col1, col2) DO NOTHING
+ *   - (col1, col2) DO UPDATE SET col = EXCLUDED.col
+ *   - (col1) DO UPDATE SET col1 = EXCLUDED.col1, col2 = EXCLUDED.col2
+ *
+ * The conflict target must be column names in parentheses.
+ * The action must be DO NOTHING or DO UPDATE SET with safe assignment expressions.
+ * Assignment expressions may reference EXCLUDED.column, use parameterized placeholders ($N),
+ * and standard SQL operators.
+ */
+function assertSafeOnConflict(value: string): void {
+  // Validate conflict target: must be parenthesized list of identifiers
+  const match = value.match(/^\(([^)]+)\)\s+DO\s+(NOTHING|UPDATE\s+SET\s+.+)$/i);
+  if (!match) {
+    throw new Error(`Unsafe ON CONFLICT clause: ${value}`);
+  }
+
+  // Validate each column name in the conflict target
+  const columns = match[1].split(',').map((c) => c.trim());
+  for (const col of columns) {
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(col)) {
+      throw new Error(`Unsafe column in ON CONFLICT target: "${col}"`);
+    }
+  }
+
+  // If DO UPDATE SET, validate the SET clause contains only safe characters:
+  // identifiers, EXCLUDED references, parameterized placeholders, operators, literals
+  if (match[2].toUpperCase() !== 'NOTHING') {
+    const setClause = match[2].replace(/^UPDATE\s+SET\s+/i, '');
+    // Allow: identifiers, dots, commas, spaces, EXCLUDED keyword, $N placeholders,
+    // operators (=, +, -, ||), parentheses, single-quoted strings, numbers, ::type casts
+    if (!/^[a-zA-Z0-9_.,\s=$+\-|()':*]+$/.test(setClause)) {
+      throw new Error(`Unsafe ON CONFLICT SET clause: ${setClause}`);
+    }
+  }
+}
+
+/**
  * Result of building a query with parameters.
  */
 export interface QueryResult {
@@ -265,6 +305,7 @@ export function buildBatchInsertQuery(
   let query = `INSERT INTO ${table} (${columns.join(', ')}) VALUES ${placeholders.join(', ')}`;
 
   if (onConflict) {
+    assertSafeOnConflict(onConflict);
     query += ` ON CONFLICT ${onConflict}`;
   }
 

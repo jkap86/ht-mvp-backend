@@ -1,6 +1,7 @@
 import { Pool, PoolClient } from 'pg';
 import { League, Roster } from './leagues.model';
 import { runWithLock, LockDomain } from '../../shared/transaction-runner';
+import { NotFoundException } from '../../utils/exceptions';
 
 // Re-export RosterRepository from its new location for backward compatibility
 export { RosterRepository } from '../rosters/roster.repository';
@@ -28,6 +29,13 @@ export class LeagueRepository {
     }
 
     return League.fromDatabase(result.rows[0]);
+  }
+
+  async findByIds(ids: number[], client?: PoolClient): Promise<League[]> {
+    if (ids.length === 0) return [];
+    const db = client || this.db;
+    const result = await db.query('SELECT * FROM leagues WHERE id = ANY($1)', [ids]);
+    return result.rows.map((row: any) => League.fromDatabase(row));
   }
 
   async findByIdWithUserRoster(id: number, userId: string, client?: PoolClient): Promise<League | null> {
@@ -200,7 +208,7 @@ export class LeagueRepository {
 
     if (setClauses.length === 0) {
       const existing = await this.findById(id);
-      if (!existing) throw new Error('League not found');
+      if (!existing) throw new NotFoundException('League not found');
       return existing;
     }
 
@@ -214,7 +222,7 @@ export class LeagueRepository {
     );
 
     if (result.rows.length === 0) {
-      throw new Error('League not found');
+      throw new NotFoundException('League not found');
     }
 
     return League.fromDatabase(result.rows[0]);
@@ -499,7 +507,7 @@ export class LeagueRepository {
 
     if (setClauses.length === 0) {
       const existing = await this.findById(id);
-      if (!existing) throw new Error('League not found');
+      if (!existing) throw new NotFoundException('League not found');
       return existing;
     }
 
@@ -513,7 +521,7 @@ export class LeagueRepository {
     );
 
     if (result.rows.length === 0) {
-      throw new Error('League not found');
+      throw new NotFoundException('League not found');
     }
 
     return League.fromDatabase(result.rows[0]);

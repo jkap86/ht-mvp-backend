@@ -9,8 +9,18 @@ import { Pool } from 'pg';
 import {
   ServiceUnavailableException,
   NotFoundException,
-  ValidationException,
 } from '../../utils/exceptions';
+import {
+  PlayerQueryInput,
+  PlayerSearchInput,
+  SyncCollegeInput,
+  PlayerNewsInput,
+  LatestNewsInput,
+  BreakingNewsInput,
+  GameLogsInput,
+  ProjectionInput,
+  TrendsInput,
+} from './players.schemas';
 
 export class PlayerController {
   private newsRepo?: NewsRepository;
@@ -27,20 +37,16 @@ export class PlayerController {
   }
 
   getAllPlayers = async (req: Request, res: Response) => {
-    const limit = parseInt(req.query.limit as string) || 10000;
-    const offset = parseInt(req.query.offset as string) || 0;
-    const query = req.query.q as string | undefined;
-    const position = req.query.position as string | undefined;
-    const team = req.query.team as string | undefined;
-    const playerType = req.query.playerType as 'nfl' | 'college' | undefined;
-    const playerPoolParam = req.query.playerPool as string | undefined;
+    const { limit, offset, q, position, team, playerType, playerPool: playerPoolParam } =
+      req.query as unknown as PlayerQueryInput;
+
     const playerPool = playerPoolParam
       ? (playerPoolParam.split(',') as ('veteran' | 'rookie' | 'college')[])
       : undefined;
 
-    if (query || position || team || playerType || playerPool) {
+    if (q || position || team || playerType || playerPool) {
       const players = await this.playerService.searchPlayers(
-        query || '',
+        q || '',
         position,
         team,
         playerType,
@@ -62,17 +68,14 @@ export class PlayerController {
   };
 
   searchPlayers = async (req: Request, res: Response) => {
-    const query = req.query.q as string;
-    const position = req.query.position as string;
-    const team = req.query.team as string;
-    const playerType = req.query.playerType as 'nfl' | 'college' | undefined;
+    const { q, position, team, playerType } = req.query as unknown as PlayerSearchInput;
 
-    if (!query || query.trim().length === 0) {
+    if (!q || q.trim().length === 0) {
       res.status(200).json([]);
       return;
     }
 
-    const players = await this.playerService.searchPlayers(query.trim(), position, team, playerType);
+    const players = await this.playerService.searchPlayers(q.trim(), position, team, playerType);
     res.status(200).json(players);
   };
 
@@ -90,7 +93,7 @@ export class PlayerController {
   };
 
   syncCollegePlayers = async (req: AuthRequest, res: Response) => {
-    const year = req.query.year ? parseInt(req.query.year as string, 10) : undefined;
+    const { year } = req.query as unknown as SyncCollegeInput;
     const result = await this.playerService.syncCollegePlayersFromCFBD(year);
     res.status(200).json({
       message: 'College player sync completed',
@@ -104,7 +107,7 @@ export class PlayerController {
     }
 
     const playerId = requirePlayerId(req);
-    const limit = parseInt(req.query.limit as string) || 10;
+    const { limit } = req.query as unknown as PlayerNewsInput;
 
     const news = await this.newsRepo.getNewsByPlayer(playerId, limit);
     res.status(200).json(news.map(playerNewsToResponse));
@@ -115,8 +118,7 @@ export class PlayerController {
       throw new ServiceUnavailableException('News service not initialized');
     }
 
-    const limit = parseInt(req.query.limit as string) || 50;
-    const offset = parseInt(req.query.offset as string) || 0;
+    const { limit, offset } = req.query as unknown as LatestNewsInput;
 
     const news = await this.newsRepo.getLatestNews(limit, offset);
     res.status(200).json(news.map(playerNewsToResponse));
@@ -127,9 +129,8 @@ export class PlayerController {
       throw new ServiceUnavailableException('News service not initialized');
     }
 
-    const hoursBack = parseInt(req.query.hours as string) || 24;
-    const since = new Date(Date.now() - hoursBack * 60 * 60 * 1000);
-    const limit = parseInt(req.query.limit as string) || 20;
+    const { hours, limit } = req.query as unknown as BreakingNewsInput;
+    const since = new Date(Date.now() - hours * 60 * 60 * 1000);
 
     const news = await this.newsRepo.getBreakingNews(since, limit);
     res.status(200).json(news.map(playerNewsToResponse));
@@ -157,8 +158,7 @@ export class PlayerController {
     }
 
     const playerId = requirePlayerId(req);
-    const season = (req.query.season as string) || '2024';
-    const limit = parseInt(req.query.limit as string) || 10;
+    const { season, limit } = req.query as unknown as GameLogsInput;
 
     const gameLogs = await this.statsService.getGameLogs(playerId, season, limit);
     res.status(200).json(gameLogs);
@@ -170,12 +170,7 @@ export class PlayerController {
     }
 
     const playerId = requirePlayerId(req);
-    const season = (req.query.season as string) || '2024';
-    const week = parseInt(req.query.week as string);
-
-    if (!week || week < 1 || week > 18) {
-      throw new ValidationException('Invalid week parameter (1-18)');
-    }
+    const { season, week } = req.query as unknown as ProjectionInput;
 
     const projection = await this.statsService.getWeeklyProjection(playerId, season, week);
     if (projection === null) {
@@ -191,8 +186,7 @@ export class PlayerController {
     }
 
     const playerId = requirePlayerId(req);
-    const season = (req.query.season as string) || '2024';
-    const weeks = parseInt(req.query.weeks as string) || 8;
+    const { season, weeks } = req.query as unknown as TrendsInput;
 
     const trend = await this.statsService.getStatTrends(playerId, season, weeks);
     if (!trend) {

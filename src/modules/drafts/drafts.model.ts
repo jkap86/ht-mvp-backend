@@ -4,6 +4,9 @@ export type DraftType = 'snake' | 'linear' | 'auction';
 /** Draft status values */
 export type DraftStatus = 'not_started' | 'in_progress' | 'paused' | 'completed';
 
+/** Roster population status after draft completion */
+export type RosterPopulationStatus = 'pending' | 'complete' | 'failed';
+
 /** Draft phase values for workflow stage */
 export type DraftPhase = 'SETUP' | 'DERBY' | 'LIVE';
 
@@ -66,6 +69,7 @@ export interface Draft {
   settings: DraftSettings;
   draftState: Record<string, any>;
   orderConfirmed: boolean;
+  rosterPopulationStatus: RosterPopulationStatus | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -114,6 +118,7 @@ export function draftFromDatabase(row: any): Draft {
     settings: row.settings || {},
     draftState: row.draft_state || {},
     orderConfirmed: row.order_confirmed ?? false,
+    rosterPopulationStatus: row.roster_population_status ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -141,7 +146,40 @@ export function computeDraftLabel(playerPool?: PlayerPoolType[]): string {
   return labelMap[key] || 'Draft';
 }
 
-export function draftToResponse(draft: Draft) {
+/** Response shape returned by draftToResponse (snake_case for API) */
+export interface DraftResponse {
+  id: number;
+  league_id: number;
+  draft_type: DraftType;
+  status: DraftStatus;
+  phase: DraftPhase;
+  current_pick: number;
+  current_round: number;
+  current_roster_id: number | null;
+  pick_time_seconds: number;
+  pick_deadline: Date | null;
+  rounds: number;
+  scheduled_start: Date | null;
+  started_at: Date | null;
+  completed_at: Date | null;
+  settings: DraftSettings;
+  draft_state: Record<string, any>;
+  order_confirmed: boolean;
+  created_at: Date;
+  updated_at: Date;
+  label: string;
+}
+
+/** DraftResponse extended with optional warnings (e.g. schedule generation failure) */
+export interface DraftResponseWithWarnings extends DraftResponse {
+  warnings?: Array<{
+    code: string;
+    message: string;
+    error?: string;
+  }>;
+}
+
+export function draftToResponse(draft: Draft): DraftResponse {
   const playerPool = draft.settings?.playerPool;
 
   return {

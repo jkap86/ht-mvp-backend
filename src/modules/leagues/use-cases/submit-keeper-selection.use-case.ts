@@ -8,6 +8,7 @@ import { LeagueSeasonRepository } from '../league-season.repository';
 import { KeeperSelectionRepository, CreateKeeperSelectionParams } from '../keeper-selection.repository';
 import { LeagueRepository } from '../leagues.repository';
 import { KeeperSelection } from '../keeper-selection.model';
+import { NotFoundException, ValidationException, ConflictException } from '../../../utils/exceptions';
 
 export interface SubmitKeepersParams {
   leagueSeasonId: number;
@@ -37,28 +38,28 @@ export class SubmitKeeperSelectionUseCase {
       // 1. Get season and validate it exists
       const season = await this.leagueSeasonRepo.findById(params.leagueSeasonId, client);
       if (!season) {
-        throw new Error('League season not found');
+        throw new NotFoundException('League season not found');
       }
 
       // 2. Validate keeper deadline hasn't passed
       if (season.isKeeperDeadlinePassed()) {
-        throw new Error('Keeper deadline has passed. Cannot submit keeper selections.');
+        throw new ValidationException('Keeper deadline has passed. Cannot submit keeper selections.');
       }
 
       // 3. Validate season is in correct status (pre_draft)
       if (season.status !== 'pre_draft') {
-        throw new Error('Keeper selections can only be submitted during pre_draft status');
+        throw new ValidationException('Keeper selections can only be submitted during pre_draft status');
       }
 
       // 4. Get league and validate keeper count
       const league = await this.leagueRepo.findById(season.leagueId, client);
       if (!league) {
-        throw new Error('League not found');
+        throw new NotFoundException('League not found');
       }
 
       const maxKeepers = season.getMaxKeepers();
       if (params.selections.length > maxKeepers) {
-        throw new Error(`Cannot keep more than ${maxKeepers} players. You selected ${params.selections.length}.`);
+        throw new ValidationException(`Cannot keep more than ${maxKeepers} players. You selected ${params.selections.length}.`);
       }
 
       // 5. Validate roster belongs to this league season
@@ -67,7 +68,7 @@ export class SubmitKeeperSelectionUseCase {
         [params.rosterId, params.leagueSeasonId]
       );
       if (rosterCheck.rows.length === 0) {
-        throw new Error('Roster not found in this league season');
+        throw new NotFoundException('Roster not found in this league season');
       }
 
       // 6. Validate each selection
@@ -118,7 +119,7 @@ export class SubmitKeeperSelectionUseCase {
       // Validate XOR
       if ((selection.playerId === undefined && selection.draftPickAssetId === undefined) ||
           (selection.playerId !== undefined && selection.draftPickAssetId !== undefined)) {
-        throw new Error('Each keeper selection must have either playerId or draftPickAssetId, not both or neither');
+        throw new ValidationException('Each keeper selection must have either playerId or draftPickAssetId, not both or neither');
       }
 
       // Validate player exists
@@ -128,7 +129,7 @@ export class SubmitKeeperSelectionUseCase {
           [selection.playerId]
         );
         if (playerCheck.rows.length === 0) {
-          throw new Error(`Player with ID ${selection.playerId} not found`);
+          throw new NotFoundException(`Player with ID ${selection.playerId} not found`);
         }
 
         // Check if player is already kept by another roster
@@ -139,7 +140,7 @@ export class SubmitKeeperSelectionUseCase {
           [selection.playerId, leagueSeasonId]
         );
         if (existingKeeper.rows.length > 0) {
-          throw new Error(`Player ${selection.playerId} is already kept by roster ${existingKeeper.rows[0].roster_id}`);
+          throw new ConflictException(`Player ${selection.playerId} is already kept by roster ${existingKeeper.rows[0].roster_id}`);
         }
       }
 
@@ -150,7 +151,7 @@ export class SubmitKeeperSelectionUseCase {
           [selection.draftPickAssetId]
         );
         if (assetCheck.rows.length === 0) {
-          throw new Error(`Draft pick asset with ID ${selection.draftPickAssetId} not found`);
+          throw new NotFoundException(`Draft pick asset with ID ${selection.draftPickAssetId} not found`);
         }
 
         // Check if pick asset is already kept by another roster
@@ -161,7 +162,7 @@ export class SubmitKeeperSelectionUseCase {
           [selection.draftPickAssetId, leagueSeasonId]
         );
         if (existingKeeper.rows.length > 0) {
-          throw new Error(`Pick asset ${selection.draftPickAssetId} is already kept by roster ${existingKeeper.rows[0].roster_id}`);
+          throw new ConflictException(`Pick asset ${selection.draftPickAssetId} is already kept by roster ${existingKeeper.rows[0].roster_id}`);
         }
       }
     }

@@ -1,5 +1,5 @@
 import { randomBytes } from 'crypto';
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import { DraftRepository } from './drafts.repository';
 import { DraftPickAssetRepository } from './draft-pick-asset.repository';
 import type { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
@@ -304,5 +304,37 @@ export class DraftOrderService {
     // Use batch insert
     const rosterIds = allRosters.map((r) => r.id);
     await this.draftRepo.updateDraftOrderAtomic(draftId, rosterIds);
+  }
+
+  /**
+   * Create initial draft order within an existing transaction.
+   * Used during league creation to keep draft setup atomic with league creation.
+   */
+  async createInitialOrderWithClient(
+    client: PoolClient,
+    draftId: number,
+    leagueId: number,
+    totalRosters: number
+  ): Promise<void> {
+    // Delete any existing empty rosters first
+    await this.rosterRepo.deleteEmptyRosters(leagueId, client);
+
+    // Count rosters with actual users
+    const userRosterCount = await this.rosterRepo.getRosterCount(leagueId, client);
+
+    // Create fresh empty rosters to fill remaining slots
+    for (let i = userRosterCount + 1; i <= totalRosters; i++) {
+      await this.rosterRepo.createEmptyRoster(leagueId, i, client);
+    }
+
+    // Get ALL rosters (including newly created empty ones) using the transaction client
+    const allRosters = await this.rosterRepo.findByLeagueIdWithClient(client, leagueId);
+    if (allRosters.length === 0) {
+      return;
+    }
+
+    // Use batch insert within the transaction
+    const rosterIds = allRosters.map((r: { id: number }) => r.id);
+    await this.draftRepo.updateDraftOrderAtomicWithClient(client, draftId, rosterIds);
   }
 }

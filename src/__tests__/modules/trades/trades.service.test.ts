@@ -70,6 +70,7 @@ const mockTrade: Trade = {
   createdAt: new Date(),
   updatedAt: new Date(),
   completedAt: null,
+  failureReason: null,
   notifyLeagueChat: true,
   notifyDm: true,
   leagueChatMode: 'summary',

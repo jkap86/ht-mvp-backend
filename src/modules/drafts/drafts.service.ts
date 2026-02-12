@@ -1,7 +1,9 @@
+import type { PoolClient } from 'pg';
 import { DraftRepository } from './drafts.repository';
 import { draftToResponse, DraftType, DraftOrderEntry, DraftSettings, AuctionSettings } from './drafts.model';
 import type { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import type { LeagueSettings } from '../leagues/leagues.model';
+import type { League } from '../leagues/leagues.model';
 import { NotFoundException, ForbiddenException, ValidationException } from '../../utils/exceptions';
 import { DraftOrderService } from './draft-order.service';
 import { DraftPickService } from './draft-pick.service';
@@ -271,6 +273,98 @@ export class DraftService {
     });
 
     return response;
+  }
+
+  /**
+   * Create a draft within an existing transaction.
+   * Used during league creation to keep draft creation atomic with league creation.
+   * Skips commissioner check since this is called internally during league setup.
+   *
+   * Events are NOT emitted here; the caller should emit events after the transaction commits.
+   */
+  async createDraftWithClient(
+    client: PoolClient,
+    league: League,
+    options: {
+      draftType?: string;
+      rounds?: number;
+      pickTimeSeconds?: number;
+      playerPool?: ('veteran' | 'rookie' | 'college')[];
+      scheduledStart?: Date;
+    }
+  ): Promise<any> {
+    const leagueId = league.id;
+    const settings: DraftSettings = {};
+
+    if (options.playerPool) {
+      settings.playerPool = options.playerPool;
+    }
+
+    const defaultRounds = this.calculateTotalRosterSlots(
+      league.leagueSettings || league.settings
+    );
+
+    const draft = await this.draftRepo.createWithClient(
+      client,
+      leagueId,
+      options.draftType || 'snake',
+      options.rounds || defaultRounds,
+      options.pickTimeSeconds || 90,
+      Object.keys(settings).length > 0 ? settings : undefined,
+      options.scheduledStart
+    );
+
+    // Create initial draft order within the transaction
+    await this.orderService.createInitialOrderWithClient(
+      client,
+      draft.id,
+      leagueId,
+      league.totalRosters
+    );
+
+    // Handle draft pick assets
+    if (this.pickAssetRepo) {
+      const season = parseInt(league.season, 10);
+      const rounds = options.rounds || defaultRounds;
+
+      // Get draft order to extract positions
+      const draftOrder = await this.draftRepo.getDraftOrderWithClient(client, draft.id);
+      const orderData = draftOrder.map((entry: DraftOrderEntry) => ({
+        rosterId: entry.rosterId,
+        draftPosition: entry.draftPosition,
+      }));
+      const rosterIds = orderData.map((entry) => entry.rosterId);
+
+      // Generate pick assets for this draft
+      await this.pickAssetRepo.generatePickAssetsForDraft(
+        draft.id,
+        leagueId,
+        season,
+        rounds,
+        orderData,
+        client
+      );
+
+      // For dynasty and devy leagues, also generate future pick assets
+      if (league.mode === 'dynasty' || league.mode === 'devy') {
+        for (let futureYear = season + 1; futureYear <= season + 3; futureYear++) {
+          await this.pickAssetRepo.generateFuturePickAssets(
+            leagueId,
+            futureYear,
+            rounds,
+            orderData,
+            client
+          );
+        }
+        logger.info(
+          `Generated future pick assets for ${league.mode} league ${leagueId} (seasons ${season + 1}-${season + 3})`
+        );
+      }
+
+      logger.info(`Generated ${rosterIds.length * rounds} pick assets for draft ${draft.id}`);
+    }
+
+    return draftToResponse(draft);
   }
 
   /**

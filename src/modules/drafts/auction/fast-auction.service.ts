@@ -998,7 +998,8 @@ export class FastAuctionService {
               rosterPlayersRepo,
             },
             draftId,
-            leagueId
+            leagueId,
+            client
           );
         }
       );

@@ -13,7 +13,8 @@ export type TradeStatus =
   | 'rejected'
   | 'cancelled'
   | 'expired'
-  | 'vetoed';
+  | 'vetoed'
+  | 'failed';
 
 export type LeagueChatMode = 'none' | 'summary' | 'details';
 
@@ -33,6 +34,7 @@ export interface Trade {
   createdAt: Date;
   updatedAt: Date;
   completedAt: Date | null;
+  failureReason: string | null;
   notifyLeagueChat: boolean;
   notifyDm: boolean;
   leagueChatMode: LeagueChatMode;
@@ -138,6 +140,7 @@ export function tradeFromDatabase(row: any): Trade {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     completedAt: row.completed_at,
+    failureReason: row.failure_reason || null,
     notifyLeagueChat: row.notify_league_chat ?? true,
     notifyDm: row.notify_dm ?? true,
     leagueChatMode: row.league_chat_mode ?? 'summary',
@@ -164,6 +167,7 @@ export function tradeToResponse(trade: Trade): Record<string, any> {
     created_at: trade.createdAt,
     updated_at: trade.updatedAt,
     completed_at: trade.completedAt,
+    failure_reason: trade.failureReason,
     notify_league_chat: trade.notifyLeagueChat,
     notify_dm: trade.notifyDm,
     league_chat_mode: trade.leagueChatMode,

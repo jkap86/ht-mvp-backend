@@ -29,20 +29,46 @@ export class PlayerRepository {
     client: PoolClient,
     draftId: number
   ): Promise<Player | null> {
+    // Use OFFSET-based random selection instead of ORDER BY RANDOM()
+    // to avoid a full-table scan + sort. First get the count of eligible
+    // players, then pick one at a random offset.
+    const countResult = await client.query(
+      `SELECT COUNT(*) AS cnt
+       FROM players p
+       WHERE p.active = true
+         AND NOT EXISTS (
+           SELECT 1 FROM draft_picks dp
+           WHERE dp.draft_id = $1 AND dp.player_id = p.id
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM auction_lots al
+           WHERE al.draft_id = $1 AND al.player_id = p.id
+         )`,
+      [draftId]
+    );
+
+    const totalEligible = parseInt(countResult.rows[0].cnt, 10);
+    if (totalEligible === 0) {
+      return null;
+    }
+
+    const randomOffset = Math.floor(Math.random() * totalEligible);
+
     const result = await client.query(
       `SELECT p.*
        FROM players p
        WHERE p.active = true
-         AND p.id NOT IN (
-           SELECT player_id FROM draft_picks
-           WHERE draft_id = $1 AND player_id IS NOT NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM draft_picks dp
+           WHERE dp.draft_id = $1 AND dp.player_id = p.id
          )
-         AND p.id NOT IN (
-           SELECT player_id FROM auction_lots WHERE draft_id = $1
+         AND NOT EXISTS (
+           SELECT 1 FROM auction_lots al
+           WHERE al.draft_id = $1 AND al.player_id = p.id
          )
-       ORDER BY RANDOM()
+       OFFSET $2
        LIMIT 1`,
-      [draftId]
+      [draftId, randomOffset]
     );
     return result.rows.length > 0 ? playerFromDatabase(result.rows[0]) : null;
   }
@@ -103,7 +129,7 @@ export class PlayerRepository {
     team?: string,
     playerType?: 'nfl' | 'college',
     playerPool?: ('veteran' | 'rookie' | 'college')[],
-    limit = 10000
+    limit = 200
   ): Promise<Player[]> {
     let sql = `SELECT * FROM players WHERE active = true`;
     const params: any[] = [];
@@ -477,12 +503,13 @@ export class PlayerRepository {
         values
       );
 
-      // Now upsert external IDs for each player
-      for (let j = 0; j < batch.length; j++) {
-        const playerId = result.rows[j].id;
-        const externalId = batch[j].externalId;
-        await externalIdRepo.upsertExternalId(playerId, provider, externalId);
-      }
+      // Batch upsert external IDs for all players in this batch
+      const externalIdMappings = batch.map((player, j) => ({
+        playerId: result.rows[j].id as number,
+        provider,
+        externalId: player.externalId,
+      }));
+      await externalIdRepo.batchUpsertExternalIds(externalIdMappings);
 
       totalUpserted += batch.length;
     }

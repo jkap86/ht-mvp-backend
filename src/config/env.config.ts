@@ -12,7 +12,9 @@ const envSchema = z.object({
 
   // JWT
   JWT_SECRET: z.string().min(64, 'JWT_SECRET must be at least 64 characters'),
-  JWT_EXPIRES_IN: z.string().default('7d'),
+  // Fallback expiry for signToken() when no explicit expiresIn is provided.
+  // Callers should always specify expiresIn explicitly; this is a safety net only.
+  JWT_EXPIRES_IN: z.string().default('15m'),
 
   // Server
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),

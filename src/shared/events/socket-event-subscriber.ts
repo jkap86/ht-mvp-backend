@@ -168,6 +168,14 @@ export class SocketEventSubscriber implements DomainEventSubscriber {
           socketService.emitTradeExpired(event.leagueId, event.payload);
         }
         break;
+      case EventTypes.TRADE_FAILED:
+        if (event.leagueId) {
+          socketService.emitTradeFailed(
+            event.leagueId,
+            event.payload as { tradeId: number; reason: string }
+          );
+        }
+        break;
       case EventTypes.TRADE_INVALIDATED:
         if (event.leagueId) {
           socketService.emitTradeInvalidated(

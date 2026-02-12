@@ -5,6 +5,7 @@ import type { DraftPickAssetRepository } from '../drafts/draft-pick-asset.reposi
 import { AcquiredType } from './rosters.model';
 import type { DraftPickAsset } from '../drafts/draft-pick-asset.model';
 import { getMaxRosterSize } from '../../shared/roster-defaults';
+import { logger } from '../../config/logger.config';
 
 /**
  * Validation result for roster transitions
@@ -441,8 +442,9 @@ export class RosterRulesService {
     client?: PoolClient
   ): Promise<RosterSnapshot | null> {
     // Get current players on roster
-    // Note: getByRosterId doesn't support client parameter, so we use it directly
-    const players = await this.rosterPlayersRepo.getByRosterId(rosterId);
+    const players = client
+      ? await this.rosterPlayersRepo.getByRosterIdWithClient(client, rosterId)
+      : await this.rosterPlayersRepo.getByRosterId(rosterId);
 
     const playerIds = new Set(players.map((p: { playerId: number }) => p.playerId));
 
@@ -451,10 +453,12 @@ export class RosterRulesService {
     if (this.pickAssetRepo) {
       try {
         // findByOwner returns assets owned by this roster
-        const pickAssets = await this.pickAssetRepo.findByOwner(rosterId, leagueId);
+        const pickAssets = client
+          ? await this.pickAssetRepo.findByOwnerWithClient(client, rosterId, leagueId)
+          : await this.pickAssetRepo.findByOwner(rosterId, leagueId);
         pickAssetIds = new Set(pickAssets.map((pa: { id: number }) => pa.id));
-      } catch {
-        // Pick assets not available, continue without them
+      } catch (err) {
+        logger.warn('Failed to load pick assets for roster snapshot', { err, rosterId, leagueId });
       }
     }
 

@@ -22,9 +22,10 @@ function getRedisStore(): RedisStore | undefined {
 const isProd = process.env.NODE_ENV === 'production';
 
 if (isProd && !process.env.REDIS_HOST) {
-  logger.warn(
-    'CRITICAL: Rate limiting is using in-memory store in production. ' +
-      'This is unsafe for multi-instance deployments as limits are not shared across instances. ' +
+  throw new Error(
+    'REDIS_HOST is required in production. ' +
+      'Rate limiting with in-memory stores is unsafe for multi-instance deployments ' +
+      'because limits are not shared across instances. ' +
       'Set REDIS_HOST to enable Redis-backed rate limiting.'
   );
 }

@@ -108,6 +108,7 @@ const mockFastDraft: Draft = {
   },
   draftState: {},
   orderConfirmed: true,
+  rosterPopulationStatus: null,
   createdAt: new Date(),
   updatedAt: new Date(),
 };

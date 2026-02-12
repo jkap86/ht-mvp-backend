@@ -79,6 +79,7 @@ export const SOCKET_EVENTS = {
     COUNTERED: 'trade:countered',
     CANCELLED: 'trade:cancelled',
     EXPIRED: 'trade:expired',
+    FAILED: 'trade:failed',
     COMPLETED: 'trade:completed',
     VETOED: 'trade:vetoed',
     VOTE_CAST: 'trade:vote_cast',

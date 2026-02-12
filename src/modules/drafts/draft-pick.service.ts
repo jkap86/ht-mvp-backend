@@ -1,6 +1,6 @@
 import { Pool } from 'pg';
 import { DraftRepository } from './drafts.repository';
-import { Draft, DraftOrderEntry, DraftSettings, draftToResponse } from './drafts.model';
+import { Draft, DraftOrderEntry, DraftPick, DraftSettings, DraftResponse, draftToResponse } from './drafts.model';
 import { validatePlayerPoolEligibility } from './draft-validation.utils';
 import { DraftPickAssetRepository } from './draft-pick-asset.repository';
 import { VetDraftPickSelectionRepository } from './vet-draft-pick-selection.repository';
@@ -16,6 +16,44 @@ import { finalizeDraftCompletion } from './draft-completion.utils';
 import { runInDraftTransaction } from '../../shared/locks';
 import { container, KEYS } from '../../container';
 
+/** Snake_case API response for a player pick */
+export interface DraftPickResponse {
+  id: number;
+  draft_id: number;
+  pick_number: number;
+  round: number;
+  pick_in_round: number;
+  roster_id: number;
+  player_id: number | null;
+  is_auto_pick: boolean;
+  picked_at: Date;
+  player_name?: string;
+  player_position?: string;
+  player_team?: string;
+  username?: string;
+}
+
+/** Snake_case API response for a pick asset selection */
+export interface PickAssetSelectionResponse {
+  id: number;
+  draft_id: number;
+  pick_number: number;
+  round: number;
+  pick_in_round: number;
+  roster_id: number;
+  player_id: null;
+  is_auto_pick: false;
+  picked_at: Date;
+  draft_pick_asset_id: number;
+  pick_asset_season: number;
+  pick_asset_round: number;
+  pick_asset_original_team: string;
+  is_pick_asset: true;
+}
+
+/** Union type for all pick responses from getDraftPicks */
+export type DraftPickResponseItem = DraftPickResponse | PickAssetSelectionResponse;
+
 export class DraftPickService {
   constructor(
     private readonly draftRepo: DraftRepository,
@@ -28,7 +66,7 @@ export class DraftPickService {
     private readonly vetPickSelectionRepo?: VetDraftPickSelectionRepository
   ) {}
 
-  async getDraftPicks(leagueId: number, draftId: number, userId: string): Promise<any[]> {
+  async getDraftPicks(leagueId: number, draftId: number, userId: string): Promise<DraftPickResponseItem[]> {
     const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
     if (!isMember) {
       throw new ForbiddenException('You are not a member of this league');
@@ -42,7 +80,7 @@ export class DraftPickService {
     const settings = draft?.settings as DraftSettings;
 
     // Transform playerPicks to snake_case API response format
-    const transformPlayerPick = (pick: any) => ({
+    const transformPlayerPick = (pick: DraftPick) => ({
       id: pick.id,
       draft_id: pick.draftId,
       pick_number: pick.pickNumber,
@@ -105,7 +143,7 @@ export class DraftPickService {
     userId: string,
     playerId: number,
     idempotencyKey?: string
-  ): Promise<any> {
+  ): Promise<DraftPick> {
     // Validate league membership first (can stay outside lock - doesn't change during draft)
     const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
     if (!isMember) {
@@ -207,7 +245,8 @@ export class DraftPickService {
               rosterPlayersRepo: this.rosterPlayersRepo,
             },
             draftId,
-            leagueId
+            leagueId,
+            client
           );
         }
 
@@ -271,7 +310,7 @@ export class DraftPickService {
   /**
    * Get available pick assets for a vet draft that has includeRookiePicks enabled.
    */
-  async getAvailablePickAssets(leagueId: number, draftId: number, userId: string): Promise<any[]> {
+  async getAvailablePickAssets(leagueId: number, draftId: number, userId: string): Promise<Record<string, any>[]> {
     const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
     if (!isMember) {
       throw new ForbiddenException('You are not a member of this league');
@@ -312,7 +351,7 @@ export class DraftPickService {
     userId: string,
     draftPickAssetId: number,
     idempotencyKey?: string
-  ): Promise<any> {
+  ): Promise<PickAssetSelectionResponse> {
     // Validate league membership first (can stay outside lock)
     const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
     if (!isMember) {
@@ -339,12 +378,6 @@ export class DraftPickService {
       throw new ValidationException('Pick asset does not belong to this league');
     }
 
-    // Check if pick asset is in a pending trade (can stay outside lock)
-    const isInTrade = await this.pickAssetRepo.isInPendingTrade(draftPickAssetId);
-    if (isInTrade) {
-      throw new ConflictException('Pick asset is currently in a pending trade');
-    }
-
     // Get the pool for running the transaction
     const pool = container.resolve<Pool>(KEYS.POOL);
 
@@ -353,6 +386,22 @@ export class DraftPickService {
       pool,
       draftId,
       async (client) => {
+        // Check if pick asset is in a pending trade INSIDE the transaction
+        // to prevent TOCTOU race where a trade could be accepted between this check
+        // and the pick asset selection below.
+        const isInTradeResult = await client.query(
+          `SELECT EXISTS(
+            SELECT 1 FROM trade_items ti
+            JOIN trades t ON ti.trade_id = t.id
+            WHERE ti.draft_pick_asset_id = $1
+              AND t.status IN ('pending', 'countered', 'accepted', 'in_review')
+          )`,
+          [draftPickAssetId]
+        );
+        if (isInTradeResult.rows[0].exists) {
+          throw new ConflictException('Pick asset is currently in a pending trade');
+        }
+
         // Read fresh draft state inside lock
         const draft = await this.draftRepo.findByIdWithClient(client, draftId);
         if (!draft) throw new NotFoundException('Draft not found');
@@ -437,12 +486,13 @@ export class DraftPickService {
               rosterPlayersRepo: this.rosterPlayersRepo,
             },
             draftId,
-            leagueId
+            leagueId,
+            client
           );
         }
 
         // Build response with pick asset info
-        const pickResponse = {
+        const pickResponse: PickAssetSelectionResponse = {
           id: result.selectionId,
           draft_id: draftId,
           pick_number: draft.currentPick,
@@ -450,14 +500,14 @@ export class DraftPickService {
           pick_in_round: pickInRound,
           roster_id: userRoster.id,
           player_id: null,
-          is_auto_pick: false,
+          is_auto_pick: false as const,
           picked_at: result.selectedAt,
           // Pick asset specific fields
           draft_pick_asset_id: draftPickAssetId,
           pick_asset_season: pickAsset.season,
           pick_asset_round: pickAsset.round,
           pick_asset_original_team: pickAsset.originalTeamName,
-          is_pick_asset: true,
+          is_pick_asset: true as const,
         };
 
         return {
