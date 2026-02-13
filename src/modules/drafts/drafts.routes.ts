@@ -32,6 +32,8 @@ import { PickActionHandler } from './action-handlers/pick.handler';
 import { QueueActionHandler } from './action-handlers/queue.handler';
 import { AuctionActionHandler } from './action-handlers/auction.handler';
 import { asyncHandler } from '../../shared/async-handler';
+import { resolveSeasonContext } from '../../middleware/season-context.middleware';
+import { seasonWriteGuard } from '../../middleware/season-write-guard.middleware';
 
 // Resolve dependencies from container
 const draftService = container.resolve<DraftService>(KEYS.DRAFT_SERVICE);
@@ -68,8 +70,10 @@ const derbyController = new DerbyController(derbyService);
 
 const router = Router({ mergeParams: true }); // mergeParams to access :leagueId
 
-// All draft routes require authentication
+// All draft routes require authentication and season context
 router.use(authMiddleware);
+router.use(resolveSeasonContext);
+router.use(seasonWriteGuard);
 
 // GET /api/leagues/:leagueId/drafts
 router.get('/', apiReadLimiter, asyncHandler(draftController.getLeagueDrafts));

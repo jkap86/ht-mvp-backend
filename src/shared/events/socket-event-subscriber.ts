@@ -382,6 +382,14 @@ export class SocketEventSubscriber implements DomainEventSubscriber {
           );
         }
         break;
+      case EventTypes.SEASON_ROLLED_OVER:
+        if (event.leagueId) {
+          socketService.emitSeasonRolledOver(
+            event.leagueId,
+            event.payload as { leagueId: number; newSeasonId: number; previousSeasonId: number }
+          );
+        }
+        break;
 
       // Invitation events
       case EventTypes.INVITATION_RECEIVED:

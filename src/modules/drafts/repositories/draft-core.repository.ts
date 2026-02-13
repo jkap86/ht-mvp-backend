@@ -48,8 +48,15 @@ export class DraftCoreRepository {
    */
   async findByLeagueIdWithMembershipCheck(
     leagueId: number,
-    userId: string
+    userId: string,
+    leagueSeasonId?: number
   ): Promise<Draft[] | null> {
+    const draftFilter = leagueSeasonId
+      ? 'd.league_season_id = $3'
+      : 'd.league_id = $1';
+    const params: any[] = [leagueId, userId];
+    if (leagueSeasonId) params.push(leagueSeasonId);
+
     const result = await this.db.query(
       `WITH membership_check AS (
          SELECT EXISTS(SELECT 1 FROM rosters WHERE league_id = $1 AND user_id = $2) as is_member
@@ -57,9 +64,9 @@ export class DraftCoreRepository {
        SELECT d.*, mc.is_member
        FROM drafts d
        CROSS JOIN membership_check mc
-       WHERE d.league_id = $1
+       WHERE ${draftFilter}
        ORDER BY CASE WHEN d.scheduled_start IS NULL THEN 1 ELSE 0 END, d.scheduled_start ASC NULLS LAST, d.created_at DESC`,
-      [leagueId, userId]
+      params
     );
 
     // If no drafts exist, still check membership
@@ -88,13 +95,14 @@ export class DraftCoreRepository {
     rounds: number,
     pickTimeSeconds: number,
     settings?: DraftSettings,
-    scheduledStart?: Date
+    scheduledStart?: Date,
+    leagueSeasonId?: number
   ): Promise<Draft> {
     const result = await this.db.query(
-      `INSERT INTO drafts (league_id, draft_type, rounds, pick_time_seconds, settings, scheduled_start)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO drafts (league_id, draft_type, rounds, pick_time_seconds, settings, scheduled_start, league_season_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [leagueId, draftType, rounds, pickTimeSeconds, settings ? JSON.stringify(settings) : null, scheduledStart || null]
+      [leagueId, draftType, rounds, pickTimeSeconds, settings ? JSON.stringify(settings) : null, scheduledStart || null, leagueSeasonId || null]
     );
     return draftFromDatabase(result.rows[0]);
   }
@@ -109,13 +117,14 @@ export class DraftCoreRepository {
     rounds: number,
     pickTimeSeconds: number,
     settings?: DraftSettings,
-    scheduledStart?: Date
+    scheduledStart?: Date,
+    leagueSeasonId?: number
   ): Promise<Draft> {
     const result = await client.query(
-      `INSERT INTO drafts (league_id, draft_type, rounds, pick_time_seconds, settings, scheduled_start)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO drafts (league_id, draft_type, rounds, pick_time_seconds, settings, scheduled_start, league_season_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [leagueId, draftType, rounds, pickTimeSeconds, settings ? JSON.stringify(settings) : null, scheduledStart || null]
+      [leagueId, draftType, rounds, pickTimeSeconds, settings ? JSON.stringify(settings) : null, scheduledStart || null, leagueSeasonId || null]
     );
     return draftFromDatabase(result.rows[0]);
   }

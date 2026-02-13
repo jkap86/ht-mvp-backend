@@ -87,9 +87,9 @@ export class DraftService {
     );
   }
 
-  async getLeagueDrafts(leagueId: number, userId: string): Promise<any[]> {
+  async getLeagueDrafts(leagueId: number, userId: string, leagueSeasonId?: number): Promise<any[]> {
     // Use atomic query that checks membership while fetching drafts to avoid race condition
-    const drafts = await this.draftRepo.findByLeagueIdWithMembershipCheck(leagueId, userId);
+    const drafts = await this.draftRepo.findByLeagueIdWithMembershipCheck(leagueId, userId, leagueSeasonId);
 
     // findByLeagueIdWithMembershipCheck returns null if user is not a member
     if (drafts === null) {
@@ -144,6 +144,7 @@ export class DraftService {
       includeRookiePicks?: boolean;
       rookiePicksSeason?: number;
       rookiePicksRounds?: number;
+      leagueSeasonId?: number;
     }
   ): Promise<any> {
     const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
@@ -201,7 +202,8 @@ export class DraftService {
       options.rounds || defaultRounds,
       options.pickTimeSeconds || 90,
       Object.keys(settings).length > 0 ? settings : undefined,
-      options.scheduledStart
+      options.scheduledStart,
+      options.leagueSeasonId
     );
 
     // Create initial draft order

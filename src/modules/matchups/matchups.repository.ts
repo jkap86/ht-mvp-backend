@@ -17,7 +17,16 @@ export class MatchupsRepository {
   /**
    * Get matchups for a league/week
    */
-  async findByLeagueAndWeek(leagueId: number, season: number, week: number): Promise<Matchup[]> {
+  async findByLeagueAndWeek(leagueId: number, season: number, week: number, leagueSeasonId?: number): Promise<Matchup[]> {
+    if (leagueSeasonId) {
+      const result = await this.db.query(
+        `SELECT * FROM matchups
+         WHERE league_season_id = $1 AND week = $2
+         ORDER BY id`,
+        [leagueSeasonId, week]
+      );
+      return result.rows.map(matchupFromDatabase);
+    }
     const result = await this.db.query(
       `SELECT * FROM matchups
        WHERE league_id = $1 AND season = $2 AND week = $3
@@ -32,7 +41,16 @@ export class MatchupsRepository {
    * Get all matchups for a league/season (no week filter)
    * Used for finding max scheduled week
    */
-  async findAllByLeagueAndSeason(leagueId: number, season: number): Promise<Matchup[]> {
+  async findAllByLeagueAndSeason(leagueId: number, season: number, leagueSeasonId?: number): Promise<Matchup[]> {
+    if (leagueSeasonId) {
+      const result = await this.db.query(
+        `SELECT * FROM matchups
+         WHERE league_season_id = $1
+         ORDER BY week, id`,
+        [leagueSeasonId]
+      );
+      return result.rows.map(matchupFromDatabase);
+    }
     const result = await this.db.query(
       `SELECT * FROM matchups
        WHERE league_id = $1 AND season = $2
@@ -46,7 +64,28 @@ export class MatchupsRepository {
   /**
    * Get all matchups for a league/season with team names
    */
-  async findAllByLeagueAndSeasonWithDetails(leagueId: number, season: number): Promise<MatchupDetails[]> {
+  async findAllByLeagueAndSeasonWithDetails(leagueId: number, season: number, leagueSeasonId?: number): Promise<MatchupDetails[]> {
+    if (leagueSeasonId) {
+      const result = await this.db.query(
+        `SELECT m.*,
+                COALESCE(r1.settings->>'team_name', u1.username, 'Team ' || r1.roster_id) as roster1_team_name,
+                COALESCE(r2.settings->>'team_name', u2.username, 'Team ' || r2.roster_id) as roster2_team_name
+         FROM matchups m
+         JOIN rosters r1 ON m.roster1_id = r1.id
+         JOIN rosters r2 ON m.roster2_id = r2.id
+         LEFT JOIN users u1 ON r1.user_id = u1.id
+         LEFT JOIN users u2 ON r2.user_id = u2.id
+         WHERE m.league_season_id = $1
+         ORDER BY m.week, m.id`,
+        [leagueSeasonId]
+      );
+
+      return result.rows.map((row) => ({
+        ...matchupFromDatabase(row),
+        roster1TeamName: row.roster1_team_name,
+        roster2TeamName: row.roster2_team_name,
+      }));
+    }
     const result = await this.db.query(
       `SELECT m.*,
               COALESCE(r1.settings->>'team_name', u1.username, 'Team ' || r1.roster_id) as roster1_team_name,
@@ -71,7 +110,14 @@ export class MatchupsRepository {
   /**
    * Get the maximum week number with scheduled matchups for a league/season
    */
-  async getMaxScheduledWeek(leagueId: number, season: number): Promise<number | null> {
+  async getMaxScheduledWeek(leagueId: number, season: number, leagueSeasonId?: number): Promise<number | null> {
+    if (leagueSeasonId) {
+      const result = await this.db.query(
+        `SELECT MAX(week) as max_week FROM matchups WHERE league_season_id = $1`,
+        [leagueSeasonId]
+      );
+      return result.rows[0]?.max_week ?? null;
+    }
     const result = await this.db.query(
       `SELECT MAX(week) as max_week FROM matchups WHERE league_id = $1 AND season = $2`,
       [leagueId, season]
@@ -121,8 +167,16 @@ export class MatchupsRepository {
   async findByLeagueAndWeekWithDetails(
     leagueId: number,
     season: number,
-    week: number
+    week: number,
+    leagueSeasonId?: number
   ): Promise<MatchupDetails[]> {
+    if (leagueSeasonId) {
+      const result = await this.db.query(
+        this.buildDetailQuery('m.league_season_id = $1 AND m.week = $2', 'm.id'),
+        [leagueSeasonId, week]
+      );
+      return result.rows.map(row => this.mapDetailRow(row));
+    }
     const result = await this.db.query(
       this.buildDetailQuery('m.league_id = $1 AND m.season = $2 AND m.week = $3', 'm.id'),
       [leagueId, season, week]
@@ -140,6 +194,43 @@ export class MatchupsRepository {
     );
     if (result.rows.length === 0) return null;
     return this.mapDetailRow(result.rows[0]);
+  }
+
+  /**
+   * Get matchups by league_season_id and week (preferred for season-scoped queries)
+   */
+  async findByLeagueSeasonIdAndWeek(leagueSeasonId: number, week: number): Promise<Matchup[]> {
+    const result = await this.db.query(
+      `SELECT * FROM matchups
+       WHERE league_season_id = $1 AND week = $2
+       ORDER BY id`,
+      [leagueSeasonId, week]
+    );
+    return result.rows.map(matchupFromDatabase);
+  }
+
+  /**
+   * Get all matchups by league_season_id (preferred for season-scoped queries)
+   */
+  async findAllByLeagueSeasonId(leagueSeasonId: number): Promise<Matchup[]> {
+    const result = await this.db.query(
+      `SELECT * FROM matchups
+       WHERE league_season_id = $1
+       ORDER BY week, id`,
+      [leagueSeasonId]
+    );
+    return result.rows.map(matchupFromDatabase);
+  }
+
+  /**
+   * Get matchups by league_season_id and week with team names and live scores
+   */
+  async findByLeagueSeasonIdAndWeekWithDetails(leagueSeasonId: number, week: number): Promise<MatchupDetails[]> {
+    const result = await this.db.query(
+      this.buildDetailQuery('m.league_season_id = $1 AND m.week = $2', 'm.id'),
+      [leagueSeasonId, week]
+    );
+    return result.rows.map(row => this.mapDetailRow(row));
   }
 
   /**
@@ -170,14 +261,15 @@ export class MatchupsRepository {
     roster1Id: number,
     roster2Id: number,
     isPlayoff: boolean = false,
-    client?: PoolClient
+    client?: PoolClient,
+    leagueSeasonId?: number
   ): Promise<Matchup> {
     const db = client || this.db;
     const result = await db.query(
-      `INSERT INTO matchups (league_id, season, week, roster1_id, roster2_id, is_playoff)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO matchups (league_id, season, week, roster1_id, roster2_id, is_playoff, league_season_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [leagueId, season, week, roster1Id, roster2Id, isPlayoff]
+      [leagueId, season, week, roster1Id, roster2Id, isPlayoff, leagueSeasonId || null]
     );
 
     return matchupFromDatabase(result.rows[0]);
@@ -257,7 +349,7 @@ export class MatchupsRepository {
    * Includes H2H and median record breakdown when median data exists.
    * Totals are gated by the useLeagueMedian setting - when OFF, only H2H counts.
    */
-  async getStandings(leagueId: number, season: number): Promise<Standing[]> {
+  async getStandings(leagueId: number, season: number, leagueSeasonId?: number): Promise<Standing[]> {
     const result = await this.db.query(
       `WITH league_cfg AS (
         SELECT (COALESCE(league_settings->>'useLeagueMedian', 'false'))::boolean AS use_median

@@ -46,15 +46,16 @@ export class DraftRepository {
     return this.core.findByIdWithClient(client, id);
   }
 
-  async findByLeagueId(leagueId: number): Promise<Draft[]> {
-    return this.core.findByLeagueId(leagueId);
+  async findByLeagueId(leagueId: number, leagueSeasonId?: number): Promise<Draft[]> {
+    return this.core.findByLeagueId(leagueId, leagueSeasonId);
   }
 
   async findByLeagueIdWithMembershipCheck(
     leagueId: number,
-    userId: string
+    userId: string,
+    leagueSeasonId?: number
   ): Promise<Draft[] | null> {
-    return this.core.findByLeagueIdWithMembershipCheck(leagueId, userId);
+    return this.core.findByLeagueIdWithMembershipCheck(leagueId, userId, leagueSeasonId);
   }
 
   async create(
@@ -63,9 +64,10 @@ export class DraftRepository {
     rounds: number,
     pickTimeSeconds: number,
     settings?: DraftSettings,
-    scheduledStart?: Date
+    scheduledStart?: Date,
+    leagueSeasonId?: number
   ): Promise<Draft> {
-    return this.core.create(leagueId, draftType, rounds, pickTimeSeconds, settings, scheduledStart);
+    return this.core.create(leagueId, draftType, rounds, pickTimeSeconds, settings, scheduledStart, leagueSeasonId);
   }
 
   async createWithClient(
@@ -75,9 +77,10 @@ export class DraftRepository {
     rounds: number,
     pickTimeSeconds: number,
     settings?: DraftSettings,
-    scheduledStart?: Date
+    scheduledStart?: Date,
+    leagueSeasonId?: number
   ): Promise<Draft> {
-    return this.core.createWithClient(client, leagueId, draftType, rounds, pickTimeSeconds, settings, scheduledStart);
+    return this.core.createWithClient(client, leagueId, draftType, rounds, pickTimeSeconds, settings, scheduledStart, leagueSeasonId);
   }
 
   async update(id: number, updates: Partial<Draft>): Promise<Draft> {

@@ -46,7 +46,8 @@ export async function submitClaim(
   leagueId: number,
   userId: string,
   request: SubmitClaimRequest,
-  idempotencyKey?: string
+  idempotencyKey?: string,
+  leagueSeasonId?: number
 ): Promise<WaiverClaimWithDetails> {
   // Validate user owns a roster in this league (fail fast outside transaction)
   const roster = await ctx.rosterRepo.findByLeagueAndUser(leagueId, userId);
@@ -89,7 +90,7 @@ export async function submitClaim(
     async (client) => {
 
       // Check if player is already owned (season-scoped)
-      const playerOwner = await ctx.rosterPlayersRepo.findOwner(leagueId, request.playerId, client, league.activeLeagueSeasonId);
+      const playerOwner = await ctx.rosterPlayersRepo.findOwner(leagueId, request.playerId, client, leagueSeasonId ?? league.activeLeagueSeasonId);
       if (playerOwner) {
         throw new ValidationException('Player is already on a roster');
       }

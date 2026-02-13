@@ -63,9 +63,10 @@ export async function invalidateTradesForPlayer(
   tradesRepo: TradesRepository,
   leagueId: number,
   playerId: number,
-  client: PoolClient
+  client: PoolClient,
+  leagueSeasonId?: number
 ): Promise<Array<{ id: number; leagueId: number }>> {
-  const affectedTrades = await tradesRepo.findPendingByPlayer(leagueId, playerId, client);
+  const affectedTrades = await tradesRepo.findPendingByPlayer(leagueId, playerId, client, leagueSeasonId);
   return invalidateAffectedTrades(tradesRepo, affectedTrades, client);
 }
 
@@ -82,8 +83,9 @@ export async function invalidateTradesForPickAsset(
   tradesRepo: TradesRepository,
   leagueId: number,
   pickAssetId: number,
-  client: PoolClient
+  client: PoolClient,
+  leagueSeasonId?: number
 ): Promise<Array<{ id: number; leagueId: number }>> {
-  const affectedTrades = await tradesRepo.findPendingByPickAsset(leagueId, pickAssetId, client);
+  const affectedTrades = await tradesRepo.findPendingByPickAsset(leagueId, pickAssetId, client, leagueSeasonId);
   return invalidateAffectedTrades(tradesRepo, affectedTrades, client);
 }

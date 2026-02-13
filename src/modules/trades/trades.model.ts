@@ -108,6 +108,7 @@ export interface ProposeTradeRequest {
   notifyLeagueChat?: boolean;
   notifyDm?: boolean;
   leagueChatMode?: LeagueChatMode;
+  leagueSeasonId?: number;
 }
 
 export interface CounterTradeRequest {
@@ -118,6 +119,7 @@ export interface CounterTradeRequest {
   message?: string;
   notifyDm?: boolean;
   leagueChatMode?: LeagueChatMode;
+  leagueSeasonId?: number;
 }
 
 /**

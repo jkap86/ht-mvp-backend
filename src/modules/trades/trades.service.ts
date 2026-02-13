@@ -185,7 +185,8 @@ export class TradesService {
     userId: string,
     statuses?: string[],
     limit?: number,
-    offset?: number
+    offset?: number,
+    leagueSeasonId?: number
   ): Promise<TradeWithDetails[]> {
     return getTradesForLeagueUseCase(
       {
@@ -197,7 +198,8 @@ export class TradesService {
       userId,
       statuses,
       limit,
-      offset
+      offset,
+      leagueSeasonId
     );
   }
 

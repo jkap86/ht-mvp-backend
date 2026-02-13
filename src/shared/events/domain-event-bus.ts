@@ -285,6 +285,7 @@ export const EventTypes = {
   MEMBER_KICKED: 'league:member_kicked',
   MEMBER_BENCHED: 'league:member_benched',
   LEAGUE_WEEK_ADVANCED: 'league:week_advanced',
+  SEASON_ROLLED_OVER: 'league:seasonRolledOver',
 
   // Invitation events
   INVITATION_RECEIVED: 'invitation:received',

@@ -12,6 +12,8 @@ import { LeagueSeasonRepository } from './league-season.repository';
 import { KeeperSelectionRepository } from './keeper-selection.repository';
 import type { LeagueRepository } from './leagues.repository';
 import { RolloverToNewSeasonUseCase } from './use-cases/rollover-to-new-season.use-case';
+import { tryGetEventBus, EventTypes } from '../../shared/events';
+import { getActiveLeagueSeasonId } from '../../shared/season-context';
 import { SubmitKeeperSelectionUseCase } from './use-cases/submit-keeper-selection.use-case';
 import { ApplyKeepersToRostersUseCase } from './use-cases/apply-keepers-to-rosters.use-case';
 
@@ -51,11 +53,21 @@ export function createSeasonRoutes(pool: Pool): Router {
 
   /**
    * GET /leagues/:leagueId/seasons/active
-   * Get the active (current) season for a league
+   * Get the active (current) season for a league.
+   * Uses leagues.active_league_season_id pointer for O(1) lookup,
+   * falling back to status-based inference if pointer is not set.
    */
   router.get('/leagues/:leagueId/seasons/active', authMiddleware, asyncHandler(async (req: AuthRequest, res: Response) => {
     const leagueId = parseInt(req.params.leagueId as string, 10);
-    const activeSeason = await leagueSeasonRepo.findActiveByLeague(leagueId);
+
+    let activeSeason = null;
+    try {
+      const activeSeasonId = await getActiveLeagueSeasonId(pool, leagueId);
+      activeSeason = await leagueSeasonRepo.findById(activeSeasonId);
+    } catch {
+      // Fallback: pointer not set, infer from status
+      activeSeason = await leagueSeasonRepo.findActiveByLeague(leagueId);
+    }
 
     if (!activeSeason) {
       return res.status(404).json({ error: 'No active season found for this league' });
@@ -115,6 +127,18 @@ export function createSeasonRoutes(pool: Pool): Router {
       leagueId,
       keeperDeadline: keeperDeadline ? new Date(keeperDeadline) : undefined,
       userId: req.user?.userId
+    });
+
+    // Emit socket event AFTER transaction commits (use case runs inside runWithLock)
+    const eventBus = tryGetEventBus();
+    eventBus?.publish({
+      type: EventTypes.SEASON_ROLLED_OVER,
+      leagueId,
+      payload: {
+        leagueId,
+        newSeasonId: result.newSeason.id,
+        previousSeasonId: result.previousSeason.id,
+      },
     });
 
     res.json({

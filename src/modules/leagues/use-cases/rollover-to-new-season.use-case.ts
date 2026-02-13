@@ -9,7 +9,7 @@ import { LeagueRepository } from '../leagues.repository';
 import { LeagueSeasonRepository } from '../league-season.repository';
 import { LeagueSeason } from '../league-season.model';
 import { League } from '../leagues.model';
-import { NotFoundException, ValidationException, ConflictException } from '../../../utils/exceptions';
+import { NotFoundException, ValidationException, ConflictException, ForbiddenException } from '../../../utils/exceptions';
 
 export interface RolloverParams {
   leagueId: number;
@@ -36,6 +36,15 @@ export class RolloverToNewSeasonUseCase {
       const league = await this.leagueRepo.findById(params.leagueId, client);
         if (!league) {
           throw new NotFoundException('League not found');
+        }
+
+        // 1b. Validate commissioner permission
+        if (!params.userId) {
+          throw new ForbiddenException('userId is required for rollover');
+        }
+        const isCommish = await this.leagueRepo.isCommissioner(params.leagueId, params.userId);
+        if (!isCommish) {
+          throw new ForbiddenException('Only the commissioner can rollover a league season');
         }
 
         if (league.mode === 'redraft') {
@@ -80,21 +89,28 @@ export class RolloverToNewSeasonUseCase {
         }, client);
 
         // 7. Copy rosters to new season (preserve ownership, reset players)
-        await this.copyRostersToNewSeason(client, currentSeason.id, newSeason.id);
+        await this.copyRostersToNewSeason(client, currentSeason.id, newSeason.id, params.leagueId);
 
         // 8. Initialize waiver priorities (copy from previous season or inverse standings)
-        await this.initializeWaiverPriorities(client, newSeason.id, currentSeason.id);
+        await this.initializeWaiverPriorities(client, newSeason.id, currentSeason.id, params.leagueId);
 
         // 9. Initialize FAAB budgets (reset to default)
-        await this.initializeFAABBudgets(client, newSeason.id, league);
+        await this.initializeFAABBudgets(client, newSeason.id, league, params.leagueId);
 
         // 10. Migrate future draft pick assets to new season
         await this.migrateDraftPickAssets(client, params.leagueId, newSeason.id, newSeasonYear, currentSeason.id);
 
-        // 11. Update active season pointer on leagues table
+        // 11. Update active season pointer + sync league-level fields
         await client.query(
-          'UPDATE leagues SET active_league_season_id = $1 WHERE id = $2',
-          [newSeason.id, params.leagueId]
+          `UPDATE leagues
+           SET active_league_season_id = $1,
+               season = $2::text,
+               current_week = 1,
+               status = 'pre_draft',
+               season_status = 'pre_season',
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = $3`,
+          [newSeason.id, newSeasonYear, params.leagueId]
         );
 
       return {
@@ -112,15 +128,16 @@ export class RolloverToNewSeasonUseCase {
   private async copyRostersToNewSeason(
     client: PoolClient,
     oldSeasonId: number,
-    newSeasonId: number
+    newSeasonId: number,
+    leagueId: number
   ): Promise<void> {
     await client.query(
-      `INSERT INTO rosters (league_season_id, user_id, roster_id, settings, starters, bench)
-       SELECT $1, user_id, roster_id, settings, '[]'::jsonb, '[]'::jsonb
+      `INSERT INTO rosters (league_id, league_season_id, user_id, roster_id, settings, starters, bench)
+       SELECT $3, $1, user_id, roster_id, settings, '[]'::jsonb, '[]'::jsonb
        FROM rosters
        WHERE league_season_id = $2
        ORDER BY roster_id`,
-      [newSeasonId, oldSeasonId]
+      [newSeasonId, oldSeasonId, leagueId]
     );
   }
 
@@ -131,7 +148,8 @@ export class RolloverToNewSeasonUseCase {
   private async initializeWaiverPriorities(
     client: PoolClient,
     newSeasonId: number,
-    oldSeasonId: number
+    oldSeasonId: number,
+    leagueId: number
   ): Promise<void> {
     const newSeason = await client.query(
       'SELECT season FROM league_seasons WHERE id = $1',
@@ -142,14 +160,14 @@ export class RolloverToNewSeasonUseCase {
     // Copy waiver priorities from end of previous season
     // Map old roster IDs to new roster IDs via roster_id position
     await client.query(
-      `INSERT INTO waiver_priority (league_season_id, roster_id, season, priority)
-       SELECT $1, r_new.id, $2, wp.priority
+      `INSERT INTO waiver_priority (league_id, league_season_id, roster_id, season, priority)
+       SELECT $4, $1, r_new.id, $2, wp.priority
        FROM waiver_priority wp
        JOIN rosters r_old ON wp.roster_id = r_old.id
        JOIN rosters r_new ON r_new.league_season_id = $1 AND r_new.roster_id = r_old.roster_id
        WHERE wp.league_season_id = $3
        ORDER BY wp.priority`,
-      [newSeasonId, seasonYear, oldSeasonId]
+      [newSeasonId, seasonYear, oldSeasonId, leagueId]
     );
   }
 
@@ -159,7 +177,8 @@ export class RolloverToNewSeasonUseCase {
   private async initializeFAABBudgets(
     client: PoolClient,
     newSeasonId: number,
-    league: League
+    league: League,
+    leagueId: number
   ): Promise<void> {
     const seasonYear = (await client.query(
       'SELECT season FROM league_seasons WHERE id = $1',
@@ -169,11 +188,11 @@ export class RolloverToNewSeasonUseCase {
     const initialBudget = league.leagueSettings?.faabBudget || 100;
 
     await client.query(
-      `INSERT INTO faab_budgets (league_season_id, roster_id, season, initial_budget, remaining_budget)
-       SELECT $1, id, $2, $3, $3
+      `INSERT INTO faab_budgets (league_id, league_season_id, roster_id, season, initial_budget, remaining_budget)
+       SELECT $4, $1, id, $2, $3, $3
        FROM rosters
        WHERE league_season_id = $1`,
-      [newSeasonId, seasonYear, initialBudget]
+      [newSeasonId, seasonYear, initialBudget, leagueId]
     );
   }
 

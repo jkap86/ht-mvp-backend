@@ -52,7 +52,7 @@ export class MatchupService {
   /**
    * Get matchups for a week
    */
-  async getWeekMatchups(leagueId: number, week: number, userId: string): Promise<MatchupDetails[]> {
+  async getWeekMatchups(leagueId: number, week: number, userId: string, leagueSeasonId?: number): Promise<MatchupDetails[]> {
     // Validate league membership
     const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
     if (!isMember) {
@@ -65,7 +65,7 @@ export class MatchupService {
     }
 
     const season = parseInt(league.season, 10);
-    return this.matchupsRepo.findByLeagueAndWeekWithDetails(leagueId, season, week);
+    return this.matchupsRepo.findByLeagueAndWeekWithDetails(leagueId, season, week, leagueSeasonId);
   }
 
   /**
@@ -75,7 +75,8 @@ export class MatchupService {
   async getAllMatchups(
     leagueId: number,
     userId: string,
-    seasonOverride?: number
+    seasonOverride?: number,
+    leagueSeasonId?: number
   ): Promise<MatchupDetails[]> {
     // Validate league membership
     const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
@@ -89,7 +90,7 @@ export class MatchupService {
     }
 
     const season = seasonOverride ?? parseInt(league.season, 10);
-    return this.matchupsRepo.findAllByLeagueAndSeasonWithDetails(leagueId, season);
+    return this.matchupsRepo.findAllByLeagueAndSeasonWithDetails(leagueId, season, leagueSeasonId);
   }
 
   /**

@@ -15,6 +15,7 @@ export const SOCKET_EVENTS = {
     LEAVE: 'leave:league',
     SETTINGS_UPDATED: 'league:settings_updated',
     WEEK_ADVANCED: 'league:week_advanced',
+    SEASON_ROLLED_OVER: 'league:seasonRolledOver',
   },
 
   // Draft events

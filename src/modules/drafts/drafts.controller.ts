@@ -9,6 +9,7 @@ import {
   requireLeagueId,
   requireDraftId,
   requirePlayerId,
+  requireLeagueSeasonId,
 } from '../../utils/controller-helpers';
 import { ValidationException } from '../../utils/exceptions';
 import { ActionDispatcher } from './action-handlers';
@@ -53,8 +54,9 @@ export class DraftController {
   getLeagueDrafts = async (req: AuthRequest, res: Response) => {
     const userId = requireUserId(req);
     const leagueId = requireLeagueId(req);
+    const leagueSeasonId = req.leagueSeasonId;
 
-    const drafts = await this.draftService.getLeagueDrafts(leagueId, userId);
+    const drafts = await this.draftService.getLeagueDrafts(leagueId, userId, leagueSeasonId);
     res.status(200).json(drafts);
   };
 
@@ -70,6 +72,7 @@ export class DraftController {
   createDraft = async (req: AuthRequest, res: Response) => {
     const userId = requireUserId(req);
     const leagueId = requireLeagueId(req);
+    const leagueSeasonId = req.leagueSeasonId;
 
     const {
       draft_type,
@@ -93,6 +96,7 @@ export class DraftController {
       includeRookiePicks: include_rookie_picks,
       rookiePicksSeason: rookie_picks_season,
       rookiePicksRounds: rookie_picks_rounds,
+      leagueSeasonId,
     });
     res.status(201).json(draft);
   };

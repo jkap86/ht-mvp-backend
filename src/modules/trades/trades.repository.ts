@@ -345,14 +345,15 @@ export class TradesRepository {
   /**
    * Find pending trades that involve a specific player
    */
-  async findPendingByPlayer(leagueId: number, playerId: number, client?: PoolClient): Promise<Trade[]> {
+  async findPendingByPlayer(leagueId: number, playerId: number, client?: PoolClient, leagueSeasonId?: number): Promise<Trade[]> {
     const db = client || this.db;
+    const filter = leagueSeasonId ? 't.league_season_id = $1' : 't.league_id = $1';
     const result = await db.query(
       `SELECT DISTINCT t.* FROM trades t
       JOIN trade_items ti ON ti.trade_id = t.id
-      WHERE t.league_id = $1 AND ti.player_id = $2
+      WHERE ${filter} AND ti.player_id = $2
       AND t.status IN ('pending', 'accepted', 'in_review')`,
-      [leagueId, playerId]
+      [leagueSeasonId || leagueId, playerId]
     );
     return result.rows.map(tradeFromDatabase);
   }
@@ -361,16 +362,17 @@ export class TradesRepository {
    * Find pending trades that involve any of the specified players (batch query)
    * Returns a Set of player IDs that are in pending trades
    */
-  async findPendingPlayerIds(leagueId: number, playerIds: number[], client?: PoolClient): Promise<Set<number>> {
+  async findPendingPlayerIds(leagueId: number, playerIds: number[], client?: PoolClient, leagueSeasonId?: number): Promise<Set<number>> {
     if (playerIds.length === 0) return new Set();
 
     const db = client || this.db;
+    const filter = leagueSeasonId ? 't.league_season_id = $1' : 't.league_id = $1';
     const result = await db.query(
       `SELECT DISTINCT ti.player_id FROM trades t
       JOIN trade_items ti ON ti.trade_id = t.id
-      WHERE t.league_id = $1 AND ti.player_id = ANY($2)
+      WHERE ${filter} AND ti.player_id = ANY($2)
       AND t.status IN ('pending', 'accepted', 'in_review')`,
-      [leagueId, playerIds]
+      [leagueSeasonId || leagueId, playerIds]
     );
     return new Set(result.rows.map((row) => row.player_id));
   }
@@ -378,14 +380,15 @@ export class TradesRepository {
   /**
    * Find pending trades that involve a specific pick asset
    */
-  async findPendingByPickAsset(leagueId: number, pickAssetId: number, client?: PoolClient): Promise<Trade[]> {
+  async findPendingByPickAsset(leagueId: number, pickAssetId: number, client?: PoolClient, leagueSeasonId?: number): Promise<Trade[]> {
     const db = client || this.db;
+    const filter = leagueSeasonId ? 't.league_season_id = $1' : 't.league_id = $1';
     const result = await db.query(
       `SELECT DISTINCT t.* FROM trades t
       JOIN trade_items ti ON ti.trade_id = t.id
-      WHERE t.league_id = $1 AND ti.draft_pick_asset_id = $2
+      WHERE ${filter} AND ti.draft_pick_asset_id = $2
       AND t.status IN ('pending', 'accepted', 'in_review')`,
-      [leagueId, pickAssetId]
+      [leagueSeasonId || leagueId, pickAssetId]
     );
     return result.rows.map(tradeFromDatabase);
   }

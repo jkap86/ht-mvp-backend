@@ -8,7 +8,7 @@ import {
   faabBudgetToResponse,
   waiverWirePlayerToResponse,
 } from './waivers.model';
-import { requireUserId, requireLeagueId } from '../../utils/controller-helpers';
+import { requireUserId, requireLeagueId, requireLeagueSeasonId } from '../../utils/controller-helpers';
 
 export class WaiversController {
   constructor(
@@ -19,6 +19,7 @@ export class WaiversController {
   submitClaim = async (req: AuthRequest, res: Response): Promise<void> => {
     const leagueId = requireLeagueId(req);
     const userId = requireUserId(req);
+    const leagueSeasonId = req.leagueSeasonId;
     const { player_id, drop_player_id, bid_amount } = req.body;
     const idempotencyKey = req.headers['x-idempotency-key'] as string | undefined;
 
@@ -30,7 +31,8 @@ export class WaiversController {
         dropPlayerId: drop_player_id || null,
         bidAmount: bid_amount || 0,
       },
-      idempotencyKey
+      idempotencyKey,
+      leagueSeasonId
     );
 
     res.status(201).json(waiverClaimToResponse(claim));
@@ -72,8 +74,9 @@ export class WaiversController {
   getPriority = async (req: AuthRequest, res: Response): Promise<void> => {
     const leagueId = requireLeagueId(req);
     const userId = requireUserId(req);
+    const leagueSeasonId = req.leagueSeasonId;
 
-    const priorities = await this.waiversService.getPriorityOrder(leagueId, userId);
+    const priorities = await this.waiversService.getPriorityOrder(leagueId, userId, leagueSeasonId);
 
     res.status(200).json({
       priorities: priorities.map(waiverPriorityToResponse),
@@ -94,11 +97,12 @@ export class WaiversController {
   getWaiverWire = async (req: AuthRequest, res: Response): Promise<void> => {
     const leagueId = requireLeagueId(req);
     const userId = requireUserId(req);
+    const leagueSeasonId = req.leagueSeasonId;
 
     // Verify user is in league
     await this.authService.ensureLeagueMember(leagueId, userId);
 
-    const players = await this.waiversService.getWaiverWirePlayers(leagueId);
+    const players = await this.waiversService.getWaiverWirePlayers(leagueId, leagueSeasonId);
 
     res.status(200).json({
       players: players.map(waiverWirePlayerToResponse),

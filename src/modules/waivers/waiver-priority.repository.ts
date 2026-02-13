@@ -41,7 +41,12 @@ export class WaiverPriorityRepository {
   /**
    * Get priority list for a league/season with team details
    */
-  async getByLeague(leagueId: number, season: number): Promise<WaiverPriorityWithDetails[]> {
+  async getByLeague(leagueId: number, season: number, leagueSeasonId?: number): Promise<WaiverPriorityWithDetails[]> {
+    const filter = leagueSeasonId
+      ? 'wp.league_season_id = $1'
+      : 'wp.league_id = $1 AND wp.season = $2';
+    const params = leagueSeasonId ? [leagueSeasonId] : [leagueId, season];
+
     const result = await this.db.query(
       `SELECT wp.*,
         r.settings->>'team_name' as team_name,
@@ -49,9 +54,9 @@ export class WaiverPriorityRepository {
       FROM waiver_priority wp
       JOIN rosters r ON r.id = wp.roster_id
       JOIN users u ON u.id = r.user_id
-      WHERE wp.league_id = $1 AND wp.season = $2
+      WHERE ${filter}
       ORDER BY wp.priority ASC`,
-      [leagueId, season]
+      params
     );
 
     return result.rows.map((row) => ({

@@ -11,7 +11,7 @@ import {
   matchupWithLineupsToResponse,
   standingToResponse,
 } from './matchups.model';
-import { requireUserId, requireLeagueId } from '../../utils/controller-helpers';
+import { requireUserId, requireLeagueId, requireLeagueSeasonId } from '../../utils/controller-helpers';
 import { parseIntParam } from '../../utils/params';
 import { ValidationException, ForbiddenException } from '../../utils/exceptions';
 
@@ -39,6 +39,7 @@ export class MatchupsController {
   async getMatchups(req: AuthRequest, res: Response): Promise<void> {
     const leagueId = requireLeagueId(req);
     const userId = requireUserId(req);
+    const leagueSeasonId = req.leagueSeasonId;
 
     const weekParam = req.query.week as string | undefined;
     const weekParsed = weekParam !== undefined ? parseInt(weekParam, 10) : undefined;
@@ -52,9 +53,9 @@ export class MatchupsController {
 
     let matchups;
     if (week !== undefined) {
-      matchups = await this.matchupService.getWeekMatchups(leagueId, week, userId);
+      matchups = await this.matchupService.getWeekMatchups(leagueId, week, userId, leagueSeasonId);
     } else {
-      matchups = await this.matchupService.getAllMatchups(leagueId, userId, season);
+      matchups = await this.matchupService.getAllMatchups(leagueId, userId, season, leagueSeasonId);
     }
 
     res.json({ matchups: matchups.map(matchupDetailsToResponse) });

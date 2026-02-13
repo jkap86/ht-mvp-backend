@@ -7,6 +7,8 @@ import { apiReadLimiter, tradeLimiter } from '../../middleware/rate-limit.middle
 import { container, KEYS } from '../../container';
 import { proposeTradeSchema, counterTradeSchema, voteTradeSchema } from './trades.schemas';
 import { asyncHandler } from '../../shared/async-handler';
+import { resolveSeasonContext } from '../../middleware/season-context.middleware';
+import { seasonWriteGuard } from '../../middleware/season-write-guard.middleware';
 
 // Resolve dependencies from container
 const tradesService = container.resolve<TradesService>(KEYS.TRADES_SERVICE);
@@ -16,8 +18,10 @@ const tradesController = new TradesController(tradesService);
 
 const router = Router({ mergeParams: true }); // mergeParams to access :leagueId
 
-// All trade routes require authentication
+// All trade routes require authentication and season context
 router.use(authMiddleware);
+router.use(resolveSeasonContext);
+router.use(seasonWriteGuard);
 
 /**
  * GET /api/leagues/:leagueId/trades

@@ -3,6 +3,9 @@ import { AuthRequest } from '../middleware/auth.middleware';
 import { ValidationException } from './exceptions';
 import { parseIntParam } from './params';
 
+// Import for side-effect: registers leagueSeasonId on Express.Request globally
+import '../middleware/season-context.middleware';
+
 /**
  * Controller helper functions for common validation patterns.
  * Use these to reduce boilerplate in controller methods.
@@ -48,4 +51,14 @@ export function requirePlayerId(req: Request): number {
   const playerId = parseIntParam(req.params.playerId ?? req.params.id ?? req.body.player_id);
   if (isNaN(playerId)) throw new ValidationException('Invalid player ID');
   return playerId;
+}
+
+/**
+ * Extract leagueSeasonId from request (set by resolveSeasonContext middleware).
+ * @throws ValidationException if leagueSeasonId is not set
+ */
+export function requireLeagueSeasonId(req: Request): number {
+  const leagueSeasonId = req.leagueSeasonId;
+  if (!leagueSeasonId) throw new ValidationException('League season context not resolved');
+  return leagueSeasonId;
 }

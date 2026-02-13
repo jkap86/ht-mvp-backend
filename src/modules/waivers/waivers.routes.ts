@@ -4,6 +4,8 @@ import { authMiddleware } from '../../middleware/auth.middleware';
 import { validateRequest } from '../../middleware/validation.middleware';
 import { apiReadLimiter, waiverLimiter } from '../../middleware/rate-limit.middleware';
 import { asyncHandler } from '../../shared/async-handler';
+import { resolveSeasonContext } from '../../middleware/season-context.middleware';
+import { seasonWriteGuard } from '../../middleware/season-write-guard.middleware';
 import {
   submitClaimSchema,
   updateClaimSchema,
@@ -20,8 +22,10 @@ import {
 export function createWaiversRoutes(controller: WaiversController): Router {
   const router = Router({ mergeParams: true });
 
-  // All routes require authentication
+  // All routes require authentication and season context
   router.use(authMiddleware);
+  router.use(resolveSeasonContext);
+  router.use(seasonWriteGuard);
 
   // Submit a waiver claim
   // POST /leagues/:leagueId/waivers/claims

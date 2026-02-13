@@ -28,18 +28,19 @@ export class PlayoffRepository {
     consolationType: ConsolationType = 'NONE',
     consolationTeams: number | null = null,
     weeksByRound: number[] | null = null,
-    client?: PoolClient
+    client?: PoolClient,
+    leagueSeasonId?: number
   ): Promise<PlayoffBracket> {
     const db = client || this.db;
     const result = await db.query(
       `INSERT INTO playoff_brackets
        (league_id, season, playoff_teams, total_rounds, start_week, championship_week, status,
-        enable_third_place, consolation_type, consolation_teams, weeks_by_round)
-       VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10)
+        enable_third_place, consolation_type, consolation_teams, weeks_by_round, league_season_id)
+       VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10, $11)
        RETURNING *`,
       [leagueId, season, playoffTeams, totalRounds, startWeek, championshipWeek,
        enableThirdPlace, consolationType, consolationTeams,
-       weeksByRound ? JSON.stringify(weeksByRound) : null]
+       weeksByRound ? JSON.stringify(weeksByRound) : null, leagueSeasonId || null]
     );
     return playoffBracketFromDatabase(result.rows[0]);
   }
@@ -47,10 +48,30 @@ export class PlayoffRepository {
   /**
    * Find bracket by league and season
    */
-  async findByLeagueSeason(leagueId: number, season: number): Promise<PlayoffBracket | null> {
+  async findByLeagueSeason(leagueId: number, season: number, leagueSeasonId?: number): Promise<PlayoffBracket | null> {
+    if (leagueSeasonId) {
+      const result = await this.db.query(
+        'SELECT * FROM playoff_brackets WHERE league_season_id = $1',
+        [leagueSeasonId]
+      );
+      if (result.rows.length === 0) return null;
+      return playoffBracketFromDatabase(result.rows[0]);
+    }
     const result = await this.db.query(
       'SELECT * FROM playoff_brackets WHERE league_id = $1 AND season = $2',
       [leagueId, season]
+    );
+    if (result.rows.length === 0) return null;
+    return playoffBracketFromDatabase(result.rows[0]);
+  }
+
+  /**
+   * Find bracket by league_season_id (preferred for season-scoped queries)
+   */
+  async findByLeagueSeasonId(leagueSeasonId: number): Promise<PlayoffBracket | null> {
+    const result = await this.db.query(
+      'SELECT * FROM playoff_brackets WHERE league_season_id = $1',
+      [leagueSeasonId]
     );
     if (result.rows.length === 0) return null;
     return playoffBracketFromDatabase(result.rows[0]);

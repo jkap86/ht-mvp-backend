@@ -842,6 +842,13 @@ export class SocketService {
     this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.LEAGUE.WEEK_ADVANCED, data);
   }
 
+  emitSeasonRolledOver(
+    leagueId: number,
+    data: { leagueId: number; newSeasonId: number; previousSeasonId: number }
+  ): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.LEAGUE.SEASON_ROLLED_OVER, data);
+  }
+
   // Playoff events (emitted to league room)
 
   // Emit playoff bracket generated event

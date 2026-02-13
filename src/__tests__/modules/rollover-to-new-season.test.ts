@@ -42,6 +42,7 @@ describe('RolloverToNewSeasonUseCase', () => {
   let mockLeagueSeasonRepo: jest.Mocked<LeagueSeasonRepository>;
 
   const now = new Date();
+  const commissionerUserId = 'user-commish-123';
 
   const dynastyLeague = new League(
     1, 'Dynasty League', 'active',
@@ -74,6 +75,7 @@ describe('RolloverToNewSeasonUseCase', () => {
 
     mockLeagueRepo = {
       findById: jest.fn().mockResolvedValue(dynastyLeague),
+      isCommissioner: jest.fn().mockResolvedValue(true),
     } as unknown as jest.Mocked<LeagueRepository>;
 
     mockLeagueSeasonRepo = {
@@ -90,22 +92,46 @@ describe('RolloverToNewSeasonUseCase', () => {
     );
   });
 
-  it('should update active_league_season_id to the new season', async () => {
-    const result = await useCase.execute({ leagueId: 1 });
+  // --- Permission tests ---
+
+  it('should reject rollover when userId is not provided', async () => {
+    await expect(useCase.execute({ leagueId: 1 })).rejects.toThrow(
+      'userId is required for rollover'
+    );
+  });
+
+  it('should reject rollover when user is not commissioner', async () => {
+    mockLeagueRepo.isCommissioner.mockResolvedValue(false);
+
+    await expect(useCase.execute({ leagueId: 1, userId: 'non-commish' })).rejects.toThrow(
+      'Only the commissioner can rollover a league season'
+    );
+  });
+
+  // --- Core rollover tests ---
+
+  it('should update active_league_season_id and sync league-level fields', async () => {
+    const result = await useCase.execute({ leagueId: 1, userId: commissionerUserId });
 
     expect(result.newSeason.id).toBe(11);
     expect(result.previousSeason.id).toBe(10);
 
-    // Verify active_league_season_id was updated
-    const activeSeasonUpdate = mockQueryCalls.find(
-      (q) => q.text.includes('UPDATE leagues SET active_league_season_id')
+    // Verify leagues row is fully updated
+    const leaguesUpdate = mockQueryCalls.find(
+      (q) => q.text.includes('UPDATE leagues')
     );
-    expect(activeSeasonUpdate).toBeDefined();
-    expect(activeSeasonUpdate!.values).toEqual([11, 1]);
+    expect(leaguesUpdate).toBeDefined();
+    expect(leaguesUpdate!.text).toContain('active_league_season_id = $1');
+    expect(leaguesUpdate!.text).toContain('season = $2::text');
+    expect(leaguesUpdate!.text).toContain('current_week = 1');
+    expect(leaguesUpdate!.text).toContain("status = 'pre_draft'");
+    expect(leaguesUpdate!.text).toContain("season_status = 'pre_season'");
+    // values: [newSeason.id, newSeasonYear, leagueId]
+    expect(leaguesUpdate!.values).toEqual([11, 2025, 1]);
   });
 
   it('should update league_season_id on pick assets for the new season year', async () => {
-    await useCase.execute({ leagueId: 1 });
+    await useCase.execute({ leagueId: 1, userId: commissionerUserId });
 
     const leagueSeasonUpdate = mockQueryCalls.find(
       (q) =>
@@ -119,7 +145,7 @@ describe('RolloverToNewSeasonUseCase', () => {
   });
 
   it('should remap original_roster_id on current/future pick assets', async () => {
-    await useCase.execute({ leagueId: 1 });
+    await useCase.execute({ leagueId: 1, userId: commissionerUserId });
 
     const origRosterRemap = mockQueryCalls.find(
       (q) =>
@@ -136,7 +162,7 @@ describe('RolloverToNewSeasonUseCase', () => {
   });
 
   it('should remap current_owner_roster_id on current/future pick assets', async () => {
-    await useCase.execute({ leagueId: 1 });
+    await useCase.execute({ leagueId: 1, userId: commissionerUserId });
 
     const ownerRosterRemap = mockQueryCalls.find(
       (q) =>
@@ -157,7 +183,7 @@ describe('RolloverToNewSeasonUseCase', () => {
     );
     mockLeagueRepo.findById.mockResolvedValue(redraftLeague);
 
-    await expect(useCase.execute({ leagueId: 2 })).rejects.toThrow(
+    await expect(useCase.execute({ leagueId: 2, userId: commissionerUserId })).rejects.toThrow(
       'Redraft leagues should use reset, not rollover'
     );
   });
@@ -169,7 +195,7 @@ describe('RolloverToNewSeasonUseCase', () => {
     );
     mockLeagueSeasonRepo.findActiveByLeague.mockResolvedValue(preDraftSeason);
 
-    await expect(useCase.execute({ leagueId: 1 })).rejects.toThrow(
+    await expect(useCase.execute({ leagueId: 1, userId: commissionerUserId })).rejects.toThrow(
       'Cannot rollover from pre_draft status'
     );
   });
@@ -177,35 +203,59 @@ describe('RolloverToNewSeasonUseCase', () => {
   it('should reject rollover when a newer season already exists', async () => {
     mockLeagueSeasonRepo.getLatestSeasonNumber.mockResolvedValue(2025);
 
-    await expect(useCase.execute({ leagueId: 1 })).rejects.toThrow(
+    await expect(useCase.execute({ leagueId: 1, userId: commissionerUserId })).rejects.toThrow(
       'A newer season already exists'
     );
   });
 
-  it('should copy rosters with reset starters/bench', async () => {
-    await useCase.execute({ leagueId: 1 });
+  // --- INSERT correctness tests ---
+
+  it('should copy rosters with league_id and league_season_id', async () => {
+    await useCase.execute({ leagueId: 1, userId: commissionerUserId });
 
     const rosterCopy = mockQueryCalls.find(
       (q) => q.text.includes('INSERT INTO rosters') && q.text.includes("'[]'::jsonb")
     );
     expect(rosterCopy).toBeDefined();
-    // newSeasonId=11, oldSeasonId=10
-    expect(rosterCopy!.values).toEqual([11, 10]);
+    // Must include league_id column
+    expect(rosterCopy!.text).toContain('league_id');
+    expect(rosterCopy!.text).toContain('league_season_id');
+    // values: [newSeasonId=11, oldSeasonId=10, leagueId=1]
+    expect(rosterCopy!.values).toEqual([11, 10, 1]);
   });
 
-  it('should initialize FAAB budgets from league settings', async () => {
-    await useCase.execute({ leagueId: 1 });
+  it('should insert waiver_priority with league_id', async () => {
+    await useCase.execute({ leagueId: 1, userId: commissionerUserId });
+
+    const waiverInsert = mockQueryCalls.find(
+      (q) => q.text.includes('INSERT INTO waiver_priority')
+    );
+    expect(waiverInsert).toBeDefined();
+    // Must include league_id column
+    expect(waiverInsert!.text).toContain('league_id');
+    expect(waiverInsert!.text).toContain('league_season_id');
+    // values: [newSeasonId=11, seasonYear=2025, oldSeasonId=10, leagueId=1]
+    expect(waiverInsert!.values).toEqual([11, 2025, 10, 1]);
+  });
+
+  it('should insert faab_budgets with league_id', async () => {
+    await useCase.execute({ leagueId: 1, userId: commissionerUserId });
 
     const faabInit = mockQueryCalls.find(
       (q) => q.text.includes('INSERT INTO faab_budgets')
     );
     expect(faabInit).toBeDefined();
+    // Must include league_id column
+    expect(faabInit!.text).toContain('league_id');
+    expect(faabInit!.text).toContain('league_season_id');
     // Should use league's faabBudget=200
     expect(faabInit!.values).toContain(200);
+    // values: [newSeasonId=11, seasonYear=2025, initialBudget=200, leagueId=1]
+    expect(faabInit!.values).toEqual([11, 2025, 200, 1]);
   });
 
   it('should execute all steps in correct order', async () => {
-    await useCase.execute({ leagueId: 1 });
+    await useCase.execute({ leagueId: 1, userId: commissionerUserId });
 
     // Verify key operations happened
     expect(mockLeagueSeasonRepo.markCompleted).toHaveBeenCalledWith(10, expect.anything());
@@ -219,8 +269,23 @@ describe('RolloverToNewSeasonUseCase', () => {
     );
 
     // Should have: roster copy, waiver priority (2 queries), faab (2 queries),
-    // pick asset migration (3 queries), active season update (1 query)
+    // pick asset migration (3 queries), leagues update (1 query)
     // Exact count may vary due to season year lookups
     expect(mockQueryCalls.length).toBeGreaterThanOrEqual(7);
+  });
+
+  // --- Week advancement targeting test ---
+
+  it('should set leagues.season so week-advancement targets post-rollover league', async () => {
+    await useCase.execute({ leagueId: 1, userId: commissionerUserId });
+
+    const leaguesUpdate = mockQueryCalls.find(
+      (q) => q.text.includes('UPDATE leagues')
+    );
+    expect(leaguesUpdate).toBeDefined();
+    // The week-advancement job filters WHERE season = $2::text
+    // After rollover, leagues.season must be the new year so the job picks it up
+    expect(leaguesUpdate!.text).toContain('season = $2::text');
+    expect(leaguesUpdate!.values[1]).toBe(2025);
   });
 });

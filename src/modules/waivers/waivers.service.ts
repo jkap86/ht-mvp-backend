@@ -72,7 +72,8 @@ export class WaiversService {
     leagueId: number,
     userId: string,
     request: SubmitClaimRequest,
-    idempotencyKey?: string
+    idempotencyKey?: string,
+    leagueSeasonId?: number
   ): Promise<WaiverClaimWithDetails> {
     return submitClaimUseCase(
       {
@@ -87,7 +88,8 @@ export class WaiversService {
       leagueId,
       userId,
       request,
-      idempotencyKey
+      idempotencyKey,
+      leagueSeasonId
     );
   }
 
@@ -178,7 +180,7 @@ export class WaiversService {
   /**
    * Get waiver priority order for a league
    */
-  async getPriorityOrder(leagueId: number, userId: string): Promise<WaiverPriorityWithDetails[]> {
+  async getPriorityOrder(leagueId: number, userId: string, leagueSeasonId?: number): Promise<WaiverPriorityWithDetails[]> {
     return getPriorityOrderUseCase(
       {
         db: this.db,
@@ -189,7 +191,8 @@ export class WaiversService {
         leagueRepo: this.leagueRepo,
       },
       leagueId,
-      userId
+      userId,
+      leagueSeasonId
     );
   }
 
@@ -243,7 +246,7 @@ export class WaiversService {
   /**
    * Get players currently on waiver wire
    */
-  async getWaiverWirePlayers(leagueId: number): Promise<WaiverWirePlayerWithDetails[]> {
+  async getWaiverWirePlayers(leagueId: number, leagueSeasonId?: number): Promise<WaiverWirePlayerWithDetails[]> {
     return getWaiverWirePlayersUseCase(
       {
         db: this.db,
@@ -253,7 +256,8 @@ export class WaiversService {
         rosterRepo: this.rosterRepo,
         leagueRepo: this.leagueRepo,
       },
-      leagueId
+      leagueId,
+      leagueSeasonId
     );
   }
 

@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { AuthRequest } from '../../middleware/auth.middleware';
 import { TradesService } from './trades.service';
-import { requireUserId, requireLeagueId } from '../../utils/controller-helpers';
+import { requireUserId, requireLeagueId, requireLeagueSeasonId } from '../../utils/controller-helpers';
 import { ValidationException } from '../../utils/exceptions';
 import { tradeWithDetailsToResponse } from './trades.model';
 
@@ -15,6 +15,7 @@ export class TradesController {
   getTrades = async (req: AuthRequest, res: Response) => {
     const userId = requireUserId(req);
     const leagueId = requireLeagueId(req);
+    const leagueSeasonId = req.leagueSeasonId;
 
     const statusParam = req.query.status as string | undefined;
     const statuses = statusParam ? statusParam.split(',') : undefined;
@@ -26,7 +27,8 @@ export class TradesController {
       userId,
       statuses,
       limit,
-      offset
+      offset,
+      leagueSeasonId
     );
 
     res.status(200).json({ trades: trades.map(tradeWithDetailsToResponse) });
@@ -56,6 +58,7 @@ export class TradesController {
   proposeTrade = async (req: AuthRequest, res: Response) => {
     const userId = requireUserId(req);
     const leagueId = requireLeagueId(req);
+    const leagueSeasonId = req.leagueSeasonId;
 
     const {
       recipient_roster_id,
@@ -97,6 +100,7 @@ export class TradesController {
       notifyLeagueChat: notify_league_chat,
       notifyDm: notify_dm,
       leagueChatMode: league_chat_mode,
+      leagueSeasonId,
     });
 
     res.status(201).json(tradeWithDetailsToResponse(trade));
@@ -157,6 +161,7 @@ export class TradesController {
   counterTrade = async (req: AuthRequest, res: Response) => {
     const userId = requireUserId(req);
     const tradeId = parseInt(req.params.tradeId as string, 10);
+    const leagueSeasonId = req.leagueSeasonId;
 
     if (isNaN(tradeId)) {
       throw new ValidationException('Invalid trade ID');
@@ -195,6 +200,7 @@ export class TradesController {
       message,
       notifyDm: notify_dm,
       leagueChatMode: league_chat_mode,
+      leagueSeasonId,
     });
 
     res.status(201).json(tradeWithDetailsToResponse(trade));

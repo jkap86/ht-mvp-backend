@@ -30,7 +30,8 @@ export interface WaiverInfoContext {
 export async function getPriorityOrder(
   ctx: WaiverInfoContext,
   leagueId: number,
-  userId: string
+  userId: string,
+  leagueSeasonId?: number
 ): Promise<WaiverPriorityWithDetails[]> {
   // Verify user is in league
   const roster = await ctx.rosterRepo.findByLeagueAndUser(leagueId, userId);
@@ -42,7 +43,7 @@ export async function getPriorityOrder(
   if (!league) throw new NotFoundException('League not found');
 
   const season = parseInt(league.season, 10);
-  return ctx.priorityRepo.getByLeague(leagueId, season);
+  return ctx.priorityRepo.getByLeague(leagueId, season, leagueSeasonId);
 }
 
 /**
@@ -71,8 +72,13 @@ export async function getFaabBudgets(
  */
 export async function getWaiverWirePlayers(
   ctx: WaiverInfoContext,
-  leagueId: number
+  leagueId: number,
+  leagueSeasonId?: number
 ): Promise<WaiverWirePlayerWithDetails[]> {
+  // Use provided leagueSeasonId or fall back to looking it up
+  if (leagueSeasonId) {
+    return ctx.waiverWireRepo.getByLeague(leagueId, leagueSeasonId);
+  }
   const league = await ctx.leagueRepo.findById(leagueId);
   return ctx.waiverWireRepo.getByLeague(leagueId, league?.activeLeagueSeasonId);
 }

@@ -7,6 +7,8 @@ import { MedianService } from './median.service';
 import { apiReadLimiter, draftModifyLimiter } from '../../middleware/rate-limit.middleware';
 import { container, KEYS } from '../../container';
 import { asyncHandler } from '../../shared/async-handler';
+import { resolveSeasonContext } from '../../middleware/season-context.middleware';
+import { seasonWriteGuard } from '../../middleware/season-write-guard.middleware';
 
 // Resolve dependencies from container
 const matchupService = container.resolve<MatchupService>(KEYS.MATCHUP_SERVICE);
@@ -24,7 +26,9 @@ const matchupsController = new MatchupsController(
 
 const router = Router({ mergeParams: true });
 
-// All routes require authentication (handled by parent router)
+// Season context and write guard for all matchup routes
+router.use(resolveSeasonContext);
+router.use(seasonWriteGuard);
 
 // GET /api/leagues/:leagueId/matchups
 router.get('/', apiReadLimiter, asyncHandler(matchupsController.getMatchups));
