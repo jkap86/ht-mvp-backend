@@ -1,23 +1,25 @@
 import { PoolClient } from 'pg';
 import { AuctionLot, AuctionProxyBid, auctionLotFromDatabase } from './auction.models';
 import { ValidationException } from '../../../utils/exceptions';
+import {
+  resolveSecondPrice,
+  type PriceResolutionInput,
+} from '../../../domain/auction/pricing';
 
-/**
- * Notification when a bidder is outbid
- */
-export interface OutbidNotification {
-  rosterId: number;
-  lotId: number;
-  previousBid: number;
-  newLeadingBid: number;
-}
+// Re-export domain types for backward compatibility
+export type { OutbidNotification } from '../../../domain/auction/pricing';
 
 /**
  * Result of price resolution
  */
 export interface PriceResolutionResult {
   updatedLot: AuctionLot;
-  outbidNotifications: OutbidNotification[];
+  outbidNotifications: Array<{
+    rosterId: number;
+    lotId: number;
+    previousBid: number;
+    newLeadingBid: number;
+  }>;
   leaderChanged: boolean;
   priceChanged: boolean;
 }
@@ -33,14 +35,8 @@ export interface PriceResolutionSettings {
 /**
  * Resolve auction price using second-price sealed-bid rules with proxy bids.
  *
- * Algorithm:
- * - Highest bidder wins at second-highest price + minIncrement
- * - If only one bidder, price is minBid
- * - Leader is whoever has the highest maxBid (ties broken by earliest bid)
- *
- * This function does NOT handle timer resets - that is mode-specific
- * and should be handled by the caller (slow auction resets on leader change,
- * fast auction resets on any price/leader change).
+ * Orchestrates: fetch proxy bids → call domain pricing → CAS update → record history.
+ * The pure pricing logic lives in domain/auction/pricing.ts.
  *
  * @param client - PostgreSQL client for transaction
  * @param lot - Current lot state
@@ -70,71 +66,42 @@ export async function resolvePriceWithClient(
     updatedAt: row.updated_at,
   }));
 
-  const outbidNotifications: OutbidNotification[] = [];
+  // Call pure domain function for price resolution
+  const input: PriceResolutionInput = {
+    lotId: lot.id,
+    currentBid: lot.currentBid,
+    currentBidderRosterId: lot.currentBidderRosterId,
+    proxyBids: proxyBids.map((pb) => ({ rosterId: pb.rosterId, maxBid: pb.maxBid })),
+    minBid: settings.minBid,
+    minIncrement: settings.minIncrement,
+  };
+
+  const resolution = resolveSecondPrice(input, lot.bidCount);
+
+  // No bids — nothing to resolve
+  if (!resolution) {
+    return { updatedLot: lot, outbidNotifications: [], leaderChanged: false, priceChanged: false };
+  }
+
+  const { newLeader, newPrice, leaderChanged, priceChanged, newBidCount, outbidNotifications } = resolution;
+
   let updatedLot = lot;
-  let leaderChanged = false;
-  let priceChanged = false;
-
-  // No bids - nothing to resolve
-  if (proxyBids.length === 0) {
-    return { updatedLot, outbidNotifications, leaderChanged, priceChanged };
-  }
-
-  const previousLeader = lot.currentBidderRosterId;
-  let newLeader: number;
-  let newPrice: number;
-
-  if (proxyBids.length === 1) {
-    // Single bidder: wins at the higher of currentBid or minBid.
-    // In fast auction, currentBid is set to the opening bid at nomination,
-    // so this prevents price from regressing below the opening bid.
-    newLeader = proxyBids[0].rosterId;
-    newPrice = Math.max(lot.currentBid ?? settings.minBid, settings.minBid);
-  } else {
-    // Multiple bidders: highest wins at second-highest + increment
-    const highest = proxyBids[0];
-    const secondHighest = proxyBids[1];
-    newLeader = highest.rosterId;
-    newPrice = Math.min(highest.maxBid, secondHighest.maxBid + settings.minIncrement);
-  }
-
-  // Monotonic guard: resolved price must never decrease below lot.currentBid
-  newPrice = Math.max(newPrice, lot.currentBid ?? 0);
-
-  leaderChanged = newLeader !== previousLeader;
-  priceChanged = newPrice !== lot.currentBid;
 
   // Update if anything changed
   if (leaderChanged || priceChanged) {
-    // Generate outbid notification for previous leader
-    if (leaderChanged && previousLeader) {
-      outbidNotifications.push({
-        rosterId: previousLeader,
-        lotId: lot.id,
-        previousBid: lot.currentBid,
-        newLeadingBid: newPrice,
-      });
-    }
-
-    // bid_count tracks price changes only (not just leader changes)
-    const newBidCount = priceChanged ? lot.bidCount + 1 : lot.bidCount;
-
     // Use provided deadline or keep existing
     const deadline = newBidDeadline ?? lot.bidDeadline;
 
     // CAS-style update: Only update if lot state matches expected values
-    // Checks: current_bid, current_bidder_roster_id, and status = 'active'
-    // Uses IS NOT DISTINCT FROM for leader since it could be NULL initially
     const updateResult = await client.query(
       `UPDATE auction_lots
        SET current_bidder_roster_id = $2, current_bid = $3, bid_count = $4, bid_deadline = $5, updated_at = CURRENT_TIMESTAMP
        WHERE id = $1 AND current_bid = $6 AND current_bidder_roster_id IS NOT DISTINCT FROM $7 AND status = 'active'
        RETURNING *`,
-      [lot.id, newLeader, newPrice, newBidCount, deadline, lot.currentBid, previousLeader]
+      [lot.id, newLeader, newPrice, newBidCount, deadline, lot.currentBid, lot.currentBidderRosterId]
     );
 
     // If no rows updated, the lot state changed between our read and write
-    // This could happen if: lot was settled, another bid changed price/leader, or lot was passed
     if (updateResult.rowCount === 0) {
       throw new ValidationException('Another bid was placed simultaneously — please try again');
     }

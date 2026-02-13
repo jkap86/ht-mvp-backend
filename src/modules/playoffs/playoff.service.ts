@@ -35,6 +35,13 @@ import {
 import { logger } from '../../config/logger.config';
 import { runWithLock, LockDomain } from '../../shared/transaction-runner';
 import { EventTypes, tryGetEventBus } from '../../shared/events';
+import {
+  resolveMatchupWinner,
+  resolveMatchupLoser,
+  resolveSeriesWinner,
+  resolveSeriesLoser,
+  sortStandingsForSeeding,
+} from '../../domain/playoff';
 
 export class PlayoffService {
   constructor(
@@ -145,12 +152,8 @@ export class PlayoffService {
 
     // Get standings for seeding
     const standings = await this.matchupsRepo.getStandings(leagueId, season);
-    // Deterministic seeding: Wins > PF > RosterID (tie-breaker)
-    standings.sort((a, b) => {
-      if (a.wins !== b.wins) return b.wins - a.wins;
-      if (a.pointsFor !== b.pointsFor) return b.pointsFor - a.pointsFor;
-      return a.rosterId - b.rosterId; // Deterministic tie-break
-    });
+    // Deterministic seeding: Wins > PF > RosterID (via domain function)
+    sortStandingsForSeeding(standings);
 
     if (standings.length < config.playoffTeams) {
       throw new ValidationException(
@@ -900,67 +903,52 @@ export class PlayoffService {
    * @param matchup The matchup to determine winner for
    * @param requirePoints If true, throws if points are missing (for advancement flows)
    */
+  /**
+   * Determine winner of a matchup — delegates to domain/playoff/bracket.
+   */
   private determineWinner(matchup: PlayoffMatchupRow, requirePoints: boolean = false): number {
-    const p1 = matchup.roster1_points;
-    const p2 = matchup.roster2_points;
-
-    // Guard: If advancing, points must exist
-    if (requirePoints) {
-      if (p1 === null || p1 === undefined || p2 === null || p2 === undefined) {
-        throw new ValidationException(
-          `Cannot advance playoffs: matchup ${matchup.id} is finalized but missing scores`
-        );
-      }
-    }
-
-    const pts1 = p1 === null || p1 === undefined ? 0 : parseFloat(p1);
-    const pts2 = p2 === null || p2 === undefined ? 0 : parseFloat(p2);
-
-    if (pts1 > pts2) return matchup.roster1_id;
-    if (pts2 > pts1) return matchup.roster2_id;
-    // Tie: higher seed (lower number) wins
-    if (matchup.playoff_seed1 < matchup.playoff_seed2) return matchup.roster1_id;
-    if (matchup.playoff_seed2 < matchup.playoff_seed1) return matchup.roster2_id;
-    // Final fallback: lower roster ID wins. This is arbitrary but deterministic,
-    // ensuring consistent results when seeds are identical (e.g. consolation bracket).
-    return matchup.roster1_id < matchup.roster2_id ? matchup.roster1_id : matchup.roster2_id;
+    return resolveMatchupWinner(
+      {
+        roster1Id: matchup.roster1_id,
+        roster2Id: matchup.roster2_id,
+        roster1Points: matchup.roster1_points !== null ? parseFloat(matchup.roster1_points) : null,
+        roster2Points: matchup.roster2_points !== null ? parseFloat(matchup.roster2_points) : null,
+        roster1Seed: matchup.playoff_seed1,
+        roster2Seed: matchup.playoff_seed2,
+      },
+      requirePoints
+    );
   }
 
   /**
-   * Determine loser of a matchup.
-   * @param matchup The matchup to determine loser for
-   * @param requirePoints If true, throws if points are missing (for advancement flows)
+   * Determine loser of a matchup — delegates to domain/playoff/bracket.
    */
   private determineLoser(matchup: PlayoffMatchupRow, requirePoints: boolean = false): number {
-    const winnerId = this.determineWinner(matchup, requirePoints);
-    return winnerId === matchup.roster1_id ? matchup.roster2_id : matchup.roster1_id;
+    return resolveMatchupLoser(
+      {
+        roster1Id: matchup.roster1_id,
+        roster2Id: matchup.roster2_id,
+        roster1Points: matchup.roster1_points !== null ? parseFloat(matchup.roster1_points) : null,
+        roster2Points: matchup.roster2_points !== null ? parseFloat(matchup.roster2_points) : null,
+        roster1Seed: matchup.playoff_seed1,
+        roster2Seed: matchup.playoff_seed2,
+      },
+      requirePoints
+    );
   }
 
   /**
-   * Determine winner of a series using aggregate scoring.
-   * Tie-breaker: lower seed number (higher seed) wins.
+   * Determine winner of a series — delegates to domain/playoff/bracket.
    */
   private determineSeriesWinner(series: SeriesAggregation): number {
-    if (series.roster1TotalPoints > series.roster2TotalPoints) {
-      return series.roster1Id;
-    }
-    if (series.roster2TotalPoints > series.roster1TotalPoints) {
-      return series.roster2Id;
-    }
-    // Tie: lower seed number wins
-    if (series.roster1Seed < series.roster2Seed) return series.roster1Id;
-    if (series.roster2Seed < series.roster1Seed) return series.roster2Id;
-    // Final fallback: lower roster ID wins. This is arbitrary but deterministic,
-    // ensuring consistent results when seeds are identical (e.g. consolation bracket).
-    return series.roster1Id < series.roster2Id ? series.roster1Id : series.roster2Id;
+    return resolveSeriesWinner(series);
   }
 
   /**
-   * Determine loser of a series using aggregate scoring.
+   * Determine loser of a series — delegates to domain/playoff/bracket.
    */
   private determineSeriesLoser(series: SeriesAggregation): number {
-    const winnerId = this.determineSeriesWinner(series);
-    return winnerId === series.roster1Id ? series.roster2Id : series.roster1Id;
+    return resolveSeriesLoser(series);
   }
 
   /**

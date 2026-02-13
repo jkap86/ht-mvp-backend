@@ -20,7 +20,9 @@ import { runWithLock, LockDomain } from '../../../shared/transaction-runner';
 import { logger } from '../../../config/logger.config';
 import { Draft, FastAuctionTimeoutAction } from '../drafts.model';
 import { resolvePriceWithClient } from './auction-price-resolver';
-import { calculateMaxAffordableBid, canAffordMinBid } from './auction-budget-calculator';
+import { calculateMaxAffordableBid, canAffordMinBid, computeAvailableBudget } from '../../../domain/auction/budget';
+import { computeExtendedDeadline } from '../../../domain/auction/lot-timer';
+import { assessNominatorEligibility } from '../../../domain/auction/nomination';
 import { finalizeDraftCompletion } from '../draft-completion.utils';
 import type { RosterPlayersRepository } from '../../rosters/rosters.repository';
 import { container, KEYS } from '../../../container';
@@ -499,23 +501,20 @@ export class FastAuctionService {
         // Fast auction specific: reset timer on price/leader change
         let finalLot = result.updatedLot;
         if (result.priceChanged || result.leaderChanged) {
-          let newDeadline = new Date(Date.now() + settings.resetOnBidSeconds * 1000);
+          const timerResult = computeExtendedDeadline(
+            new Date(),
+            finalLot.bidDeadline,
+            lot.createdAt,
+            settings.resetOnBidSeconds,
+            settings.maxLotDurationSeconds
+          );
 
-          // Cap deadline at max lot duration if configured
-          if (settings.maxLotDurationSeconds) {
-            const maxDeadline = new Date(lot.createdAt.getTime() + settings.maxLotDurationSeconds * 1000);
-            if (newDeadline > maxDeadline) {
-              newDeadline = maxDeadline;
-            }
-          }
-
-          // Only extend deadline, never shorten it
-          if (newDeadline > finalLot.bidDeadline) {
+          if (timerResult.shouldExtend) {
             await client.query(
               'UPDATE auction_lots SET bid_deadline = $1, updated_at = NOW() WHERE id = $2',
-              [newDeadline, lotId]
+              [timerResult.newDeadline, lotId]
             );
-            finalLot = { ...finalLot, bidDeadline: newDeadline };
+            finalLot = { ...finalLot, bidDeadline: timerResult.newDeadline };
           }
         }
 
@@ -664,27 +663,17 @@ export class FastAuctionService {
 
           const budgetData = budgetDataMap.get(rosterId) ?? { spent: 0, wonCount: 0, leadingCommitment: 0 };
 
-          // Check roster not full
-          if (budgetData.wonCount >= rosterSlots) {
-            continue;
-          }
-
-          // Check can afford minBid
-          if (!canAffordMinBid(totalBudget, rosterSlots, budgetData, minBid)) {
+          // Check eligibility using domain function
+          const eligibility = assessNominatorEligibility(budgetData, totalBudget, rosterSlots, minBid);
+          if (!eligibility.eligible) {
             continue;
           }
 
           // Re-verify eligibility immediately before selection to prevent race conditions
           // A concurrent lot settlement could have filled this roster after we loaded budget data
           const freshBudgetData = await this.lotRepo.getRosterBudgetDataWithClient(client, draftId, rosterId);
-
-          // Re-check roster not full with fresh data
-          if (freshBudgetData.wonCount >= rosterSlots) {
-            continue;
-          }
-
-          // Re-check can afford minBid with fresh data
-          if (!canAffordMinBid(totalBudget, rosterSlots, freshBudgetData, minBid)) {
+          const freshEligibility = assessNominatorEligibility(freshBudgetData, totalBudget, rosterSlots, minBid);
+          if (!freshEligibility.eligible) {
             continue;
           }
 
@@ -1010,17 +999,14 @@ export class FastAuctionService {
         wonCount: 0,
         leadingCommitment: 0,
       };
-      const remainingSlots = rosterSlots - budgetData.wonCount;
-      const reservedForMinBids = Math.max(0, remainingSlots - 1) * settings.minBid;
-      const available =
-        totalBudget - budgetData.spent - reservedForMinBids - budgetData.leadingCommitment;
+      const available = computeAvailableBudget(totalBudget, rosterSlots, budgetData, settings.minBid);
 
       return {
         rosterId: roster.id,
         totalBudget,
         spent: budgetData.spent,
         leadingCommitment: budgetData.leadingCommitment,
-        available: Math.max(0, available),
+        available,
         wonCount: budgetData.wonCount,
       };
     });

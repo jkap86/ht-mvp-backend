@@ -1,16 +1,20 @@
 import { PoolClient } from 'pg';
 
 /**
- * Budget data for a roster in an auction draft
+ * Budget data for a roster in an auction draft.
+ * Re-exported as alias for backward compatibility.
  */
-export interface RosterBudgetData {
-  spent: number;
-  wonCount: number;
-  leadingCommitment: number;
-}
+export type { RosterBudgetSnapshot as RosterBudgetData } from '../../../domain/auction/budget';
+
+// Re-export pure domain functions for backward compatibility
+export { calculateMaxAffordableBid, canAffordMinBid } from '../../../domain/auction/budget';
+
+// Re-export the snapshot type under its canonical name too
+export type { RosterBudgetSnapshot } from '../../../domain/auction/budget';
 
 /**
- * Get roster budget data within a database transaction
+ * Get roster budget data within a database transaction.
+ * This is the DB-access function that stays in the module layer.
  *
  * @param client - PostgreSQL client for transaction
  * @param draftId - Draft ID
@@ -21,7 +25,7 @@ export async function getRosterBudgetDataWithClient(
   client: PoolClient,
   draftId: number,
   rosterId: number
-): Promise<RosterBudgetData> {
+): Promise<{ spent: number; wonCount: number; leadingCommitment: number }> {
   const wonResult = await client.query(
     `SELECT COALESCE(SUM(winning_bid), 0) as spent, COUNT(*) as won_count
      FROM auction_lots
@@ -39,59 +43,4 @@ export async function getRosterBudgetDataWithClient(
     wonCount: Number(wonResult.rows[0].won_count) || 0,
     leadingCommitment: Number(leadingResult.rows[0].leading_commitment) || 0,
   };
-}
-
-/**
- * Calculate the maximum affordable bid for a roster
- *
- * @param totalBudget - Total budget for the roster
- * @param rosterSlots - Number of roster slots
- * @param budgetData - Current budget data
- * @param currentLotBid - Current bid on the lot (if roster is leading)
- * @param isLeadingCurrentLot - Whether this roster is currently leading the lot
- * @param minBid - Minimum bid required per slot
- * @returns Maximum affordable bid amount
- */
-export function calculateMaxAffordableBid(
-  totalBudget: number,
-  rosterSlots: number,
-  budgetData: RosterBudgetData,
-  currentLotBid: number,
-  isLeadingCurrentLot: boolean,
-  minBid: number
-): number {
-  const remainingSlots = rosterSlots - budgetData.wonCount - 1; // -1 for current lot
-  const reservedForMinBids = Math.max(0, remainingSlots) * minBid;
-
-  let maxAffordable =
-    totalBudget - budgetData.spent - reservedForMinBids - budgetData.leadingCommitment;
-
-  // If leading the current lot, can reuse that commitment
-  if (isLeadingCurrentLot) {
-    maxAffordable += currentLotBid;
-  }
-
-  return maxAffordable;
-}
-
-/**
- * Check if a roster can afford the minimum bid for a new nomination.
- * Used for nominator eligibility checks where there is no active lot context.
- *
- * @param totalBudget - Total budget for the roster
- * @param rosterSlots - Number of roster slots
- * @param budgetData - Current budget data
- * @param minBid - Minimum bid required per slot
- * @returns Whether the roster can afford to nominate at minBid
- */
-export function canAffordMinBid(
-  totalBudget: number,
-  rosterSlots: number,
-  budgetData: RosterBudgetData,
-  minBid: number
-): boolean {
-  const remainingSlots = rosterSlots - budgetData.wonCount - 1;
-  const reservedForMinBids = Math.max(0, remainingSlots) * minBid;
-  const maxAffordable = totalBudget - budgetData.spent - reservedForMinBids - budgetData.leadingCommitment;
-  return minBid <= maxAffordable;
 }

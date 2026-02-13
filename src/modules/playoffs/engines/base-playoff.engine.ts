@@ -14,6 +14,10 @@ import {
 } from '../playoff.model';
 import { PlayoffRepository } from '../playoff.repository';
 import { logger } from '../../../config/logger.config';
+import {
+  resolveSeriesWinner as domainResolveSeriesWinner,
+  resolveSeriesLoser as domainResolveSeriesLoser,
+} from '../../../domain/playoff/bracket';
 
 /**
  * Base Playoff Engine
@@ -71,24 +75,14 @@ export abstract class BasePlayoffEngine implements IPlayoffEngine {
    * Tie-breaker: lower seed number (higher seed) wins.
    */
   determineSeriesWinner(series: SeriesAggregation): number {
-    if (series.roster1TotalPoints > series.roster2TotalPoints) {
-      return series.roster1Id;
-    }
-    if (series.roster2TotalPoints > series.roster1TotalPoints) {
-      return series.roster2Id;
-    }
-    // Tie: lower seed number wins
-    return series.roster1Seed < series.roster2Seed
-      ? series.roster1Id
-      : series.roster2Id;
+    return domainResolveSeriesWinner(series);
   }
 
   /**
-   * Determine loser of a series using aggregate scoring.
+   * Determine loser of a series — delegates to domain/playoff/bracket.
    */
   protected determineSeriesLoser(series: SeriesAggregation): number {
-    const winnerId = this.determineSeriesWinner(series);
-    return winnerId === series.roster1Id ? series.roster2Id : series.roster1Id;
+    return domainResolveSeriesLoser(series);
   }
 
   /**
