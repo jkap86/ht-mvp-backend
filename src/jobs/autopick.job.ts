@@ -94,7 +94,10 @@ async function processAutopicks(): Promise<void> {
           if (isCurrentlyInPause && !wasInPause) {
             logger.info(`Draft ${draft.id}: entering overnight pause window`);
 
-            // Update draft state to track pause status
+            // Bare draftRepo.update() + eventBus.publish() is safe here because:
+            // 1. This is informational-only state (inOvernightPause flag) — no roster/pick mutations
+            // 2. eventBus is synchronous in-memory dispatch, not cross-process
+            // 3. If a race causes a missed transition, the next tick (2s) provides eventual consistency
             await draftRepo.update(draft.id, {
               draftState: { ...draft.draftState, inOvernightPause: true },
             });

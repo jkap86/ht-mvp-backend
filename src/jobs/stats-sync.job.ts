@@ -219,7 +219,10 @@ async function calculateLiveScoringTotals(
 
 /**
  * Run the weekly stats sync from Sleeper API
- * Protected against concurrent runs and uses leader lock for multi-instance safety
+ * Protected against concurrent runs via triple-layer protection:
+ *   1. LeaderLock (pg-based leader election) — only one instance attempts the job
+ *   2. pg_try_advisory_lock(JOB+11) — prevents overlap if LeaderLock fails over mid-run
+ *   3. isRunning in-process flag — prevents re-entry from the same Node event loop
  */
 export async function runStatsSync(): Promise<void> {
   if (isRunning) {
