@@ -12,6 +12,8 @@ import { runInTransaction, runWithLock } from '../../shared/transaction-runner';
 import { LockDomain } from '../../shared/locks';
 import { EventTypes, tryGetEventBus } from '../../shared/events';
 import { logger } from '../../config/logger.config';
+import { RolloverToNewSeasonUseCase } from './use-cases/rollover-to-new-season.use-case';
+import { LeagueSeasonRepository } from './league-season.repository';
 
 type LeagueResponse = ReturnType<League['toResponse']>;
 
@@ -38,7 +40,9 @@ export class LeagueService {
     private readonly rosterService: RosterService,
     private readonly draftService: DraftService,
     private readonly eventListenerService?: EventListenerService,
-    private readonly matchupsRepo?: MatchupsRepository
+    private readonly matchupsRepo?: MatchupsRepository,
+    private readonly leagueSeasonRepo?: LeagueSeasonRepository,
+    private readonly leagueOpsRepo?: LeagueOperationsRepository
   ) {}
 
   async getUserLeagues(userId: string, limit?: number, offset?: number): Promise<LeagueResponse[]> {
@@ -150,6 +154,26 @@ export class LeagueService {
     }
 
     return response;
+  }
+
+  async rolloverLeague(
+    leagueId: number,
+    userId: string,
+    keeperDeadline: Date,
+    idempotencyKey?: string
+  ): Promise<any> {
+    if (!this.leagueSeasonRepo || !this.leagueOpsRepo) {
+      throw new Error('Dependencies for rollover not initialized');
+    }
+
+    const useCase = new RolloverToNewSeasonUseCase(
+      this.db,
+      this.leagueRepo,
+      this.leagueSeasonRepo,
+      this.leagueOpsRepo
+    );
+
+    return useCase.execute({ leagueId, userId, keeperDeadline, idempotencyKey });
   }
 
   /**
@@ -410,7 +434,10 @@ export class LeagueService {
     }
 
     // Validate confirmation name matches
-    if (!confirmationName || confirmationName.trim().toLowerCase() !== league.name.trim().toLowerCase()) {
+    if (
+      !confirmationName ||
+      confirmationName.trim().toLowerCase() !== league.name.trim().toLowerCase()
+    ) {
       throw new ValidationException('League name confirmation does not match');
     }
 
@@ -474,7 +501,7 @@ export class LeagueService {
       if (input.seasonStatus !== 'offseason' && newOrder < currentOrder) {
         throw new ValidationException(
           `Cannot transition from ${currentLeague.seasonStatus} to ${input.seasonStatus}. ` +
-          'Use league reset to go back to pre-season.'
+            'Use league reset to go back to pre-season.'
         );
       }
     }
@@ -483,7 +510,11 @@ export class LeagueService {
     return league.toResponse();
   }
 
-  async discoverPublicLeagues(userId: string, limit?: number, offset?: number): Promise<PublicLeagueInfo[]> {
+  async discoverPublicLeagues(
+    userId: string,
+    limit?: number,
+    offset?: number
+  ): Promise<PublicLeagueInfo[]> {
     return this.leagueRepo.findPublicLeagues(userId, limit, offset);
   }
 

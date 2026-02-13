@@ -83,98 +83,116 @@ export async function submitClaim(
   }
 
   // Execute in transaction with lock
-  const claim = await runWithLock(
-    ctx.db,
-    LockDomain.WAIVER,
-    leagueId,
-    async (client) => {
-
-      // Check if player is already owned (season-scoped)
-      const playerOwner = await ctx.rosterPlayersRepo.findOwner(leagueId, request.playerId, client, leagueSeasonId ?? league.activeLeagueSeasonId);
-      if (playerOwner) {
-        throw new ValidationException('Player is already on a roster');
-      }
-
-      // Check if user already has a pending claim for this player
-      const existingClaim = await ctx.claimsRepo.hasPendingClaim(roster.id, request.playerId, client);
-      if (existingClaim) {
-        throw new ConflictException('You already have a pending claim for this player');
-      }
-
-      // Validate FAAB bid if applicable
-      const bidAmount = request.bidAmount || 0;
-      if (settings.waiverType === 'faab') {
-        let budget = await ctx.faabRepo.getByRoster(roster.id, season, client);
-        if (!budget) {
-          // Safety net for late-joining rosters: initialize with league's default budget
-          await ctx.faabRepo.ensureRosterBudget(leagueId, roster.id, season, settings.faabBudget, client);
-          budget = await ctx.faabRepo.getByRoster(roster.id, season, client);
-          if (!budget) {
-            throw new ValidationException('Failed to initialize FAAB budget');
-          }
-        }
-        if (bidAmount > budget.remainingBudget) {
-          throw new ValidationException(`Bid exceeds available budget ($${budget.remainingBudget})`);
-        }
-        if (bidAmount < 0) {
-          throw new ValidationException('Bid amount cannot be negative');
-        }
-      }
-
-      // Validate drop player if provided
-      if (request.dropPlayerId) {
-        const hasPlayer = await ctx.rosterPlayersRepo.findByRosterAndPlayer(
-          roster.id,
-          request.dropPlayerId,
-          client
-        );
-        if (!hasPlayer) {
-          throw new ValidationException('You do not own the player to drop');
-        }
-
-        // Lock the drop player to prevent manual drop between submission and processing
-        // This prevents TOCTOU race where user could drop the player manually after
-        // submitting the claim but before waivers process
-        await client.query(
-          'SELECT * FROM roster_players WHERE roster_id = $1 AND player_id = $2 FOR UPDATE',
-          [roster.id, request.dropPlayerId]
-        );
-      }
-
-      // Get priority snapshot for ALL claim types (used as tiebreaker in FAAB mode)
-      let priorityAtClaim: number | null = null;
-      let priority = await ctx.priorityRepo.getByRoster(roster.id, season, client);
-      if (!priority) {
-        // Safety net for late-joining rosters: initialize with last place priority
-        await ctx.priorityRepo.ensureRosterPriority(leagueId, roster.id, season, client);
-        priority = await ctx.priorityRepo.getByRoster(roster.id, season, client);
-      }
-      priorityAtClaim = priority?.priority ?? null;
-
-      // Get next claim order for this roster (claims are processed in order)
-      const nextClaimOrder = await ctx.claimsRepo.getNextClaimOrder(
-        roster.id,
-        season,
-        currentWeek,
-        client
-      );
-
-      // Create the claim
-      return await ctx.claimsRepo.create(
+  const claim = await runWithLock(ctx.db, LockDomain.WAIVER, leagueId, async (client) => {
+    // Double-check idempotency INSIDE the lock to prevent race conditions
+    if (idempotencyKey) {
+      const existing = await ctx.claimsRepo.findByIdempotencyKey(
         leagueId,
         roster.id,
-        request.playerId,
-        request.dropPlayerId || null,
-        bidAmount,
-        priorityAtClaim,
-        season,
-        currentWeek,
-        nextClaimOrder,
-        client,
-        idempotencyKey
+        idempotencyKey,
+        client
+      );
+      if (existing) {
+        return existing; // Return the existing claim
+      }
+    }
+
+    // Check if player is already owned (season-scoped)
+    const playerOwner = await ctx.rosterPlayersRepo.findOwner(
+      leagueId,
+      request.playerId,
+      client,
+      leagueSeasonId ?? league.activeLeagueSeasonId
+    );
+    if (playerOwner) {
+      throw new ValidationException('Player is already on a roster');
+    }
+
+    // Check if user already has a pending claim for this player
+    const existingClaim = await ctx.claimsRepo.hasPendingClaim(roster.id, request.playerId, client);
+    if (existingClaim) {
+      throw new ConflictException('You already have a pending claim for this player');
+    }
+
+    // Validate FAAB bid if applicable
+    const bidAmount = request.bidAmount || 0;
+    if (settings.waiverType === 'faab') {
+      let budget = await ctx.faabRepo.getByRoster(roster.id, season, client);
+      if (!budget) {
+        // Safety net for late-joining rosters: initialize with league's default budget
+        await ctx.faabRepo.ensureRosterBudget(
+          leagueId,
+          roster.id,
+          season,
+          settings.faabBudget,
+          client
+        );
+        budget = await ctx.faabRepo.getByRoster(roster.id, season, client);
+        if (!budget) {
+          throw new ValidationException('Failed to initialize FAAB budget');
+        }
+      }
+      if (bidAmount > budget.remainingBudget) {
+        throw new ValidationException(`Bid exceeds available budget ($${budget.remainingBudget})`);
+      }
+      if (bidAmount < 0) {
+        throw new ValidationException('Bid amount cannot be negative');
+      }
+    }
+
+    // Validate drop player if provided
+    if (request.dropPlayerId) {
+      const hasPlayer = await ctx.rosterPlayersRepo.findByRosterAndPlayer(
+        roster.id,
+        request.dropPlayerId,
+        client
+      );
+      if (!hasPlayer) {
+        throw new ValidationException('You do not own the player to drop');
+      }
+
+      // Lock the drop player to prevent manual drop between submission and processing
+      // This prevents TOCTOU race where user could drop the player manually after
+      // submitting the claim but before waivers process
+      await client.query(
+        'SELECT * FROM roster_players WHERE roster_id = $1 AND player_id = $2 FOR UPDATE',
+        [roster.id, request.dropPlayerId]
       );
     }
-  );
+
+    // Get priority snapshot for ALL claim types (used as tiebreaker in FAAB mode)
+    let priorityAtClaim: number | null = null;
+    let priority = await ctx.priorityRepo.getByRoster(roster.id, season, client);
+    if (!priority) {
+      // Safety net for late-joining rosters: initialize with last place priority
+      await ctx.priorityRepo.ensureRosterPriority(leagueId, roster.id, season, client);
+      priority = await ctx.priorityRepo.getByRoster(roster.id, season, client);
+    }
+    priorityAtClaim = priority?.priority ?? null;
+
+    // Get next claim order for this roster (claims are processed in order)
+    const nextClaimOrder = await ctx.claimsRepo.getNextClaimOrder(
+      roster.id,
+      season,
+      currentWeek,
+      client
+    );
+
+    // Create the claim
+    return await ctx.claimsRepo.create(
+      leagueId,
+      roster.id,
+      request.playerId,
+      request.dropPlayerId || null,
+      bidAmount,
+      priorityAtClaim,
+      season,
+      currentWeek,
+      nextClaimOrder,
+      client,
+      idempotencyKey
+    );
+  });
 
   // Get full details for response (after transaction commits)
   const claimWithDetails = await ctx.claimsRepo.findByIdWithDetails(claim.id);

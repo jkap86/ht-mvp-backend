@@ -1,19 +1,35 @@
 import { Pool, PoolClient } from 'pg';
 import { DraftRepository } from './drafts.repository';
-import { Draft, DraftOrderEntry, DraftPick, DraftSettings, DraftResponse, DraftResponseWithWarnings, draftToResponse } from './drafts.model';
+import {
+  Draft,
+  DraftOrderEntry,
+  DraftPick,
+  DraftSettings,
+  DraftResponse,
+  DraftResponseWithWarnings,
+  draftToResponse,
+} from './drafts.model';
 import { validatePlayerPoolEligibility } from './draft-validation.utils';
 import type { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import type { RosterPlayersRepository } from '../rosters/rosters.repository';
 import type { PlayerRepository } from '../players/players.repository';
 import type { Player } from '../players/players.model';
 import { DraftEngineFactory, IDraftEngine } from '../../engines';
-import { NotFoundException, ForbiddenException, ValidationException, ErrorCode } from '../../utils/exceptions';
+import {
+  NotFoundException,
+  ForbiddenException,
+  ValidationException,
+  ErrorCode,
+} from '../../utils/exceptions';
 import { EventTypes, tryGetEventBus } from '../../shared/events';
 import { finalizeDraftCompletion } from './draft-completion.utils';
 import type { ScheduleGeneratorService } from '../matchups/schedule-generator.service';
 import { DraftPickAssetRepository } from './draft-pick-asset.repository';
 import { DraftPickAsset } from './draft-pick-asset.model';
-import { computeNextPickState as computeNextPickStateShared, NextPickState } from './draft-pick-state.utils';
+import {
+  computeNextPickState as computeNextPickStateShared,
+  NextPickState,
+} from './draft-pick-state.utils';
 import { container, KEYS } from '../../container';
 import { runInDraftTransaction } from '../../shared/locks';
 import { runWithLock, LockDomain } from '../../shared/transaction-runner';
@@ -108,18 +124,15 @@ export class DraftStateService {
     private readonly pickAssetRepo?: DraftPickAssetRepository
   ) {}
 
-  async startDraft(draftId: number, userId: string, idempotencyKey?: string): Promise<DraftResponse> {
+  async startDraft(
+    draftId: number,
+    userId: string,
+    idempotencyKey?: string
+  ): Promise<DraftResponse> {
     // Idempotency check: return existing result if same key was already used
-    if (idempotencyKey) {
-      const existing = await this.db.query(
-        `SELECT result FROM draft_operations
-         WHERE idempotency_key = $1 AND user_id = $2 AND operation_type = 'start'
-         AND expires_at > NOW()`,
-        [idempotencyKey, userId]
-      );
-      if (existing.rows.length > 0) {
-        return existing.rows[0].result;
-      }
+    const cached = await this.checkIdempotency(idempotencyKey, userId, 'start');
+    if (cached) {
+      return cached;
     }
     const draft = await this.draftRepo.findById(draftId);
     if (!draft) throw new NotFoundException('Draft not found');
@@ -178,7 +191,8 @@ export class DraftStateService {
       firstPickerRosterId = fallbackPicker?.rosterId ?? null;
     }
 
-    const firstPicker = draftOrder.find((o) => o.rosterId === firstPickerRosterId) ??
+    const firstPicker =
+      draftOrder.find((o) => o.rosterId === firstPickerRosterId) ??
       draftOrder.find((o) => o.draftPosition === 1);
 
     // Set initial pick deadline
@@ -222,7 +236,7 @@ export class DraftStateService {
         draftId,
         currentPick: 1,
         currentRound: 1,
-        currentRosterId: firstPickerRosterId,  // Use traded-pick-aware ID
+        currentRosterId: firstPickerRosterId, // Use traded-pick-aware ID
         pickDeadline,
         status: 'in_progress',
       },
@@ -242,19 +256,21 @@ export class DraftStateService {
     }
 
     // Store result for idempotency
-    if (idempotencyKey) {
-      await this.db.query(
-        `INSERT INTO draft_operations (idempotency_key, draft_id, user_id, operation_type, result)
-         VALUES ($1, $2, $3, 'start', $4)
-         ON CONFLICT (idempotency_key, user_id, operation_type) DO NOTHING`,
-        [idempotencyKey, draftId, userId, JSON.stringify(response)]
-      );
-    }
+    await this.saveIdempotencyResult(idempotencyKey, draftId, userId, 'start', response);
 
     return response;
   }
 
-  async pauseDraft(draftId: number, userId: string): Promise<DraftResponse> {
+  async pauseDraft(
+    draftId: number,
+    userId: string,
+    idempotencyKey?: string
+  ): Promise<DraftResponse> {
+    const cached = await this.checkIdempotency(idempotencyKey, userId, 'pause');
+    if (cached) {
+      return cached;
+    }
+
     const draft = await this.draftRepo.findById(draftId);
     if (!draft) throw new NotFoundException('Draft not found');
 
@@ -327,6 +343,8 @@ export class DraftStateService {
         payload: { draftId, draft: response },
       });
 
+      await this.saveIdempotencyResult(idempotencyKey, draftId, userId, 'pause', response);
+
       return response;
     }
 
@@ -362,10 +380,21 @@ export class DraftStateService {
       payload: { draftId, draft: response },
     });
 
+    await this.saveIdempotencyResult(idempotencyKey, draftId, userId, 'pause', response);
+
     return response;
   }
 
-  async resumeDraft(draftId: number, userId: string): Promise<DraftResponse> {
+  async resumeDraft(
+    draftId: number,
+    userId: string,
+    idempotencyKey?: string
+  ): Promise<DraftResponse> {
+    const cached = await this.checkIdempotency(idempotencyKey, userId, 'resume');
+    if (cached) {
+      return cached;
+    }
+
     const draft = await this.draftRepo.findById(draftId);
     if (!draft) throw new NotFoundException('Draft not found');
 
@@ -384,45 +413,59 @@ export class DraftStateService {
 
     if (isFastAuction) {
       // Fast auction: atomically restore both draft AND active lot bid_deadline
-      const { response, restoredLot } = await runWithLock(this.db, LockDomain.DRAFT, draftId, async (client) => {
-        const now = new Date();
-        const remainingSeconds = draft.draftState?.remainingSeconds ?? draft.pickTimeSeconds;
-        const pickDeadline = new Date();
-        pickDeadline.setSeconds(pickDeadline.getSeconds() + remainingSeconds);
+      const { response, restoredLot } = await runWithLock(
+        this.db,
+        LockDomain.DRAFT,
+        draftId,
+        async (client) => {
+          const now = new Date();
+          const remainingSeconds = draft.draftState?.remainingSeconds ?? draft.pickTimeSeconds;
+          const pickDeadline = new Date();
+          pickDeadline.setSeconds(pickDeadline.getSeconds() + remainingSeconds);
 
-        // Restore active lot bid_deadline from pausedLotState
-        const pausedLotState = draft.draftState?.pausedLotState as { lotId: number; remainingBidSeconds: number } | null;
-        let restoredLotData: Record<string, unknown> | null = null;
+          // Restore active lot bid_deadline from pausedLotState
+          const pausedLotState = draft.draftState?.pausedLotState as {
+            lotId: number;
+            remainingBidSeconds: number;
+          } | null;
+          let restoredLotData: Record<string, unknown> | null = null;
 
-        if (pausedLotState) {
-          const newBidDeadline = new Date();
-          newBidDeadline.setSeconds(newBidDeadline.getSeconds() + pausedLotState.remainingBidSeconds);
+          if (pausedLotState) {
+            const newBidDeadline = new Date();
+            newBidDeadline.setSeconds(
+              newBidDeadline.getSeconds() + pausedLotState.remainingBidSeconds
+            );
 
-          const lotUpdateResult = await client.query(
-            `UPDATE auction_lots SET bid_deadline = $1 WHERE id = $2 AND status = 'active' RETURNING *`,
-            [newBidDeadline, pausedLotState.lotId]
-          );
+            const lotUpdateResult = await client.query(
+              `UPDATE auction_lots SET bid_deadline = $1 WHERE id = $2 AND status = 'active' RETURNING *`,
+              [newBidDeadline, pausedLotState.lotId]
+            );
 
-          if (lotUpdateResult.rows.length > 0) {
-            restoredLotData = lotUpdateResult.rows[0];
+            if (lotUpdateResult.rows.length > 0) {
+              restoredLotData = lotUpdateResult.rows[0];
+            }
           }
+
+          // Update draft status
+          const updatedDraft = await this.draftRepo.updateWithClient(client, draftId, {
+            status: 'in_progress',
+            pickDeadline,
+            draftState: {
+              ...draft.draftState,
+              pausedAt: null,
+              pausedBy: null,
+              remainingSeconds: null,
+              pausedLotState: null,
+            },
+          });
+
+          return {
+            response: draftToResponse(updatedDraft),
+            restoredLot: restoredLotData,
+            pickDeadline,
+          };
         }
-
-        // Update draft status
-        const updatedDraft = await this.draftRepo.updateWithClient(client, draftId, {
-          status: 'in_progress',
-          pickDeadline,
-          draftState: {
-            ...draft.draftState,
-            pausedAt: null,
-            pausedBy: null,
-            remainingSeconds: null,
-            pausedLotState: null,
-          },
-        });
-
-        return { response: draftToResponse(updatedDraft), restoredLot: restoredLotData, pickDeadline };
-      });
+      );
 
       const eventBus = tryGetEventBus();
       eventBus?.publish({
@@ -437,6 +480,8 @@ export class DraftStateService {
           payload: { draftId, lot: restoredLot },
         });
       }
+
+      await this.saveIdempotencyResult(idempotencyKey, draftId, userId, 'resume', response);
 
       return response;
     }
@@ -483,10 +528,21 @@ export class DraftStateService {
       },
     });
 
+    await this.saveIdempotencyResult(idempotencyKey, draftId, userId, 'resume', response);
+
     return response;
   }
 
-  async completeDraft(draftId: number, userId: string): Promise<DraftResponseWithWarnings> {
+  async completeDraft(
+    draftId: number,
+    userId: string,
+    idempotencyKey?: string
+  ): Promise<DraftResponseWithWarnings> {
+    const cached = await this.checkIdempotency(idempotencyKey, userId, 'complete');
+    if (cached) {
+      return cached;
+    }
+
     const draft = await this.draftRepo.findById(draftId);
     if (!draft) throw new NotFoundException('Draft not found');
 
@@ -569,6 +625,8 @@ export class DraftStateService {
       payload: { draftId, draft: response },
     });
 
+    await this.saveIdempotencyResult(idempotencyKey, draftId, userId, 'complete', response);
+
     return response;
   }
 
@@ -581,7 +639,9 @@ export class DraftStateService {
     }
 
     if (draft.status === 'completed') {
-      throw new ValidationException('Cannot delete a completed draft. Rosters have already been populated.');
+      throw new ValidationException(
+        'Cannot delete a completed draft. Rosters have already been populated.'
+      );
     }
 
     const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
@@ -592,115 +652,141 @@ export class DraftStateService {
     await this.draftRepo.delete(draftId);
   }
 
-  async undoPick(leagueId: number, draftId: number, userId: string): Promise<{ draft: DraftResponse; undone: UndoneItem }> {
+  async undoPick(
+    leagueId: number,
+    draftId: number,
+    userId: string
+  ): Promise<{ draft: DraftResponse; undone: UndoneItem }> {
     // Get the pool for running the transaction
     const pool = container.resolve<Pool>(KEYS.POOL);
 
     // Run all state reads and the undo operation inside a single transaction with lock
-    const { undoneItem, response, prevPick, prevRound, prevPickerRosterId, pickDeadline, updatedDraftStatus } =
-      await runInDraftTransaction(pool, draftId, async (client) => {
-        // Read fresh draft state inside lock
-        const draft = await this.draftRepo.findByIdWithClient(client, draftId);
-        if (!draft) throw new NotFoundException('Draft not found');
+    const {
+      undoneItem,
+      response,
+      prevPick,
+      prevRound,
+      prevPickerRosterId,
+      pickDeadline,
+      updatedDraftStatus,
+    } = await runInDraftTransaction(pool, draftId, async (client) => {
+      // Read fresh draft state inside lock
+      const draft = await this.draftRepo.findByIdWithClient(client, draftId);
+      if (!draft) throw new NotFoundException('Draft not found');
 
-        if (draft.leagueId !== leagueId) {
-          throw new NotFoundException('Draft not found');
-        }
+      if (draft.leagueId !== leagueId) {
+        throw new NotFoundException('Draft not found');
+      }
 
-        const isCommissioner = await this.leagueRepo.isCommissioner(draft.leagueId, userId);
-        if (!isCommissioner) {
-          throw new ForbiddenException('Only the commissioner can undo picks');
-        }
+      const isCommissioner = await this.leagueRepo.isCommissioner(draft.leagueId, userId);
+      if (!isCommissioner) {
+        throw new ForbiddenException('Only the commissioner can undo picks');
+      }
 
-        if (draft.status === 'not_started') {
-          throw new ValidationException('Cannot undo picks on a draft that has not started');
-        }
+      if (draft.status === 'not_started') {
+        throw new ValidationException('Cannot undo picks on a draft that has not started');
+      }
 
-        const wasCompleted = draft.status === 'completed';
+      const wasCompleted = draft.status === 'completed';
 
-        // Check if this draft has includeRookiePicks enabled
-        const settings = draft.settings as DraftSettings;
-        const includeRookiePicks = settings?.includeRookiePicks ?? false;
+      // Check if this draft has includeRookiePicks enabled
+      const settings = draft.settings as DraftSettings;
+      const includeRookiePicks = settings?.includeRookiePicks ?? false;
 
-        // Read fresh draft order inside lock
-        const draftOrder = await this.draftRepo.getDraftOrderWithClient(client, draftId);
-        const engine = this.engineFactory.createEngine(draft.draftType);
-        const totalRosters = draftOrder.length;
+      // Read fresh draft order inside lock
+      const draftOrder = await this.draftRepo.getDraftOrderWithClient(client, draftId);
+      const engine = this.engineFactory.createEngine(draft.draftType);
+      const totalRosters = draftOrder.length;
 
-        // Calculate the previous pick number
-        const computedLastPick = draft.status === 'completed'
-          ? totalRosters * draft.rounds  // If completed, last pick was the final one
-          : draft.currentPick - 1;       // Otherwise, it's one before current
-        const computedPrevPick = computedLastPick;
-        const computedPrevRound = engine.getRound(computedPrevPick, totalRosters);
+      // Calculate the previous pick number
+      const computedLastPick =
+        draft.status === 'completed'
+          ? totalRosters * draft.rounds // If completed, last pick was the final one
+          : draft.currentPick - 1; // Otherwise, it's one before current
+      const computedPrevPick = computedLastPick;
+      const computedPrevRound = engine.getRound(computedPrevPick, totalRosters);
 
-        // Fetch pick assets inside lock to account for traded picks
-        let computedPrevPickerRosterId: number | null = null;
-        try {
-          const pickAssetRepo = this.pickAssetRepo || container.resolve<DraftPickAssetRepository>(KEYS.PICK_ASSET_REPO);
-          const pickAssets = await pickAssetRepo.findByDraftIdWithClient(client, draftId);
-          const actualPicker = engine.getActualPickerForPickNumber(draft, draftOrder, pickAssets, computedPrevPick);
-          computedPrevPickerRosterId = actualPicker?.rosterId || null;
-        } catch (err) {
-          // Fallback to original picker if pick assets not available
-          logger.warn('Failed to resolve actual picker via pick assets during undo, falling back to original picker', {
+      // Fetch pick assets inside lock to account for traded picks
+      let computedPrevPickerRosterId: number | null = null;
+      try {
+        const pickAssetRepo =
+          this.pickAssetRepo || container.resolve<DraftPickAssetRepository>(KEYS.PICK_ASSET_REPO);
+        const pickAssets = await pickAssetRepo.findByDraftIdWithClient(client, draftId);
+        const actualPicker = engine.getActualPickerForPickNumber(
+          draft,
+          draftOrder,
+          pickAssets,
+          computedPrevPick
+        );
+        computedPrevPickerRosterId = actualPicker?.rosterId || null;
+      } catch (err) {
+        // Fallback to original picker if pick assets not available
+        logger.warn(
+          'Failed to resolve actual picker via pick assets during undo, falling back to original picker',
+          {
             error: err instanceof Error ? err.message : String(err),
             draftId,
             pickNumber: computedPrevPick,
-          });
-          const prevPicker = engine.getPickerForPickNumber(draft, draftOrder, computedPrevPick);
-          computedPrevPickerRosterId = prevPicker?.rosterId || null;
-        }
+          }
+        );
+        const prevPicker = engine.getPickerForPickNumber(draft, draftOrder, computedPrevPick);
+        computedPrevPickerRosterId = prevPicker?.rosterId || null;
+      }
 
-        // Calculate new deadline only if draft was in progress (not paused)
-        const shouldSetDeadline = draft.status === 'in_progress' || wasCompleted;
-        let computedPickDeadline: Date | null = null;
-        if (shouldSetDeadline) {
-          computedPickDeadline = new Date();
-          computedPickDeadline.setSeconds(computedPickDeadline.getSeconds() + draft.pickTimeSeconds);
-        }
+      // Calculate new deadline only if draft was in progress (not paused)
+      const shouldSetDeadline = draft.status === 'in_progress' || wasCompleted;
+      let computedPickDeadline: Date | null = null;
+      if (shouldSetDeadline) {
+        computedPickDeadline = new Date();
+        computedPickDeadline.setSeconds(computedPickDeadline.getSeconds() + draft.pickTimeSeconds);
+      }
 
-        // Determine the target status after undo
-        const targetStatus = wasCompleted ? 'in_progress' : (draft.status as 'in_progress' | 'paused');
+      // Determine the target status after undo
+      const targetStatus = wasCompleted
+        ? 'in_progress'
+        : (draft.status as 'in_progress' | 'paused');
 
-        // Delete the most recent pick using the client that already holds the lock
-        const { undonePick, undoneSelection, draft: updatedDraft } =
-          await this.draftRepo.undoLastPickTxWithClient(client, {
-            draftId,
-            prevPickState: {
-              currentPick: computedPrevPick,
-              currentRound: computedPrevRound,
-              currentRosterId: computedPrevPickerRosterId,
-              pickDeadline: computedPickDeadline,
-              status: targetStatus,
-              completedAt: null,
-            },
-            includeRookiePicks,
-          });
-
-        if (!undonePick && !undoneSelection) {
-          throw new ValidationException('No picks to undo');
-        }
-
-        // Build the undone item for socket event
-        const computedUndoneItem: UndoneItem = undonePick || {
-          id: undoneSelection!.id,
-          pickNumber: undoneSelection!.pickNumber,
-          rosterId: undoneSelection!.rosterId,
-          draftPickAssetId: undoneSelection!.draftPickAssetId,
-          isPickAsset: true as const,
-        };
-
-        return {
-          undoneItem: computedUndoneItem,
-          response: draftToResponse(updatedDraft),
-          prevPick: computedPrevPick,
-          prevRound: computedPrevRound,
-          prevPickerRosterId: computedPrevPickerRosterId,
+      // Delete the most recent pick using the client that already holds the lock
+      const {
+        undonePick,
+        undoneSelection,
+        draft: updatedDraft,
+      } = await this.draftRepo.undoLastPickTxWithClient(client, {
+        draftId,
+        prevPickState: {
+          currentPick: computedPrevPick,
+          currentRound: computedPrevRound,
+          currentRosterId: computedPrevPickerRosterId,
           pickDeadline: computedPickDeadline,
-          updatedDraftStatus: updatedDraft.status,
-        };
+          status: targetStatus,
+          completedAt: null,
+        },
+        includeRookiePicks,
       });
+
+      if (!undonePick && !undoneSelection) {
+        throw new ValidationException('No picks to undo');
+      }
+
+      // Build the undone item for socket event
+      const computedUndoneItem: UndoneItem = undonePick || {
+        id: undoneSelection!.id,
+        pickNumber: undoneSelection!.pickNumber,
+        rosterId: undoneSelection!.rosterId,
+        draftPickAssetId: undoneSelection!.draftPickAssetId,
+        isPickAsset: true as const,
+      };
+
+      return {
+        undoneItem: computedUndoneItem,
+        response: draftToResponse(updatedDraft),
+        prevPick: computedPrevPick,
+        prevRound: computedPrevRound,
+        prevPickerRosterId: computedPrevPickerRosterId,
+        pickDeadline: computedPickDeadline,
+        updatedDraftStatus: updatedDraft.status,
+      };
+    });
 
     // Emit events AFTER transaction commits
     const eventBus = tryGetEventBus();
@@ -798,7 +884,12 @@ export class DraftStateService {
         const pickInRound = engine.getPickInRound(draft.currentPick, totalRosters);
 
         // Compute next pick state with FRESH data inside the lock
-        const computedNextPickState = this.computeNextPickState(draft, draftOrder, engine, pickAssets);
+        const computedNextPickState = this.computeNextPickState(
+          draft,
+          draftOrder,
+          engine,
+          pickAssets
+        );
 
         // Make the pick using the client that already holds the lock
         const result = await this.draftRepo.makePickAndAdvanceTxWithClient(client, {
@@ -850,7 +941,9 @@ export class DraftStateService {
    * Apply an automatic pick (timeout, autodraft, or empty queue).
    * Called by autopick job or engine.tick().
    */
-  async applyAutoPick(params: ApplyAutoPickParams): Promise<ApplyPickResult | { actionTaken: false; reason: string }> {
+  async applyAutoPick(
+    params: ApplyAutoPickParams
+  ): Promise<ApplyPickResult | { actionTaken: false; reason: string }> {
     const { draftId, reason } = params;
 
     const pool = container.resolve<Pool>(KEYS.POOL);
@@ -888,7 +981,12 @@ export class DraftStateService {
       }
 
       // Get best available player from queue or rankings
-      const bestPlayer = await this.getBestAvailablePlayer(client, draft, currentRosterId, playerRepo);
+      const bestPlayer = await this.getBestAvailablePlayer(
+        client,
+        draft,
+        currentRosterId,
+        playerRepo
+      );
 
       if (!bestPlayer) {
         return { actionTaken: false as const, reason: 'no_available_players' };
@@ -904,7 +1002,12 @@ export class DraftStateService {
       const pickInRound = engine.getPickInRound(draft.currentPick, totalRosters);
 
       // Compute next pick state with fresh data inside the lock
-      const computedNextPickState = this.computeNextPickState(draft, draftOrder, engine, pickAssets);
+      const computedNextPickState = this.computeNextPickState(
+        draft,
+        draftOrder,
+        engine,
+        pickAssets
+      );
 
       const idempotencyKey = `autopick-${draftId}-${draft.currentPick}`;
 
@@ -953,65 +1056,88 @@ export class DraftStateService {
     }
 
     // Emit events AFTER transaction commits
-    this.emitPickEvents(draftId, result.pick, result.updatedDraft, result.nextPickState, result.player, true);
+    this.emitPickEvents(
+      draftId,
+      result.pick,
+      result.updatedDraft,
+      result.nextPickState,
+      result.player,
+      true
+    );
 
-    return { pick: result.pick, draft: result.updatedDraft, nextPickState: result.nextPickState, player: result.player };
+    return {
+      pick: result.pick,
+      draft: result.updatedDraft,
+      nextPickState: result.nextPickState,
+      player: result.player,
+    };
   }
 
   /**
    * Advance to the next turn without making a pick.
    * Used for recovery scenarios or commissioner skip.
    */
-  async advanceTurn(params: AdvanceTurnParams): Promise<{ draft: DraftResponse; nextPickState: NextPickState }> {
+  async advanceTurn(
+    params: AdvanceTurnParams
+  ): Promise<{ draft: DraftResponse; nextPickState: NextPickState }> {
     const { draftId } = params;
     const pool = container.resolve<Pool>(KEYS.POOL);
 
-    const { response, nextPickState } = await runInDraftTransaction(pool, draftId, async (client) => {
-      const draft = await this.draftRepo.findByIdWithClient(client, draftId);
-      if (!draft) throw new NotFoundException('Draft not found');
+    const { response, nextPickState } = await runInDraftTransaction(
+      pool,
+      draftId,
+      async (client) => {
+        const draft = await this.draftRepo.findByIdWithClient(client, draftId);
+        if (!draft) throw new NotFoundException('Draft not found');
 
-      if (draft.status !== 'in_progress') {
-        throw new ValidationException('Draft is not in progress');
-      }
+        if (draft.status !== 'in_progress') {
+          throw new ValidationException('Draft is not in progress');
+        }
 
-      const draftOrder = await this.draftRepo.getDraftOrderWithClient(client, draftId);
-      const engine = this.engineFactory.createEngine(draft.draftType);
-      const pickAssets = this.pickAssetRepo
-        ? await this.pickAssetRepo.findByDraftIdWithClient(client, draftId)
-        : [];
+        const draftOrder = await this.draftRepo.getDraftOrderWithClient(client, draftId);
+        const engine = this.engineFactory.createEngine(draft.draftType);
+        const pickAssets = this.pickAssetRepo
+          ? await this.pickAssetRepo.findByDraftIdWithClient(client, draftId)
+          : [];
 
-      // Compute next state (as if a pick was made)
-      const computedNextPickState = this.computeNextPickState(draft, draftOrder, engine, pickAssets);
-
-      // Update draft state without recording a pick
-      const updatedDraft = await this.draftRepo.updateWithClient(client, draftId, {
-        currentPick: computedNextPickState.currentPick ?? undefined,
-        currentRound: computedNextPickState.currentRound ?? undefined,
-        currentRosterId: computedNextPickState.currentRosterId,
-        pickDeadline: computedNextPickState.pickDeadline,
-        status: computedNextPickState.status,
-        completedAt: computedNextPickState.completedAt,
-      });
-
-      if (computedNextPickState.status === 'completed') {
-        await finalizeDraftCompletion(
-          {
-            draftRepo: this.draftRepo,
-            leagueRepo: this.leagueRepo,
-            rosterPlayersRepo: this.rosterPlayersRepo,
-            scheduleGeneratorService: this.scheduleGeneratorService,
-          },
-          draftId,
-          draft.leagueId,
-          client
+        // Compute next state (as if a pick was made)
+        const computedNextPickState = this.computeNextPickState(
+          draft,
+          draftOrder,
+          engine,
+          pickAssets
         );
-      }
 
-      return {
-        response: draftToResponse(updatedDraft),
-        nextPickState: computedNextPickState,
-      };
-    });
+        // Update draft state without recording a pick
+        const updatedDraft = await this.draftRepo.updateWithClient(client, draftId, {
+          currentPick: computedNextPickState.currentPick ?? undefined,
+          currentRound: computedNextPickState.currentRound ?? undefined,
+          currentRosterId: computedNextPickState.currentRosterId,
+          pickDeadline: computedNextPickState.pickDeadline,
+          status: computedNextPickState.status,
+          completedAt: computedNextPickState.completedAt,
+        });
+
+        if (computedNextPickState.status === 'completed') {
+          await finalizeDraftCompletion(
+            {
+              draftRepo: this.draftRepo,
+              leagueRepo: this.leagueRepo,
+              rosterPlayersRepo: this.rosterPlayersRepo,
+              scheduleGeneratorService: this.scheduleGeneratorService,
+            },
+            draftId,
+            draft.leagueId,
+            client
+          );
+        }
+
+        return {
+          response: draftToResponse(updatedDraft),
+          nextPickState: computedNextPickState,
+        };
+      }
+    );
 
     // Emit next pick event
     const eventBus = tryGetEventBus();
@@ -1037,7 +1163,9 @@ export class DraftStateService {
    * Handle pick timeout - triggers autopick and optionally force-enables autodraft.
    * Called by autopick job when deadline expires.
    */
-  async applyTimeoutAction(params: ApplyTimeoutActionParams): Promise<ApplyPickResult | { actionTaken: false; reason: string }> {
+  async applyTimeoutAction(
+    params: ApplyTimeoutActionParams
+  ): Promise<ApplyPickResult | { actionTaken: false; reason: string }> {
     const { draftId, forceAutodraft = true } = params;
 
     // Perform the autopick
@@ -1127,9 +1255,7 @@ export class DraftStateService {
       conditions.push("(player_type = 'college')");
     }
 
-    const playerFilter = conditions.length > 0
-      ? `AND (${conditions.join(' OR ')})`
-      : '';
+    const playerFilter = conditions.length > 0 ? `AND (${conditions.join(' OR ')})` : '';
 
     const bestAvailableResult = await client.query(
       `SELECT id FROM players
@@ -1148,6 +1274,40 @@ export class DraftStateService {
     }
 
     return null;
+  }
+
+  private async checkIdempotency(
+    idempotencyKey: string | undefined,
+    userId: string,
+    operationType: string
+  ): Promise<any | null> {
+    if (!idempotencyKey) return null;
+    const existing = await this.db.query(
+      `SELECT result FROM draft_operations
+       WHERE idempotency_key = $1 AND user_id = $2 AND operation_type = $3
+       AND expires_at > NOW()`,
+      [idempotencyKey, userId, operationType]
+    );
+    if (existing.rows.length > 0) {
+      return existing.rows[0].result;
+    }
+    return null;
+  }
+
+  private async saveIdempotencyResult(
+    idempotencyKey: string | undefined,
+    draftId: number,
+    userId: string,
+    operationType: string,
+    result: any
+  ): Promise<void> {
+    if (!idempotencyKey) return;
+    await this.db.query(
+      `INSERT INTO draft_operations (idempotency_key, draft_id, user_id, operation_type, result)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (idempotency_key, user_id, operation_type) DO NOTHING`,
+      [idempotencyKey, draftId, userId, operationType, JSON.stringify(result)]
+    );
   }
 
   /**

@@ -42,7 +42,18 @@ export class WaiverClaimsRepository {
         bid_amount, priority_at_claim, season, week, claim_order, idempotency_key
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING *`,
-      [leagueId, rosterId, playerId, dropPlayerId, bidAmount, priorityAtClaim, season, week, claimOrder, idempotencyKey || null]
+      [
+        leagueId,
+        rosterId,
+        playerId,
+        dropPlayerId,
+        bidAmount,
+        priorityAtClaim,
+        season,
+        week,
+        claimOrder,
+        idempotencyKey || null,
+      ]
     );
     return waiverClaimFromDatabase(result.rows[0]);
   }
@@ -89,8 +100,8 @@ export class WaiverClaimsRepository {
     const params: number[] = [rosterId]; // $1 is rosterId
 
     claimIds.forEach((id, index) => {
-      const idParam = params.length + 1;      // $2, $4, $6, ...
-      const orderParam = params.length + 2;   // $3, $5, $7, ...
+      const idParam = params.length + 1; // $2, $4, $6, ...
+      const orderParam = params.length + 2; // $3, $5, $7, ...
       valuesParts.push(`($${idParam}::INTEGER, $${orderParam}::INTEGER)`);
       params.push(id, index + 1);
     });
@@ -164,9 +175,11 @@ export class WaiverClaimsRepository {
   async findByIdempotencyKey(
     leagueId: number,
     rosterId: number,
-    idempotencyKey: string
+    idempotencyKey: string,
+    client?: PoolClient
   ): Promise<WaiverClaimWithDetails | null> {
-    const result = await this.db.query(
+    const conn = client || this.db;
+    const result = await conn.query(
       `SELECT wc.*,
         r.settings->>'team_name' as team_name,
         u.username as username,
@@ -202,7 +215,10 @@ export class WaiverClaimsRepository {
   /**
    * Get pending claims for a roster with details, ordered by claim_order
    */
-  async getPendingByRoster(rosterId: number, client?: PoolClient): Promise<WaiverClaimWithDetails[]> {
+  async getPendingByRoster(
+    rosterId: number,
+    client?: PoolClient
+  ): Promise<WaiverClaimWithDetails[]> {
     const conn = client || this.db;
     const result = await conn.query(
       `SELECT wc.*,

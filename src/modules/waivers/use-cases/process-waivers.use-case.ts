@@ -132,10 +132,14 @@ export async function processLeagueClaims(
           processingRunId,
           client
         );
-        logger.debug(`Snapshotted ${snapshotCount} claims for processing run ${processingRunId}`, { leagueId });
+        logger.debug(`Snapshotted ${snapshotCount} claims for processing run ${processingRunId}`, {
+          leagueId,
+        });
 
         if (snapshotCount === 0) {
-          logger.debug(`No claims to process, cleaning up processing run ${processingRunId}`, { leagueId });
+          logger.debug(`No claims to process, cleaning up processing run ${processingRunId}`, {
+            leagueId,
+          });
           await ctx.processingRunsRepo.delete(processingRunId, client);
           return { processed: 0, successful: 0 };
         }
@@ -164,7 +168,11 @@ export async function processLeagueClaims(
 
       // Load COMPLETE league ownership (all rosters, not just those with claims)
       // This prevents ConflictException churn when claims target players owned by rosters without claims
-      const ownedPlayerIds = await ctx.rosterPlayersRepo.getOwnedPlayerIdsByLeague(leagueId, client, league.activeLeagueSeasonId);
+      const ownedPlayerIds = await ctx.rosterPlayersRepo.getOwnedPlayerIdsByLeague(
+        leagueId,
+        client,
+        league.activeLeagueSeasonId
+      );
 
       // Initialize roster processing states for rosters that have claims
       const rosterStates = await initializeRosterStates(
@@ -202,7 +210,9 @@ export async function processLeagueClaims(
         const roundClaims = extractRoundClaims(claimsByRoster, rosterStates);
         if (roundClaims.length === 0) break;
 
-        logger.debug(`Processing waiver round ${roundNumber} with ${roundClaims.length} claims`, { leagueId });
+        logger.debug(`Processing waiver round ${roundNumber} with ${roundClaims.length} claims`, {
+          leagueId,
+        });
 
         // Group by target player to identify conflicts
         const conflictGroups = new Map<number, WaiverClaimWithCurrentPriority[]>();
@@ -234,7 +244,12 @@ export async function processLeagueClaims(
 
             // Check if player was already claimed in an earlier round (global ownership)
             if (ownedPlayerIds.has(claim.playerId)) {
-              await ctx.claimsRepo.updateStatus(claim.id, 'invalid', 'Player already owned', client);
+              await ctx.claimsRepo.updateStatus(
+                claim.id,
+                'invalid',
+                'Player already owned',
+                client
+              );
               state.processedClaimIds.add(claim.id);
               processedCount++;
               const claimCopy = { ...claim };
@@ -275,7 +290,13 @@ export async function processLeagueClaims(
               }
 
               // Update in-memory state for this roster's future claims
-              updateRosterStateAfterWin(state, claim, settings.waiverType, rosterStates, maxPriority);
+              updateRosterStateAfterWin(
+                state,
+                claim,
+                settings.waiverType,
+                rosterStates,
+                maxPriority
+              );
 
               state.processedClaimIds.add(claim.id);
 
@@ -284,11 +305,21 @@ export async function processLeagueClaims(
               pendingEvents.push(() => emitClaimSuccessful(ctx, claimCopy));
 
               // Remove player from waiver wire
-              await ctx.waiverWireRepo.removePlayer(leagueId, playerId, client, league.activeLeagueSeasonId);
+              await ctx.waiverWireRepo.removePlayer(
+                leagueId,
+                playerId,
+                client,
+                league.activeLeagueSeasonId
+              );
 
               // Invalidate pending trades
               if (ctx.tradesRepo) {
-                const invalidatedTrades = await invalidateTradesForPlayer(ctx.tradesRepo, leagueId, playerId, client);
+                const invalidatedTrades = await invalidateTradesForPlayer(
+                  ctx.tradesRepo,
+                  leagueId,
+                  playerId,
+                  client
+                );
                 for (const trade of invalidatedTrades) {
                   pendingEvents.push(() => emitTradeInvalidated(trade.leagueId, trade.id));
                 }
@@ -310,8 +341,16 @@ export async function processLeagueClaims(
               break;
             } catch (error) {
               // Handle ownership conflict from addPlayerToRoster
-              if (error instanceof ConflictException && error.message.includes('already on a roster')) {
-                await ctx.claimsRepo.updateStatus(claim.id, 'invalid', 'Player already owned', client);
+              if (
+                error instanceof ConflictException &&
+                error.message.includes('already on a roster')
+              ) {
+                await ctx.claimsRepo.updateStatus(
+                  claim.id,
+                  'invalid',
+                  'Player already owned',
+                  client
+                );
                 processedCount++;
                 state.processedClaimIds.add(claim.id);
                 const claimCopy = { ...claim };
@@ -322,7 +361,22 @@ export async function processLeagueClaims(
                 // Only add to ownedPlayerIds on SUCCESS (line above).
                 continue;
               }
-              throw error; // Re-throw other errors
+
+              // Catch unexpected errors to prevent one bad claim from rolling back the whole league
+              logger.error(`Error processing waiver claim ${claim.id}`, error);
+              await ctx.claimsRepo.updateStatus(
+                claim.id,
+                'failed',
+                'System error during processing',
+                client
+              );
+              processedCount++;
+              state.processedClaimIds.add(claim.id);
+              const claimCopy = { ...claim };
+              pendingEvents.push(() =>
+                emitClaimFailed(ctx, claimCopy, 'System error during processing')
+              );
+              continue;
             }
           }
 
@@ -339,7 +393,12 @@ export async function processLeagueClaims(
             if (executedWinner) {
               reason = 'Outbid by another team';
             } else {
-              const validation = validateClaimWithState(claim, state, settings.waiverType, maxRosterSize);
+              const validation = validateClaimWithState(
+                claim,
+                state,
+                settings.waiverType,
+                maxRosterSize
+              );
               reason = validation.reason || 'No eligible claimers';
             }
             await ctx.claimsRepo.updateStatus(claim.id, 'failed', reason, client);
@@ -385,13 +444,13 @@ export async function processLeagueClaims(
 
   // Emit waiver processed system message if any claims were processed
   if (processed > 0 && ctx.eventListenerService) {
-    ctx.eventListenerService
-      .handleWaiverProcessed(leagueId)
-      .catch((err) => logger.warn('Failed to emit system message', {
+    ctx.eventListenerService.handleWaiverProcessed(leagueId).catch((err) =>
+      logger.warn('Failed to emit system message', {
         type: 'waiver_processed',
         leagueId,
-        error: err.message
-      }));
+        error: err.message,
+      })
+    );
   }
 
   return { processed, successful };
@@ -508,7 +567,10 @@ function sortClaimsByRosterState(
       if (aPriority !== bPriority) return aPriority - bPriority;
     }
     // Final tiebreaker: earlier claim wins
-    return a.createdAt.getTime() - b.createdAt.getTime();
+    const timeDiff = a.createdAt.getTime() - b.createdAt.getTime();
+    if (timeDiff !== 0) return timeDiff;
+    // Deterministic tie-breaker for same-millisecond claims
+    return a.id - b.id;
   });
 }
 
@@ -544,7 +606,10 @@ function validateClaimWithState(
   // Check FAAB budget
   if (waiverType === 'faab' && claim.bidAmount > 0) {
     if (state.remainingBudget < claim.bidAmount) {
-      return { eligible: false, reason: `Insufficient FAAB budget ($${state.remainingBudget} available)` };
+      return {
+        eligible: false,
+        reason: `Insufficient FAAB budget ($${state.remainingBudget} available)`,
+      };
     }
   }
 
@@ -602,7 +667,8 @@ async function executeClaim(
 ): Promise<void> {
   // Get mutation service from context or container
   const mutationService =
-    ctx.rosterMutationService ?? container.resolve<RosterMutationService>(KEYS.ROSTER_MUTATION_SERVICE);
+    ctx.rosterMutationService ??
+    container.resolve<RosterMutationService>(KEYS.ROSTER_MUTATION_SERVICE);
 
   // Drop player first if specified
   if (claim.dropPlayerId) {
@@ -630,12 +696,15 @@ async function executeClaim(
       // Player was already dropped manually - log warning and continue
       // This handles the TOCTOU race where a player is dropped between claim submission and processing
       if (err instanceof NotFoundException) {
-        logger.warn('Drop player not found during waiver processing - may have been dropped manually', {
-          claimId: claim.id,
-          rosterId: claim.rosterId,
-          dropPlayerId: claim.dropPlayerId,
-          error: err.message,
-        });
+        logger.warn(
+          'Drop player not found during waiver processing - may have been dropped manually',
+          {
+            claimId: claim.id,
+            rosterId: claim.rosterId,
+            dropPlayerId: claim.dropPlayerId,
+            error: err.message,
+          }
+        );
         // Continue without drop - the claim will still be processed
       } else {
         // For other errors, re-throw
@@ -722,12 +791,14 @@ async function emitClaimSuccessful(ctx: ProcessWaiversContext, claim: WaiverClai
             claimWithDetails.playerName || 'Unknown Player',
             claim.bidAmount > 0 ? claim.bidAmount : undefined
           )
-          .catch((err) => logger.warn('Failed to emit system message', {
-            type: 'waiver_successful',
-            leagueId: claim.leagueId,
-            claimId: claim.id,
-            error: err.message
-          }));
+          .catch((err) =>
+            logger.warn('Failed to emit system message', {
+              type: 'waiver_successful',
+              leagueId: claim.leagueId,
+              claimId: claim.id,
+              error: err.message,
+            })
+          );
       }
     }
   }

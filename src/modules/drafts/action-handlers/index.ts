@@ -7,6 +7,7 @@ export interface ActionContext {
   userId: string;
   leagueId: number;
   draftId: number;
+  idempotencyKey?: string;
 }
 
 /**

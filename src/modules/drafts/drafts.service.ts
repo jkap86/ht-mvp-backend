@@ -1,6 +1,13 @@
 import type { PoolClient, Pool } from 'pg';
 import { DraftRepository } from './drafts.repository';
-import { draftToResponse, DraftType, DraftOrderEntry, DraftSettings, AuctionSettings, DraftResponse } from './drafts.model';
+import {
+  draftToResponse,
+  DraftType,
+  DraftOrderEntry,
+  DraftSettings,
+  AuctionSettings,
+  DraftResponse,
+} from './drafts.model';
 import type { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import type { LeagueSettings } from '../leagues/leagues.model';
 import type { League } from '../leagues/leagues.model';
@@ -77,8 +84,12 @@ export class DraftService {
     private readonly pickAssetRepo?: DraftPickAssetRepository
   ) {}
 
-  private calculateTotalRosterSlots(leagueSettings: LeagueSettings | Record<string, unknown> | undefined): number {
-    const rosterConfig = (leagueSettings as Record<string, unknown>)?.roster_config as Record<string, number> | undefined;
+  private calculateTotalRosterSlots(
+    leagueSettings: LeagueSettings | Record<string, unknown> | undefined
+  ): number {
+    const rosterConfig = (leagueSettings as Record<string, unknown>)?.roster_config as
+      | Record<string, number>
+      | undefined;
     if (!rosterConfig) return 15; // fallback default
 
     return Object.values(rosterConfig).reduce(
@@ -89,7 +100,11 @@ export class DraftService {
 
   async getLeagueDrafts(leagueId: number, userId: string, leagueSeasonId?: number): Promise<any[]> {
     // Use atomic query that checks membership while fetching drafts to avoid race condition
-    const drafts = await this.draftRepo.findByLeagueIdWithMembershipCheck(leagueId, userId, leagueSeasonId);
+    const drafts = await this.draftRepo.findByLeagueIdWithMembershipCheck(
+      leagueId,
+      userId,
+      leagueSeasonId
+    );
 
     // findByLeagueIdWithMembershipCheck returns null if user is not a member
     if (drafts === null) {
@@ -306,9 +321,7 @@ export class DraftService {
       settings.playerPool = options.playerPool;
     }
 
-    const defaultRounds = this.calculateTotalRosterSlots(
-      league.leagueSettings || league.settings
-    );
+    const defaultRounds = this.calculateTotalRosterSlots(league.leagueSettings || league.settings);
 
     const draft = await this.draftRepo.createWithClient(
       client,
@@ -454,11 +467,21 @@ export class DraftService {
     return this.orderService.getDraftOrder(leagueId, draftId, userId);
   }
 
-  async randomizeDraftOrder(leagueId: number, draftId: number, userId: string, idempotencyKey?: string): Promise<any[]> {
+  async randomizeDraftOrder(
+    leagueId: number,
+    draftId: number,
+    userId: string,
+    idempotencyKey?: string
+  ): Promise<any[]> {
     return this.orderService.randomizeDraftOrder(leagueId, draftId, userId, idempotencyKey);
   }
 
-  async confirmDraftOrder(leagueId: number, draftId: number, userId: string, idempotencyKey?: string): Promise<any[]> {
+  async confirmDraftOrder(
+    leagueId: number,
+    draftId: number,
+    userId: string,
+    idempotencyKey?: string
+  ): Promise<any[]> {
     return this.orderService.confirmDraftOrder(leagueId, draftId, userId, idempotencyKey);
   }
 
@@ -475,23 +498,27 @@ export class DraftService {
     return this.stateService.startDraft(draftId, userId, idempotencyKey);
   }
 
-  async pauseDraft(draftId: number, userId: string): Promise<any> {
-    return this.stateService.pauseDraft(draftId, userId);
+  async pauseDraft(draftId: number, userId: string, idempotencyKey?: string): Promise<any> {
+    return this.stateService.pauseDraft(draftId, userId, idempotencyKey);
   }
 
-  async resumeDraft(draftId: number, userId: string): Promise<any> {
-    return this.stateService.resumeDraft(draftId, userId);
+  async resumeDraft(draftId: number, userId: string, idempotencyKey?: string): Promise<any> {
+    return this.stateService.resumeDraft(draftId, userId, idempotencyKey);
   }
 
-  async completeDraft(draftId: number, userId: string): Promise<any> {
-    return this.stateService.completeDraft(draftId, userId);
+  async completeDraft(draftId: number, userId: string, idempotencyKey?: string): Promise<any> {
+    return this.stateService.completeDraft(draftId, userId, idempotencyKey);
   }
 
   async deleteDraft(leagueId: number, draftId: number, userId: string): Promise<void> {
     return this.stateService.deleteDraft(leagueId, draftId, userId);
   }
 
-  async undoPick(leagueId: number, draftId: number, userId: string): Promise<{ draft: any; undone: any }> {
+  async undoPick(
+    leagueId: number,
+    draftId: number,
+    userId: string
+  ): Promise<{ draft: any; undone: any }> {
     return this.stateService.undoPick(leagueId, draftId, userId);
   }
 
@@ -698,7 +725,8 @@ export class DraftService {
     if (updates.includeRookiePicks !== undefined) {
       // Validate includeRookiePicks is only enabled for veteran-only drafts
       if (updates.includeRookiePicks === true) {
-        const effectivePlayerPool = updates.playerPool || mergedSettings.playerPool || ['veteran', 'rookie'];
+        const effectivePlayerPool = updates.playerPool ||
+          mergedSettings.playerPool || ['veteran', 'rookie'];
         const hasRookies = effectivePlayerPool.includes('rookie');
         if (hasRookies) {
           throw new ValidationException(
@@ -795,12 +823,7 @@ export class DraftService {
         await this.pickAssetRepo.deleteUnlinkedPicksForSeason(leagueId, season);
 
         // Generate future pick assets with correct round count
-        await this.pickAssetRepo.generateFuturePickAssets(
-          leagueId,
-          season,
-          rounds,
-          orderData
-        );
+        await this.pickAssetRepo.generateFuturePickAssets(leagueId, season, rounds, orderData);
 
         logger.info(
           `Generated ${orderData.length * rounds} rookie pick assets for vet draft ${draftId}, ` +
@@ -874,7 +897,7 @@ export class DraftService {
     });
 
     // Convert to response format
-    return matchups.map(m => ({
+    return matchups.map((m) => ({
       week: m.week,
       opponent_roster_id: m.opponentRosterId,
       opponent_team_name: m.opponentTeamName,
@@ -998,7 +1021,9 @@ export class DraftService {
 
     // Handle draft completion if needed
     if (pickResult.draft.status === 'completed') {
-      const rosterPlayersRepo = container.resolve<RosterPlayersRepository>(KEYS.ROSTER_PLAYERS_REPO);
+      const rosterPlayersRepo = container.resolve<RosterPlayersRepository>(
+        KEYS.ROSTER_PLAYERS_REPO
+      );
       await finalizeDraftCompletion(
         {
           draftRepo: this.draftRepo,

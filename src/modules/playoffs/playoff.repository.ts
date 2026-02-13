@@ -38,9 +38,19 @@ export class PlayoffRepository {
         enable_third_place, consolation_type, consolation_teams, weeks_by_round, league_season_id)
        VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10, $11)
        RETURNING *`,
-      [leagueId, season, playoffTeams, totalRounds, startWeek, championshipWeek,
-       enableThirdPlace, consolationType, consolationTeams,
-       weeksByRound ? JSON.stringify(weeksByRound) : null, leagueSeasonId || null]
+      [
+        leagueId,
+        season,
+        playoffTeams,
+        totalRounds,
+        startWeek,
+        championshipWeek,
+        enableThirdPlace,
+        consolationType,
+        consolationTeams,
+        weeksByRound ? JSON.stringify(weeksByRound) : null,
+        leagueSeasonId || null,
+      ]
     );
     return playoffBracketFromDatabase(result.rows[0]);
   }
@@ -48,7 +58,11 @@ export class PlayoffRepository {
   /**
    * Find bracket by league and season
    */
-  async findByLeagueSeason(leagueId: number, season: number, leagueSeasonId?: number): Promise<PlayoffBracket | null> {
+  async findByLeagueSeason(
+    leagueId: number,
+    season: number,
+    leagueSeasonId?: number
+  ): Promise<PlayoffBracket | null> {
     if (leagueSeasonId) {
       const result = await this.db.query(
         'SELECT * FROM playoff_brackets WHERE league_season_id = $1',
@@ -118,10 +132,7 @@ export class PlayoffRepository {
    * Check if all required winners are set and mark bracket as completed if so.
    * Returns true if bracket was marked completed.
    */
-  async finalizeBracketIfComplete(
-    bracketId: number,
-    client?: PoolClient
-  ): Promise<boolean> {
+  async finalizeBracketIfComplete(bracketId: number, client?: PoolClient): Promise<boolean> {
     const db = client || this.db;
 
     // Get current bracket state
@@ -147,9 +158,8 @@ export class PlayoffRepository {
     const hasConsolation = bracket.consolation_winner_roster_id !== null;
 
     // All required winners must be present
-    const isComplete = hasChampion
-      && (!needsThirdPlace || hasThirdPlace)
-      && (!needsConsolation || hasConsolation);
+    const isComplete =
+      hasChampion && (!needsThirdPlace || hasThirdPlace) && (!needsConsolation || hasConsolation);
 
     if (isComplete) {
       await db.query(
@@ -196,7 +206,15 @@ export class PlayoffRepository {
          (bracket_id, roster_id, seed, regular_season_record, points_for, has_bye, bracket_type)
          VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING *`,
-        [bracketId, seed.rosterId, seed.seed, seed.regularSeasonRecord, seed.pointsFor, seed.hasBye, bracketType]
+        [
+          bracketId,
+          seed.rosterId,
+          seed.seed,
+          seed.regularSeasonRecord,
+          seed.pointsFor,
+          seed.hasBye,
+          bracketType,
+        ]
       );
       createdSeeds.push(playoffSeedFromDatabase(result.rows[0]));
     }
@@ -328,8 +346,8 @@ export class PlayoffRepository {
       bracketPosition,
       bracketType,
       null, // seriesId
-      1,    // seriesGame
-      1,    // seriesLength
+      1, // seriesGame
+      1, // seriesLength
       client
     );
   }
@@ -363,8 +381,21 @@ export class PlayoffRepository {
        ON CONFLICT (league_id, season, bracket_type, playoff_round, bracket_position, COALESCE(series_game, 1))
          WHERE is_playoff = true DO NOTHING
        RETURNING id`,
-      [leagueId, season, week, roster1Id, roster2Id, playoffRound, seed1, seed2,
-       bracketPosition, bracketType, seriesId, seriesGame, seriesLength]
+      [
+        leagueId,
+        season,
+        week,
+        roster1Id,
+        roster2Id,
+        playoffRound,
+        seed1,
+        seed2,
+        bracketPosition,
+        bracketType,
+        seriesId,
+        seriesGame,
+        seriesLength,
+      ]
     );
     // Return 0 if conflict (idempotent)
     return result.rows[0]?.id ?? 0;
@@ -432,6 +463,27 @@ export class PlayoffRepository {
       [leagueId, season, round, bracketType]
     );
     return (Number(result.rows[0].count) || 0) > 0;
+  }
+
+  /**
+   * Check if any matchups in the bracket have started or are finalized.
+   * Used as a guard against deleting/regenerating active playoffs.
+   */
+  async hasStartedMatchups(
+    leagueId: number,
+    season: number,
+    client?: PoolClient
+  ): Promise<boolean> {
+    const db = client || this.db;
+    const result = await db.query(
+      `SELECT EXISTS (
+         SELECT 1 FROM matchups
+         WHERE league_id = $1 AND season = $2 AND is_playoff = true
+         AND (is_final = true OR roster1_points > 0 OR roster2_points > 0)
+       )`,
+      [leagueId, season]
+    );
+    return result.rows[0].exists;
   }
 
   /**

@@ -9,12 +9,19 @@ import { LeagueRepository } from '../leagues.repository';
 import { LeagueSeasonRepository } from '../league-season.repository';
 import { LeagueSeason } from '../league-season.model';
 import { League } from '../leagues.model';
-import { NotFoundException, ValidationException, ConflictException, ForbiddenException } from '../../../utils/exceptions';
+import { LeagueOperationsRepository } from '../league-operations.repository';
+import {
+  NotFoundException,
+  ValidationException,
+  ConflictException,
+  ForbiddenException,
+} from '../../../utils/exceptions';
 
 export interface RolloverParams {
   leagueId: number;
   keeperDeadline?: Date;
   userId?: string; // For permission validation
+  idempotencyKey?: string;
 }
 
 export interface RolloverResult {
@@ -26,56 +33,79 @@ export class RolloverToNewSeasonUseCase {
   constructor(
     private readonly pool: Pool,
     private readonly leagueRepo: LeagueRepository,
-    private readonly leagueSeasonRepo: LeagueSeasonRepository
+    private readonly leagueSeasonRepo: LeagueSeasonRepository,
+    private readonly leagueOpsRepo: LeagueOperationsRepository
   ) {}
 
   async execute(params: RolloverParams): Promise<RolloverResult> {
     // Use LEAGUE lock domain (100M offset) - runWithLock manages transaction
     return runWithLock(this.pool, LockDomain.LEAGUE, params.leagueId, async (client) => {
+      // 0. Idempotency check
+      if (params.idempotencyKey && params.userId) {
+        const existingOp = await this.leagueOpsRepo.findByKey(
+          params.leagueId,
+          params.userId,
+          params.idempotencyKey,
+          client
+        );
+        if (existingOp) {
+          return existingOp.responseData as RolloverResult;
+        }
+      }
+
       // 1. Validate league exists and mode supports rollover
       const league = await this.leagueRepo.findById(params.leagueId, client);
-        if (!league) {
-          throw new NotFoundException('League not found');
-        }
+      if (!league) {
+        throw new NotFoundException('League not found');
+      }
 
-        // 1b. Validate commissioner permission
-        if (!params.userId) {
-          throw new ForbiddenException('userId is required for rollover');
-        }
-        const isCommish = await this.leagueRepo.isCommissioner(params.leagueId, params.userId);
-        if (!isCommish) {
-          throw new ForbiddenException('Only the commissioner can rollover a league season');
-        }
+      // 1b. Validate commissioner permission
+      if (!params.userId) {
+        throw new ForbiddenException('userId is required for rollover');
+      }
+      const isCommish = await this.leagueRepo.isCommissioner(params.leagueId, params.userId);
+      if (!isCommish) {
+        throw new ForbiddenException('Only the commissioner can rollover a league season');
+      }
 
-        if (league.mode === 'redraft') {
-          throw new ValidationException('Redraft leagues should use reset, not rollover. Rollover is for dynasty/keeper/devy leagues only.');
-        }
+      if (league.mode === 'redraft') {
+        throw new ValidationException(
+          'Redraft leagues should use reset, not rollover. Rollover is for dynasty/keeper/devy leagues only.'
+        );
+      }
 
-        // 2. Get current active season
-        const currentSeason = await this.leagueSeasonRepo.findActiveByLeague(params.leagueId, client);
-        if (!currentSeason) {
-          throw new NotFoundException('No active season found to rollover from');
-        }
+      // 2. Get current active season
+      const currentSeason = await this.leagueSeasonRepo.findActiveByLeague(params.leagueId, client);
+      if (!currentSeason) {
+        throw new NotFoundException('No active season found to rollover from');
+      }
 
-        // 3. Verify current season is in completable state
-        if (currentSeason.status === 'pre_draft') {
-          throw new ValidationException('Cannot rollover from pre_draft status. Complete the season first.');
-        }
+      // 3. Verify current season is in completable state
+      if (currentSeason.status === 'pre_draft') {
+        throw new ValidationException(
+          'Cannot rollover from pre_draft status. Complete the season first.'
+        );
+      }
 
-        // 4. Check if a newer season already exists
-        const latestSeasonNumber = await this.leagueSeasonRepo.getLatestSeasonNumber(params.leagueId, client);
-        if (latestSeasonNumber && latestSeasonNumber > currentSeason.season) {
-          throw new ConflictException('A newer season already exists. Cannot rollover again.');
-        }
+      // 4. Check if a newer season already exists
+      const latestSeasonNumber = await this.leagueSeasonRepo.getLatestSeasonNumber(
+        params.leagueId,
+        client
+      );
+      if (latestSeasonNumber && latestSeasonNumber > currentSeason.season) {
+        throw new ConflictException('A newer season already exists. Cannot rollover again.');
+      }
 
-        // 5. Mark previous season as completed
-        await this.leagueSeasonRepo.markCompleted(currentSeason.id, client);
+      // 5. Mark previous season as completed
+      await this.leagueSeasonRepo.markCompleted(currentSeason.id, client);
 
-        // 6. Create new season
-        const newSeasonYear = currentSeason.season + 1;
-        const keeperDeadline = params.keeperDeadline || new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+      // 6. Create new season
+      const newSeasonYear = currentSeason.season + 1;
+      const keeperDeadline =
+        params.keeperDeadline || new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
 
-        const newSeason = await this.leagueSeasonRepo.create({
+      const newSeason = await this.leagueSeasonRepo.create(
+        {
           leagueId: params.leagueId,
           season: newSeasonYear,
           status: 'pre_draft',
@@ -84,25 +114,38 @@ export class RolloverToNewSeasonUseCase {
           seasonSettings: {
             keeper_deadline: keeperDeadline.toISOString(),
             max_keepers: league.leagueSettings?.maxKeepers || 3,
-            keeper_costs_enabled: league.leagueSettings?.keeperCostsEnabled || false
-          }
-        }, client);
+            keeper_costs_enabled: league.leagueSettings?.keeperCostsEnabled || false,
+          },
+        },
+        client
+      );
 
-        // 7. Copy rosters to new season (preserve ownership, reset players)
-        await this.copyRostersToNewSeason(client, currentSeason.id, newSeason.id, params.leagueId);
+      // 7. Copy rosters to new season (preserve ownership, reset players)
+      await this.copyRostersToNewSeason(client, currentSeason.id, newSeason.id, params.leagueId);
 
-        // 8. Initialize waiver priorities (copy from previous season or inverse standings)
-        await this.initializeWaiverPriorities(client, newSeason.id, currentSeason.id, params.leagueId);
+      // 8. Initialize waiver priorities (copy from previous season or inverse standings)
+      await this.initializeWaiverPriorities(
+        client,
+        newSeason.id,
+        currentSeason.id,
+        params.leagueId
+      );
 
-        // 9. Initialize FAAB budgets (reset to default)
-        await this.initializeFAABBudgets(client, newSeason.id, league, params.leagueId);
+      // 9. Initialize FAAB budgets (reset to default)
+      await this.initializeFAABBudgets(client, newSeason.id, league, params.leagueId);
 
-        // 10. Migrate future draft pick assets to new season
-        await this.migrateDraftPickAssets(client, params.leagueId, newSeason.id, newSeasonYear, currentSeason.id);
+      // 10. Migrate future draft pick assets to new season
+      await this.migrateDraftPickAssets(
+        client,
+        params.leagueId,
+        newSeason.id,
+        newSeasonYear,
+        currentSeason.id
+      );
 
-        // 11. Update active season pointer + sync league-level fields
-        await client.query(
-          `UPDATE leagues
+      // 11. Update active season pointer + sync league-level fields
+      await client.query(
+        `UPDATE leagues
            SET active_league_season_id = $1,
                season = $2::text,
                current_week = 1,
@@ -110,13 +153,27 @@ export class RolloverToNewSeasonUseCase {
                season_status = 'pre_season',
                updated_at = CURRENT_TIMESTAMP
            WHERE id = $3`,
-          [newSeason.id, newSeasonYear, params.leagueId]
-        );
+        [newSeason.id, newSeasonYear, params.leagueId]
+      );
 
-      return {
+      const result = {
         newSeason,
-        previousSeason: currentSeason
+        previousSeason: currentSeason,
       };
+
+      // 12. Store idempotency result
+      if (params.idempotencyKey && params.userId) {
+        await this.leagueOpsRepo.create(
+          params.leagueId,
+          params.userId,
+          'rollover',
+          params.idempotencyKey,
+          result,
+          client
+        );
+      }
+
+      return result;
     });
   }
 
@@ -151,10 +208,9 @@ export class RolloverToNewSeasonUseCase {
     oldSeasonId: number,
     leagueId: number
   ): Promise<void> {
-    const newSeason = await client.query(
-      'SELECT season FROM league_seasons WHERE id = $1',
-      [newSeasonId]
-    );
+    const newSeason = await client.query('SELECT season FROM league_seasons WHERE id = $1', [
+      newSeasonId,
+    ]);
     const seasonYear = newSeason.rows[0].season;
 
     // Copy waiver priorities from end of previous season
@@ -180,10 +236,9 @@ export class RolloverToNewSeasonUseCase {
     league: League,
     leagueId: number
   ): Promise<void> {
-    const seasonYear = (await client.query(
-      'SELECT season FROM league_seasons WHERE id = $1',
-      [newSeasonId]
-    )).rows[0].season;
+    const seasonYear = (
+      await client.query('SELECT season FROM league_seasons WHERE id = $1', [newSeasonId])
+    ).rows[0].season;
 
     const initialBudget = league.leagueSettings?.faabBudget || 100;
 

@@ -87,6 +87,18 @@ export class PlayoffController {
   };
 
   /**
+   * DELETE /api/leagues/:leagueId/playoffs/bracket
+   * Delete playoff bracket (commissioner only)
+   */
+  deleteBracket = async (req: AuthRequest, res: Response) => {
+    const userId = requireUserId(req);
+    const leagueId = requireLeagueId(req);
+
+    await this.playoffService.deletePlayoffBracket(leagueId, userId);
+    res.status(200).json({ message: 'Playoff bracket deleted successfully' });
+  };
+
+  /**
    * GET /api/leagues/:leagueId/playoffs/bracket
    * Get playoff bracket
    */

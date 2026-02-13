@@ -19,7 +19,8 @@ export class PickActionHandler implements ActionHandler {
           ctx.leagueId,
           ctx.draftId,
           ctx.userId,
-          params.draftPickAssetId
+          params.draftPickAssetId,
+          ctx.idempotencyKey
         );
         return { ok: true, action: 'pick', data: { pick: result, isPickAsset: true } };
       }
@@ -29,7 +30,8 @@ export class PickActionHandler implements ActionHandler {
         ctx.leagueId,
         ctx.draftId,
         ctx.userId,
-        params.playerId
+        params.playerId,
+        ctx.idempotencyKey
       );
       return { ok: true, action: 'pick', data: { pick: result } };
     }

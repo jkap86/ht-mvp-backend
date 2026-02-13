@@ -9,8 +9,9 @@ import {
   CreateLeagueSeasonParams,
   UpdateLeagueSeasonParams,
   SeasonStatus,
-  PhaseStatus
+  PhaseStatus,
 } from './league-season.model';
+import { NotFoundException } from '../../utils/exceptions';
 
 export class LeagueSeasonRepository {
   constructor(private readonly pool: Pool) {}
@@ -20,10 +21,7 @@ export class LeagueSeasonRepository {
    */
   async findById(id: number, client?: PoolClient): Promise<LeagueSeason | null> {
     const executor = client || this.pool;
-    const result = await executor.query(
-      'SELECT * FROM league_seasons WHERE id = $1',
-      [id]
-    );
+    const result = await executor.query('SELECT * FROM league_seasons WHERE id = $1', [id]);
     return result.rows[0] ? LeagueSeason.fromDatabase(result.rows[0]) : null;
   }
 
@@ -58,6 +56,18 @@ export class LeagueSeasonRepository {
       [leagueId]
     );
     return result.rows[0] ? LeagueSeason.fromDatabase(result.rows[0]) : null;
+  }
+
+  /**
+   * Get the active (current) season for a league or throw if not found.
+   * Centralizes active season resolution to prevent drift.
+   */
+  async getActiveLeagueSeasonOrThrow(leagueId: number, client?: PoolClient): Promise<LeagueSeason> {
+    const season = await this.findActiveByLeague(leagueId, client);
+    if (!season) {
+      throw new NotFoundException(`No active season found for league ${leagueId}`);
+    }
+    return season;
   }
 
   /**
@@ -105,7 +115,7 @@ export class LeagueSeasonRepository {
         params.seasonStatus || 'pre_season',
         params.currentWeek || 1,
         JSON.stringify(params.seasonSettings || {}),
-        params.startedAt || null
+        params.startedAt || null,
       ]
     );
     return LeagueSeason.fromDatabase(result.rows[0]);
@@ -170,11 +180,7 @@ export class LeagueSeasonRepository {
   /**
    * Update season status
    */
-  async updateStatus(
-    id: number,
-    status: SeasonStatus,
-    client?: PoolClient
-  ): Promise<void> {
+  async updateStatus(id: number, status: SeasonStatus, client?: PoolClient): Promise<void> {
     const executor = client || this.pool;
     await executor.query(
       'UPDATE league_seasons SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',

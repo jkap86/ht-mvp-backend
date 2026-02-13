@@ -36,9 +36,19 @@ export class AuctionActionHandler implements ActionHandler {
       switch (action) {
         case 'nominate':
           if (auctionMode === 'fast') {
-            return await this.handleFastNominate(ctx.draftId, ctx.userId, params.playerId, params.idempotencyKey);
+            return await this.handleFastNominate(
+              ctx.draftId,
+              ctx.userId,
+              params.playerId,
+              ctx.idempotencyKey ?? params.idempotencyKey
+            );
           }
-          return await this.handleNominate(ctx.draftId, roster.id, params.playerId, params.idempotencyKey);
+          return await this.handleNominate(
+            ctx.draftId,
+            roster.id,
+            params.playerId,
+            ctx.idempotencyKey ?? params.idempotencyKey
+          );
 
         case 'set_max_bid':
           if (auctionMode === 'fast') {
@@ -47,10 +57,16 @@ export class AuctionActionHandler implements ActionHandler {
               ctx.userId,
               params.lotId,
               params.maxBid,
-              params.idempotencyKey
+              ctx.idempotencyKey ?? params.idempotencyKey
             );
           }
-          return await this.handleSetMaxBid(ctx.draftId, roster.id, params.lotId, params.maxBid, params.idempotencyKey);
+          return await this.handleSetMaxBid(
+            ctx.draftId,
+            roster.id,
+            params.lotId,
+            params.maxBid,
+            ctx.idempotencyKey ?? params.idempotencyKey
+          );
 
         default:
           throw new ValidationException(`AuctionActionHandler: Unknown action ${action}`);
@@ -72,8 +88,18 @@ export class AuctionActionHandler implements ActionHandler {
     }
   }
 
-  private async handleNominate(draftId: number, rosterId: number, playerId: number, idempotencyKey?: string): Promise<any> {
-    const result = await this.slowAuctionService.nominate(draftId, rosterId, playerId, idempotencyKey);
+  private async handleNominate(
+    draftId: number,
+    rosterId: number,
+    playerId: number,
+    idempotencyKey?: string
+  ): Promise<any> {
+    const result = await this.slowAuctionService.nominate(
+      draftId,
+      rosterId,
+      playerId,
+      idempotencyKey
+    );
 
     // Event publishing handled by SlowAuctionService (post-commit)
 
@@ -91,11 +117,21 @@ export class AuctionActionHandler implements ActionHandler {
     playerId: number,
     idempotencyKey?: string
   ): Promise<any> {
-    const result = await this.fastAuctionService.nominate(draftId, userId, playerId, idempotencyKey);
+    const result = await this.fastAuctionService.nominate(
+      draftId,
+      userId,
+      playerId,
+      idempotencyKey
+    );
 
     // Socket events are handled by FastAuctionService
 
-    return { ok: true, action: 'nominate', data: { lot: auctionLotToResponse(result.lot) }, message: result.message };
+    return {
+      ok: true,
+      action: 'nominate',
+      data: { lot: auctionLotToResponse(result.lot) },
+      message: result.message,
+    };
   }
 
   private async handleSetMaxBid(
@@ -105,7 +141,13 @@ export class AuctionActionHandler implements ActionHandler {
     maxBid: number,
     idempotencyKey?: string
   ): Promise<any> {
-    const result = await this.slowAuctionService.setMaxBid(draftId, lotId, rosterId, maxBid, idempotencyKey);
+    const result = await this.slowAuctionService.setMaxBid(
+      draftId,
+      lotId,
+      rosterId,
+      maxBid,
+      idempotencyKey
+    );
 
     // Event publishing handled by SlowAuctionService (post-commit)
 
@@ -128,7 +170,13 @@ export class AuctionActionHandler implements ActionHandler {
     maxBid: number,
     idempotencyKey?: string
   ): Promise<any> {
-    const result = await this.fastAuctionService.setMaxBid(draftId, userId, lotId, maxBid, idempotencyKey);
+    const result = await this.fastAuctionService.setMaxBid(
+      draftId,
+      userId,
+      lotId,
+      maxBid,
+      idempotencyKey
+    );
 
     // Socket events are handled by FastAuctionService
 

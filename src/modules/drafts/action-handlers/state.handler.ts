@@ -13,19 +13,35 @@ export class StateActionHandler implements ActionHandler {
   async handle(ctx: ActionContext, action: string, _params: Record<string, any>): Promise<any> {
     switch (action) {
       case 'start': {
-        const result = await this.draftService.startDraft(ctx.draftId, ctx.userId);
+        const result = await this.draftService.startDraft(
+          ctx.draftId,
+          ctx.userId,
+          ctx.idempotencyKey
+        );
         return { ok: true, action: 'start', data: { draft: result } };
       }
       case 'pause': {
-        const result = await this.draftService.pauseDraft(ctx.draftId, ctx.userId);
+        const result = await this.draftService.pauseDraft(
+          ctx.draftId,
+          ctx.userId,
+          ctx.idempotencyKey
+        );
         return { ok: true, action: 'pause', data: { draft: result } };
       }
       case 'resume': {
-        const result = await this.draftService.resumeDraft(ctx.draftId, ctx.userId);
+        const result = await this.draftService.resumeDraft(
+          ctx.draftId,
+          ctx.userId,
+          ctx.idempotencyKey
+        );
         return { ok: true, action: 'resume', data: { draft: result } };
       }
       case 'complete': {
-        const result = await this.draftService.completeDraft(ctx.draftId, ctx.userId);
+        const result = await this.draftService.completeDraft(
+          ctx.draftId,
+          ctx.userId,
+          ctx.idempotencyKey
+        );
         return { ok: true, action: 'complete', data: { draft: result } };
       }
       default:
