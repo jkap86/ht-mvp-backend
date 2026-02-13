@@ -26,9 +26,9 @@ export class ActivityController {
     const userId = requireUserId(req);
     const leagueId = requireLeagueId(req);
     const type = (req.query.type as ActivityType | 'all') || 'all';
-    const limit = parseInt(req.query.limit as string) || 50;
-    const offset = parseInt(req.query.offset as string) || 0;
-    const week = req.query.week ? parseInt(req.query.week as string) : undefined;
+    const limit = parseInt(req.query.limit as string, 10) || 50;
+    const offset = parseInt(req.query.offset as string, 10) || 0;
+    const week = req.query.week ? parseInt(req.query.week as string, 10) : undefined;
 
     await this.authorizationService.ensureLeagueMember(leagueId, userId);
 
@@ -49,9 +49,9 @@ export class ActivityController {
   getWeekActivity = async (req: AuthRequest, res: Response) => {
     const userId = requireUserId(req);
     const leagueId = requireLeagueId(req);
-    const week = parseInt(Array.isArray(req.params.week) ? req.params.week[0] : req.params.week);
+    const week = parseInt(Array.isArray(req.params.week) ? req.params.week[0] : req.params.week, 10);
     const type = (req.query.type as ActivityType | 'all') || 'all';
-    const limit = parseInt(req.query.limit as string) || 50;
+    const limit = parseInt(req.query.limit as string, 10) || 50;
 
     if (isNaN(week)) {
       return res.status(400).json({ error: 'Invalid week' });
@@ -74,9 +74,9 @@ export class ActivityController {
    */
   getRosterActivity = async (req: AuthRequest, res: Response) => {
     const userId = requireUserId(req);
-    const rosterId = parseInt(Array.isArray(req.params.rosterId) ? req.params.rosterId[0] : req.params.rosterId);
-    const limit = parseInt(req.query.limit as string) || 50;
-    const offset = parseInt(req.query.offset as string) || 0;
+    const rosterId = parseInt(Array.isArray(req.params.rosterId) ? req.params.rosterId[0] : req.params.rosterId, 10);
+    const limit = parseInt(req.query.limit as string, 10) || 50;
+    const offset = parseInt(req.query.offset as string, 10) || 0;
 
     if (isNaN(rosterId)) {
       return res.status(400).json({ error: 'Invalid rosterId' });

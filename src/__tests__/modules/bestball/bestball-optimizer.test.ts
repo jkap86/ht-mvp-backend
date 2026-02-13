@@ -11,7 +11,7 @@ describe('BestballOptimizer', () => {
   ): OptimizeInput => ({
     slotCounts,
     players,
-    pointsByPlayerId: new Map(Object.entries(points).map(([k, v]) => [parseInt(k), v])),
+    pointsByPlayerId: new Map(Object.entries(points).map(([k, v]) => [parseInt(k, 10), v])),
   });
 
   describe('basic assignment', () => {

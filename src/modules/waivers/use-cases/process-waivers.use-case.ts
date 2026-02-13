@@ -588,25 +588,42 @@ async function executeClaim(
 
   // Drop player first if specified
   if (claim.dropPlayerId) {
-    await mutationService.removePlayerFromRoster(
-      { rosterId: claim.rosterId, playerId: claim.dropPlayerId },
-      client
-    );
+    try {
+      await mutationService.removePlayerFromRoster(
+        { rosterId: claim.rosterId, playerId: claim.dropPlayerId },
+        client
+      );
 
-    // Record drop transaction
-    await ctx.transactionsRepo.create(
-      claim.leagueId,
-      claim.rosterId,
-      claim.dropPlayerId,
-      'drop',
-      claim.season,
-      claim.week,
-      undefined,
-      client
-    );
+      // Record drop transaction
+      await ctx.transactionsRepo.create(
+        claim.leagueId,
+        claim.rosterId,
+        claim.dropPlayerId,
+        'drop',
+        claim.season,
+        claim.week,
+        undefined,
+        client
+      );
 
-    // Add dropped player to waiver wire
-    await addToWaiverWire(ctx, claim.leagueId, claim.dropPlayerId, claim.rosterId, client);
+      // Add dropped player to waiver wire
+      await addToWaiverWire(ctx, claim.leagueId, claim.dropPlayerId, claim.rosterId, client);
+    } catch (err) {
+      // Player was already dropped manually - log warning and continue
+      // This handles the TOCTOU race where a player is dropped between claim submission and processing
+      if (err instanceof NotFoundException) {
+        logger.warn('Drop player not found during waiver processing - may have been dropped manually', {
+          claimId: claim.id,
+          rosterId: claim.rosterId,
+          dropPlayerId: claim.dropPlayerId,
+          error: err.message,
+        });
+        // Continue without drop - the claim will still be processed
+      } else {
+        // For other errors, re-throw
+        throw err;
+      }
+    }
   }
 
   // Add player to roster - ownership is validated in-memory before this call,

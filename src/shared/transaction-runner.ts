@@ -12,6 +12,7 @@
 import type { Pool, PoolClient } from 'pg';
 import { getLockId, LockDomain, type LockSpec } from './locks';
 import { tryGetEventBus } from './events';
+import { logger } from '../config/logger.config';
 
 /**
  * Pool interface for dependency injection.
@@ -154,8 +155,38 @@ export async function runWithLocks<T>(
         return a.id - b.id;
       });
 
+      // Remove duplicates (same domain and ID)
+      const uniqueLocks = sortedLocks.filter(
+        (lock, i, arr) =>
+          i === 0 ||
+          lock.domain !== arr[i - 1].domain ||
+          lock.id !== arr[i - 1].id
+      );
+
+      // Development validation: warn if original order wasn't optimal
+      if (process.env.NODE_ENV === 'development' && locks.length > 1) {
+        let isOptimal = true;
+        for (let i = 1; i < locks.length; i++) {
+          const prev = locks[i - 1];
+          const curr = locks[i];
+          if (
+            prev.domain > curr.domain ||
+            (prev.domain === curr.domain && prev.id > curr.id)
+          ) {
+            isOptimal = false;
+            break;
+          }
+        }
+        if (!isOptimal) {
+          logger.warn('Locks not in optimal order - they have been sorted to prevent deadlocks', {
+            originalOrder: locks.map(l => ({ domain: l.domain, id: l.id })),
+            sortedOrder: uniqueLocks.map(l => ({ domain: l.domain, id: l.id })),
+          });
+        }
+      }
+
       // Acquire all locks in order
-      for (const lock of sortedLocks) {
+      for (const lock of uniqueLocks) {
         const lockId = getLockId(lock.domain, lock.id);
         await client.query('SELECT pg_advisory_xact_lock($1)', [lockId]);
       }
@@ -244,7 +275,38 @@ export async function runTransaction<T>(
           }
           return a.id - b.id;
         });
-        for (const lock of sortedLocks) {
+
+        // Remove duplicates
+        const uniqueLocks = sortedLocks.filter(
+          (lock, i, arr) =>
+            i === 0 ||
+            lock.domain !== arr[i - 1].domain ||
+            lock.id !== arr[i - 1].id
+        );
+
+        // Development validation
+        if (process.env.NODE_ENV === 'development' && options.locks.length > 1) {
+          let isOptimal = true;
+          for (let i = 1; i < options.locks.length; i++) {
+            const prev = options.locks[i - 1];
+            const curr = options.locks[i];
+            if (
+              prev.domain > curr.domain ||
+              (prev.domain === curr.domain && prev.id > curr.id)
+            ) {
+              isOptimal = false;
+              break;
+            }
+          }
+          if (!isOptimal) {
+            logger.warn('Locks not in optimal order - they have been sorted to prevent deadlocks', {
+              originalOrder: options.locks.map(l => ({ domain: l.domain, id: l.id })),
+              sortedOrder: uniqueLocks.map(l => ({ domain: l.domain, id: l.id })),
+            });
+          }
+        }
+
+        for (const lock of uniqueLocks) {
           const lockId = getLockId(lock.domain, lock.id);
           await client.query('SELECT pg_advisory_xact_lock($1)', [lockId]);
         }

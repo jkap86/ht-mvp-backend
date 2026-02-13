@@ -66,26 +66,24 @@ export async function submitClaim(
   const season = parseInt(league.season, 10);
   const currentWeek = resolveLeagueCurrentWeek(league) ?? 1;
 
+  // Idempotency check OUTSIDE transaction to avoid unnecessary lock acquisition
+  if (idempotencyKey) {
+    const existingClaim = await ctx.claimsRepo.findByIdempotencyKey(
+      leagueId,
+      roster.id,
+      idempotencyKey
+    );
+    if (existingClaim) {
+      return existingClaim;
+    }
+  }
+
   // Execute in transaction with lock
   const claim = await runWithLock(
     ctx.db,
     LockDomain.WAIVER,
     leagueId,
     async (client) => {
-      // Idempotency check: return existing claim if same key was already used
-      if (idempotencyKey) {
-        const existing = await client.query(
-          `SELECT id FROM waiver_claims
-           WHERE league_id = $1 AND roster_id = $2 AND idempotency_key = $3`,
-          [leagueId, roster.id, idempotencyKey]
-        );
-        if (existing.rows.length > 0) {
-          const existingClaim = await ctx.claimsRepo.findByIdWithDetails(existing.rows[0].id);
-          if (existingClaim) {
-            return existingClaim;
-          }
-        }
-      }
 
       // Check if player is already owned (season-scoped)
       const playerOwner = await ctx.rosterPlayersRepo.findOwner(leagueId, request.playerId, client, league.activeLeagueSeasonId);
@@ -129,6 +127,14 @@ export async function submitClaim(
         if (!hasPlayer) {
           throw new ValidationException('You do not own the player to drop');
         }
+
+        // Lock the drop player to prevent manual drop between submission and processing
+        // This prevents TOCTOU race where user could drop the player manually after
+        // submitting the claim but before waivers process
+        await client.query(
+          'SELECT * FROM roster_players WHERE roster_id = $1 AND player_id = $2 FOR UPDATE',
+          [roster.id, request.dropPlayerId]
+        );
       }
 
       // Get priority snapshot for ALL claim types (used as tiebreaker in FAAB mode)

@@ -159,6 +159,47 @@ export class WaiverClaimsRepository {
   }
 
   /**
+   * Find claim by idempotency key with details
+   */
+  async findByIdempotencyKey(
+    leagueId: number,
+    rosterId: number,
+    idempotencyKey: string
+  ): Promise<WaiverClaimWithDetails | null> {
+    const result = await this.db.query(
+      `SELECT wc.*,
+        r.settings->>'team_name' as team_name,
+        u.username as username,
+        p.full_name as player_name,
+        p.position as player_position,
+        p.team as player_team,
+        dp.full_name as drop_player_name,
+        dp.position as drop_player_position
+      FROM waiver_claims wc
+      JOIN rosters r ON r.id = wc.roster_id
+      JOIN users u ON u.id = r.user_id
+      JOIN players p ON p.id = wc.player_id
+      LEFT JOIN players dp ON dp.id = wc.drop_player_id
+      WHERE wc.league_id = $1 AND wc.roster_id = $2 AND wc.idempotency_key = $3`,
+      [leagueId, rosterId, idempotencyKey]
+    );
+
+    if (result.rows.length === 0) return null;
+
+    const row = result.rows[0];
+    return {
+      ...waiverClaimFromDatabase(row),
+      teamName: row.team_name || `Team ${row.roster_id}`,
+      username: row.username || 'Unknown',
+      playerName: row.player_name || 'Unknown',
+      playerPosition: row.player_position,
+      playerTeam: row.player_team,
+      dropPlayerName: row.drop_player_name,
+      dropPlayerPosition: row.drop_player_position,
+    };
+  }
+
+  /**
    * Get pending claims for a roster with details, ordered by claim_order
    */
   async getPendingByRoster(rosterId: number, client?: PoolClient): Promise<WaiverClaimWithDetails[]> {

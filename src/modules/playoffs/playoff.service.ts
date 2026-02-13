@@ -83,7 +83,7 @@ export class PlayoffService {
     const totalRounds = calculateTotalRounds(config.playoffTeams);
 
     // Validate and process weeksByRound
-    let weeksByRound = config.weeksByRound ?? null;
+    const weeksByRound = config.weeksByRound ?? null;
     if (weeksByRound) {
       // Validate length matches totalRounds
       if (weeksByRound.length !== totalRounds) {

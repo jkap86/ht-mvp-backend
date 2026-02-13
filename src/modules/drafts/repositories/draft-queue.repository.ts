@@ -6,6 +6,7 @@
 
 import type { Pool, PoolClient } from 'pg';
 import { runInTransaction } from '../../../shared/transaction-runner';
+import { DraftStateError } from '../draft-state.error';
 
 export interface QueueEntry {
   id: number;
@@ -50,6 +51,10 @@ export class DraftQueueRepository {
   /**
    * Add a player or pick asset to the queue.
    * One of playerId or pickAssetId must be provided, but not both.
+   *
+   * @throws Error if neither or both IDs are provided
+   * @throws Error if the item is already in the queue (duplicate)
+   * @throws DraftStateError if the draft is completed
    */
   async addToQueue(
     draftId: number,
@@ -64,18 +69,49 @@ export class DraftQueueRepository {
       throw new Error('Cannot provide both playerId and pickAssetId');
     }
 
-    // Single query: calculate position and insert atomically
+    // Guard: Check if draft is completed
+    const draftStatusResult = await this.db.query(
+      'SELECT status FROM drafts WHERE id = $1',
+      [draftId]
+    );
+    if (draftStatusResult.rows.length > 0 && draftStatusResult.rows[0].status === 'completed') {
+      throw new DraftStateError(
+        'Cannot modify queue - draft is completed',
+        { draftId, status: 'completed' }
+      );
+    }
+
+    // Check for existing entry before insertion to provide better error message
+    const checkQuery = playerId
+      ? 'SELECT id, queue_position FROM draft_queue WHERE draft_id = $1 AND roster_id = $2 AND player_id = $3'
+      : 'SELECT id, queue_position FROM draft_queue WHERE draft_id = $1 AND roster_id = $2 AND pick_asset_id = $3';
+
+    const existingResult = await this.db.query(
+      checkQuery,
+      [draftId, rosterId, playerId || pickAssetId]
+    );
+
+    if (existingResult.rows.length > 0) {
+      const existingPosition = existingResult.rows[0].queue_position;
+      if (playerId) {
+        throw new Error(`Player ${playerId} is already in your draft queue at position ${existingPosition}`);
+      } else {
+        throw new Error(`Pick asset is already in your draft queue at position ${existingPosition}`);
+      }
+    }
+
+    // Insert with calculated position atomically
     const result = await this.db.query(
       `INSERT INTO draft_queue (draft_id, roster_id, player_id, pick_asset_id, queue_position)
        SELECT $1, $2, $3, $4, COALESCE(MAX(queue_position), 0) + 1
        FROM draft_queue WHERE draft_id = $1 AND roster_id = $2
-       ON CONFLICT DO NOTHING
        RETURNING *`,
       [draftId, rosterId, playerId || null, pickAssetId || null]
     );
 
     if (result.rows.length === 0) {
-      throw new Error(playerId ? 'Player already in queue' : 'Pick asset already in queue');
+      // This should not happen given the check above, but handle as safety net
+      throw new Error('Failed to add item to queue');
     }
 
     const row = result.rows[0];

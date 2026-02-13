@@ -5,6 +5,7 @@ import { parseWaiverSettings } from '../modules/waivers/waivers.model';
 import { tryGetEventBus, EventTypes } from '../shared/events';
 import { getLockId, LockDomain } from '../shared/locks';
 import { logger } from '../config/logger.config';
+import { isCurrentTimeMatch, utcWeekdayToLuxonWeekday } from '../shared/utils/timezone.utils';
 
 /**
  * LOCK CONTRACT:
@@ -24,14 +25,24 @@ const CHECK_INTERVAL_MS = 60000; // 1 minute
 const WAIVER_PROCESSING_LOCK_ID = getLockId(LockDomain.JOB, 2);
 
 /**
- * Check if the current time matches the waiver processing time for the given settings
+ * Check if the current time matches the waiver processing time for the given settings.
+ *
+ * @param waiverDay - UTC weekday (0-6, Sunday-Saturday) - LEGACY: for backward compatibility
+ * @param waiverHour - Hour in league's timezone (0-23)
+ * @param timezone - IANA timezone name (e.g., 'America/New_York')
+ * @returns True if current time matches waiver processing time in the league's timezone
  */
-function shouldProcessWaivers(waiverDay: number, waiverHour: number): boolean {
-  const now = new Date();
-  const currentDay = now.getUTCDay(); // 0 = Sunday, 1 = Monday, etc.
-  const currentHour = now.getUTCHours();
+function shouldProcessWaivers(
+  waiverDay: number,
+  waiverHour: number,
+  timezone: string = 'America/New_York'
+): boolean {
+  // Convert UTC weekday to Luxon weekday for timezone-aware comparison
+  const luxonWeekday = utcWeekdayToLuxonWeekday(waiverDay);
 
-  return currentDay === waiverDay && currentHour === waiverHour;
+  // Check if current time in league's timezone matches target weekday/hour
+  // Use 60-minute tolerance to ensure we don't miss processing window
+  return isCurrentTimeMatch(luxonWeekday, waiverHour, timezone, 60);
 }
 
 /**
@@ -65,15 +76,16 @@ async function processWaivers(): Promise<void> {
     try {
       const waiversService = container.resolve<WaiversService>(KEYS.WAIVERS_SERVICE);
 
-      // Get all active leagues with waiver settings
+      // Get all active leagues with waiver settings and timezone
       const leaguesResult = await client.query<{
         id: number;
         settings: any;
         status: string;
         season: string;
         current_week: number | null;
+        timezone: string;
       }>(`
-        SELECT id, settings, status, season, current_week
+        SELECT id, settings, status, season, current_week, timezone
         FROM leagues
         WHERE status IN ('active', 'in_progress')
         AND settings->>'waiver_type' IS NOT NULL
@@ -89,8 +101,9 @@ async function processWaivers(): Promise<void> {
             continue;
           }
 
-          // Check if current time matches waiver processing time
-          if (!shouldProcessWaivers(waiverSettings.waiverDay, waiverSettings.waiverHour)) {
+          // Check if current time matches waiver processing time in league's timezone
+          const leagueTimezone = league.timezone || 'America/New_York';
+          if (!shouldProcessWaivers(waiverSettings.waiverDay, waiverSettings.waiverHour, leagueTimezone)) {
             continue;
           }
 

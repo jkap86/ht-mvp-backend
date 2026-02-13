@@ -112,11 +112,43 @@ const LOCK_NAMESPACE_OFFSET: Record<LockDomain, number> = {
 };
 
 /**
+ * Maximum safe ID value that can be used with lock offsets.
+ * Leaves room for the largest offset (900M) plus the ID.
+ */
+const MAX_SAFE_LOCK_ID = Number.MAX_SAFE_INTEGER - 1_000_000_000;
+
+/**
  * Generates a deterministic lock ID from domain and entity ID.
  * Uses namespace offset + entity ID to avoid collisions.
+ *
+ * @param domain - Lock domain from LockDomain enum
+ * @param id - Entity ID to lock (must be non-negative and within safe integer range)
+ * @returns Lock ID combining domain offset and entity ID
+ * @throws Error if ID is negative, exceeds safe range, or causes integer overflow
  */
 export function getLockId(domain: LockDomain, id: number): number {
-  return LOCK_NAMESPACE_OFFSET[domain] + id;
+  // Validate ID is non-negative
+  if (id < 0) {
+    throw new Error(`Lock ID must be non-negative: ${id}`);
+  }
+
+  // Validate ID won't overflow when added to offset
+  if (id > MAX_SAFE_LOCK_ID) {
+    throw new Error(
+      `Lock ID too large: ${id}. Maximum safe ID: ${MAX_SAFE_LOCK_ID}`
+    );
+  }
+
+  const lockId = LOCK_NAMESPACE_OFFSET[domain] + id;
+
+  // Double-check the result is a safe integer (safety net)
+  if (!Number.isSafeInteger(lockId)) {
+    throw new Error(
+      `Lock ID overflow: domain ${LockDomain[domain]} (offset ${LOCK_NAMESPACE_OFFSET[domain]}) + id ${id} = ${lockId} exceeds safe integer range`
+    );
+  }
+
+  return lockId;
 }
 
 /**

@@ -274,7 +274,7 @@ describe('PlayoffService', () => {
       mockPlayoffRepo.roundMatchupsExistForType.mockResolvedValue(false);
       // Mock getSeriesMatchups to return matchup info with bracket_position
       mockPlayoffRepo.getSeriesMatchups.mockImplementation((seriesId: string) => {
-        const matchId = parseInt(seriesId.replace('series-', ''));
+        const matchId = parseInt(seriesId.replace('series-', ''), 10);
         const matchup = round1Matchups.find(m => m.id === matchId);
         return Promise.resolve(matchup ? [matchup] : []);
       });
@@ -716,7 +716,7 @@ describe('PlayoffService', () => {
       mockPlayoffRepo.getSeedsByType.mockResolvedValue(mockWinnersSeeds);
       // Mock getSeriesMatchups for bracket position lookup
       mockPlayoffRepo.getSeriesMatchups.mockImplementation((seriesId: string) => {
-        const idx = parseInt(seriesId.replace('series-', '')) - 1;
+        const idx = parseInt(seriesId.replace('series-', ''), 10) - 1;
         return Promise.resolve([{ bracket_position: idx + 1 }]);
       });
       mockPlayoffRepo.createPlayoffMatchupWithSeries.mockResolvedValue(1);
@@ -785,7 +785,7 @@ describe('PlayoffService', () => {
       mockPlayoffRepo.getSeedsByType.mockResolvedValue(mockWinnersSeeds);
       // Mock getSeriesMatchups for bracket position lookup
       mockPlayoffRepo.getSeriesMatchups.mockImplementation((seriesId: string) => {
-        const idx = parseInt(seriesId.replace('series-', '')) - 1;
+        const idx = parseInt(seriesId.replace('series-', ''), 10) - 1;
         return Promise.resolve([{ bracket_position: idx + 1 }]);
       });
       mockPlayoffRepo.createPlayoffMatchupWithSeries.mockResolvedValue(1);

@@ -16,6 +16,7 @@ import { finalizeDraftCompletion } from './draft-completion.utils';
 import { runInDraftTransaction } from '../../shared/locks';
 import { container, KEYS } from '../../container';
 import { isInPauseWindow } from '../../shared/utils/time-utils';
+import { DraftStateError } from './draft-state.error';
 
 /** Snake_case API response for a player pick */
 export interface DraftPickResponse {
@@ -179,7 +180,21 @@ export class DraftPickService {
         }
 
         if (draft.status !== 'in_progress') {
-          throw new ValidationException('Draft is not in progress');
+          throw new DraftStateError(
+            `Cannot make pick - draft is ${draft.status}`,
+            { draftId, status: draft.status }
+          );
+        }
+
+        // Guard: Haven't exceeded total picks
+        const draftOrderForCheck = await this.draftRepo.getDraftOrderWithClient(client, draftId);
+        const settings = draft.settings as DraftSettings;
+        const totalPicks = settings.rounds * draftOrderForCheck.length;
+        if (draft.currentPick > totalPicks) {
+          throw new DraftStateError(
+            `Cannot make pick - draft is complete (${draft.currentPick}/${totalPicks})`,
+            { draftId, currentPickNumber: draft.currentPick, totalPicks }
+          );
         }
 
         // Validate scheduled start time has passed
@@ -426,7 +441,21 @@ export class DraftPickService {
         }
 
         if (draft.status !== 'in_progress') {
-          throw new ValidationException('Draft is not in progress');
+          throw new DraftStateError(
+            `Cannot make pick - draft is ${draft.status}`,
+            { draftId, status: draft.status }
+          );
+        }
+
+        // Guard: Haven't exceeded total picks
+        const draftOrderForAssetCheck = await this.draftRepo.getDraftOrderWithClient(client, draftId);
+        const assetSettings = draft.settings as DraftSettings;
+        const assetTotalPicks = assetSettings.rounds * draftOrderForAssetCheck.length;
+        if (draft.currentPick > assetTotalPicks) {
+          throw new DraftStateError(
+            `Cannot make pick - draft is complete (${draft.currentPick}/${assetTotalPicks})`,
+            { draftId, currentPickNumber: draft.currentPick, totalPicks: assetTotalPicks }
+          );
         }
 
         // Validate scheduled start time has passed
