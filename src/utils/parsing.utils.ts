@@ -5,7 +5,7 @@
  * for parsing string values from requests.
  */
 
-import { ValidationException } from '../shared/exceptions/validation.exception';
+import { ValidationException } from './exceptions';
 
 /**
  * Safely parse an ID from a string with validation.

@@ -189,7 +189,7 @@ export class DraftPickService {
         // Guard: Haven't exceeded total picks
         const draftOrderForCheck = await this.draftRepo.getDraftOrderWithClient(client, draftId);
         const settings = draft.settings as DraftSettings;
-        const totalPicks = settings.rounds * draftOrderForCheck.length;
+        const totalPicks = draft.rounds * draftOrderForCheck.length;
         if (draft.currentPick > totalPicks) {
           throw new DraftStateError(
             `Cannot make pick - draft is complete (${draft.currentPick}/${totalPicks})`,
@@ -450,7 +450,7 @@ export class DraftPickService {
         // Guard: Haven't exceeded total picks
         const draftOrderForAssetCheck = await this.draftRepo.getDraftOrderWithClient(client, draftId);
         const assetSettings = draft.settings as DraftSettings;
-        const assetTotalPicks = assetSettings.rounds * draftOrderForAssetCheck.length;
+        const assetTotalPicks = draft.rounds * draftOrderForAssetCheck.length;
         if (draft.currentPick > assetTotalPicks) {
           throw new DraftStateError(
             `Cannot make pick - draft is complete (${draft.currentPick}/${assetTotalPicks})`,

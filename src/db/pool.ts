@@ -39,7 +39,7 @@ export function getPoolHealth(): PoolHealth {
 }
 
 // Wrap pool.query to measure timing and log slow queries with context
-const originalQuery = pool.query.bind(pool);
+const originalQuery = pool.query.bind(pool) as (...args: any[]) => any;
 
 // Create a type-safe wrapper function using rest parameters to preserve all overloads
 // This handles promise-based, callback-based, and streaming query variants
