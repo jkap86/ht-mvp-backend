@@ -11,6 +11,7 @@ import { closeRedis } from './config/redis.config';
 import { requestTimingMiddleware } from './middleware/request-timing.middleware';
 import { requestIdMiddleware } from './middleware/request-id.middleware';
 import { poolHealthMiddleware } from './middleware/pool-health.middleware';
+import { idempotencyMiddleware } from './idempotency.middleware';
 // Bootstrap DI container (auto-runs on import, must be before routes)
 import './bootstrap';
 import routes from './routes';
@@ -24,7 +25,10 @@ import { startSlowAuctionJob, stopSlowAuctionJob } from './jobs/slow-auction.job
 import { startTradeExpirationJob, stopTradeExpirationJob } from './jobs/trade-expiration.job';
 import { startWaiverProcessingJob, stopWaiverProcessingJob } from './jobs/waiver-processing.job';
 import { startStatsSyncJob, stopStatsSyncJob } from './jobs/stats-sync.job';
-import { startIdempotencyCleanupJob, stopIdempotencyCleanupJob } from './jobs/idempotency-cleanup.job';
+import {
+  startIdempotencyCleanupJob,
+  stopIdempotencyCleanupJob,
+} from './jobs/idempotency-cleanup.job';
 import { Pool } from 'pg';
 import { container, KEYS } from './container';
 
@@ -70,10 +74,11 @@ app.use(
   })
 );
 app.use(cors(corsOptions));
-app.use(express.json({ limit: '50kb' })); // Limit payload size to prevent DoS
+app.use(express.json({ limit: '1mb' })); // Limit payload size to prevent DoS (increased from 50kb for larger ops)
 app.use(requestIdMiddleware); // Add request ID for distributed tracing
 app.use(requestTimingMiddleware);
 app.use(poolHealthMiddleware); // Circuit breaker: reject requests when pool is exhausted
+app.use(idempotencyMiddleware); // Handle x-idempotency-key for safe retries
 
 // Routes
 app.use('/api', routes);
@@ -93,7 +98,10 @@ const server = createServer(app);
     await initializeSocket(server);
 
     server.listen(PORT, '0.0.0.0', () => {
-      logger.info('MVP Backend started', { port: PORT, healthCheck: `http://localhost:${PORT}/api/health` });
+      logger.info('MVP Backend started', {
+        port: PORT,
+        healthCheck: `http://localhost:${PORT}/api/health`,
+      });
 
       // Start background jobs if enabled (for multi-instance deployments, only one instance should run jobs)
       if (env.RUN_JOBS) {

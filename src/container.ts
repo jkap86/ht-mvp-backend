@@ -2,12 +2,21 @@ import { ValidationException } from './utils/exceptions';
 
 type Factory<T> = () => T;
 
+export interface IModule {
+  register(container: Container): void;
+}
+
 class Container {
   private factories = new Map<string, Factory<unknown>>();
   private instances = new Map<string, unknown>();
 
   register<T>(key: string, factory: Factory<T>): void {
     this.factories.set(key, factory);
+  }
+
+  // Allow modules to register their own dependencies
+  registerModule(module: IModule): void {
+    module.register(this);
   }
 
   resolve<T>(key: string): T {
