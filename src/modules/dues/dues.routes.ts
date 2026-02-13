@@ -3,6 +3,8 @@ import { DuesController } from './dues.controller';
 import { DuesService } from './dues.service';
 import { container, KEYS } from '../../container';
 import { asyncHandler } from '../../shared/async-handler';
+import { resolveSeasonContext } from '../../middleware/season-context.middleware';
+import { seasonWriteGuard } from '../../middleware/season-write-guard.middleware';
 
 /**
  * Creates dues routes that are mounted under /api/leagues/:leagueId/dues
@@ -14,6 +16,10 @@ export function createDuesRoutes(): Router {
   const duesController = new DuesController(duesService);
 
   const router = Router({ mergeParams: true });
+
+  // Resolve season context and guard writes to completed seasons
+  router.use(resolveSeasonContext);
+  router.use(seasonWriteGuard);
 
   // GET /api/leagues/:leagueId/dues - Get dues overview
   router.get('/', asyncHandler(duesController.getDuesOverview));

@@ -21,8 +21,9 @@ export class DuesController {
   getDuesOverview = async (req: AuthRequest, res: Response) => {
     const userId = requireUserId(req);
     const leagueId = requireLeagueId(req);
+    const leagueSeasonId = req.leagueSeasonId;
 
-    const overview = await this.duesService.getDuesOverview(leagueId, userId);
+    const overview = await this.duesService.getDuesOverview(leagueId, userId, leagueSeasonId);
 
     res.status(200).json({
       config: overview.config ? leagueDuesToResponse(overview.config) : null,
@@ -39,6 +40,7 @@ export class DuesController {
   upsertDuesConfig = async (req: AuthRequest, res: Response) => {
     const userId = requireUserId(req);
     const leagueId = requireLeagueId(req);
+    const leagueSeasonId = req.leagueSeasonId;
 
     const parsed = upsertDuesConfigSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -52,7 +54,7 @@ export class DuesController {
       notes: parsed.data.notes,
     };
 
-    const config = await this.duesService.upsertDuesConfig(leagueId, userId, input);
+    const config = await this.duesService.upsertDuesConfig(leagueId, userId, input, leagueSeasonId);
     res.status(200).json(leagueDuesToResponse(config));
   };
 
@@ -63,8 +65,9 @@ export class DuesController {
   deleteDuesConfig = async (req: AuthRequest, res: Response) => {
     const userId = requireUserId(req);
     const leagueId = requireLeagueId(req);
+    const leagueSeasonId = req.leagueSeasonId;
 
-    await this.duesService.deleteDuesConfig(leagueId, userId);
+    await this.duesService.deleteDuesConfig(leagueId, userId, leagueSeasonId);
     res.status(200).json({ message: 'Dues configuration deleted' });
   };
 
@@ -75,8 +78,9 @@ export class DuesController {
   getPaymentStatuses = async (req: AuthRequest, res: Response) => {
     const userId = requireUserId(req);
     const leagueId = requireLeagueId(req);
+    const leagueSeasonId = req.leagueSeasonId;
 
-    const payments = await this.duesService.getPaymentStatuses(leagueId, userId);
+    const payments = await this.duesService.getPaymentStatuses(leagueId, userId, leagueSeasonId);
     res.status(200).json(payments.map(duesPaymentWithRosterToResponse));
   };
 
@@ -87,6 +91,7 @@ export class DuesController {
   markPaymentStatus = async (req: AuthRequest, res: Response) => {
     const userId = requireUserId(req);
     const leagueId = requireLeagueId(req);
+    const leagueSeasonId = req.leagueSeasonId;
     const rosterId = parseIntParam(req.params.rosterId);
 
     if (isNaN(rosterId)) {
@@ -103,7 +108,8 @@ export class DuesController {
       rosterId,
       userId,
       parsed.data.is_paid,
-      parsed.data.notes
+      parsed.data.notes,
+      leagueSeasonId
     );
 
     res.status(200).json(duesPaymentToResponse(payment));

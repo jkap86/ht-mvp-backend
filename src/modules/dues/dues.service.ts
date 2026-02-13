@@ -44,23 +44,23 @@ export class DuesService {
   /**
    * Get dues configuration for a league
    */
-  async getDuesConfig(leagueId: number): Promise<LeagueDues | null> {
-    return this.duesRepo.getDuesConfig(leagueId);
+  async getDuesConfig(leagueId: number, leagueSeasonId?: number): Promise<LeagueDues | null> {
+    return this.duesRepo.getDuesConfig(leagueId, leagueSeasonId);
   }
 
   /**
    * Get full dues overview including payments and summary
    */
-  async getDuesOverview(leagueId: number, userId: string): Promise<DuesOverview> {
+  async getDuesOverview(leagueId: number, userId: string, leagueSeasonId?: number): Promise<DuesOverview> {
     // Verify user is a league member
     const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
     if (!isMember) {
       throw new ForbiddenException('Only league members can view dues information');
     }
 
-    const config = await this.duesRepo.getDuesConfig(leagueId);
-    const payments = await this.duesRepo.getPaymentStatuses(leagueId);
-    const summary = await this.duesRepo.getPaymentSummary(leagueId);
+    const config = await this.duesRepo.getDuesConfig(leagueId, leagueSeasonId);
+    const payments = await this.duesRepo.getPaymentStatuses(leagueId, leagueSeasonId);
+    const summary = await this.duesRepo.getPaymentSummary(leagueId, leagueSeasonId);
 
     const buyInAmount = config?.buyInAmount || 0;
     const totalPot = buyInAmount * summary.totalCount;
@@ -95,7 +95,8 @@ export class DuesService {
   async upsertDuesConfig(
     leagueId: number,
     userId: string,
-    input: DuesConfigInput
+    input: DuesConfigInput,
+    leagueSeasonId?: number
   ): Promise<LeagueDues> {
     // Verify user is commissioner
     const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
@@ -119,6 +120,7 @@ export class DuesService {
 
     return this.duesRepo.upsertDuesConfig({
       leagueId,
+      leagueSeasonId,
       buyInAmount: input.buyInAmount,
       payoutStructure: input.payoutStructure,
       currency: input.currency,
@@ -129,14 +131,14 @@ export class DuesService {
   /**
    * Delete dues configuration (commissioner only)
    */
-  async deleteDuesConfig(leagueId: number, userId: string): Promise<void> {
+  async deleteDuesConfig(leagueId: number, userId: string, leagueSeasonId?: number): Promise<void> {
     // Verify user is commissioner
     const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
     if (!isCommissioner) {
       throw new ForbiddenException('Only the commissioner can delete dues configuration');
     }
 
-    const deleted = await this.duesRepo.deleteDuesConfig(leagueId);
+    const deleted = await this.duesRepo.deleteDuesConfig(leagueId, leagueSeasonId);
     if (!deleted) {
       throw new NotFoundException('Dues configuration not found');
     }
@@ -145,14 +147,14 @@ export class DuesService {
   /**
    * Get all payment statuses for a league
    */
-  async getPaymentStatuses(leagueId: number, userId: string): Promise<DuesPaymentWithRoster[]> {
+  async getPaymentStatuses(leagueId: number, userId: string, leagueSeasonId?: number): Promise<DuesPaymentWithRoster[]> {
     // Verify user is a league member
     const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
     if (!isMember) {
       throw new ForbiddenException('Only league members can view payment statuses');
     }
 
-    return this.duesRepo.getPaymentStatuses(leagueId);
+    return this.duesRepo.getPaymentStatuses(leagueId, leagueSeasonId);
   }
 
   /**
@@ -163,7 +165,8 @@ export class DuesService {
     rosterId: number,
     userId: string,
     isPaid: boolean,
-    notes?: string | null
+    notes?: string | null,
+    leagueSeasonId?: number
   ): Promise<DuesPayment> {
     // Verify user is commissioner
     const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
@@ -172,7 +175,7 @@ export class DuesService {
     }
 
     // Verify dues config exists
-    const config = await this.duesRepo.getDuesConfig(leagueId);
+    const config = await this.duesRepo.getDuesConfig(leagueId, leagueSeasonId);
     if (!config) {
       throw new NotFoundException('Dues tracking is not enabled for this league');
     }
@@ -185,6 +188,7 @@ export class DuesService {
 
     const payment = await this.duesRepo.markPaymentStatus({
       leagueId,
+      leagueSeasonId,
       rosterId,
       isPaid,
       markedByUserId: userId,

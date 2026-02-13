@@ -9,6 +9,7 @@ export interface PayoutStructure {
 export interface LeagueDues {
   id: number;
   leagueId: number;
+  leagueSeasonId: number;
   buyInAmount: number;
   payoutStructure: PayoutStructure;
   currency: string;
@@ -20,6 +21,7 @@ export interface LeagueDues {
 export interface DuesPayment {
   id: number;
   leagueId: number;
+  leagueSeasonId: number;
   rosterId: number;
   isPaid: boolean;
   paidAt: Date | null;
@@ -38,6 +40,7 @@ export function leagueDuesFromDatabase(row: any): LeagueDues {
   return {
     id: row.id,
     leagueId: row.league_id,
+    leagueSeasonId: row.league_season_id,
     buyInAmount: parseFloat(row.buy_in_amount) || 0,
     payoutStructure: row.payout_structure || {},
     currency: row.currency || 'USD',
@@ -51,6 +54,7 @@ export function duesPaymentFromDatabase(row: any): DuesPayment {
   return {
     id: row.id,
     leagueId: row.league_id,
+    leagueSeasonId: row.league_season_id,
     rosterId: row.roster_id,
     isPaid: row.is_paid,
     paidAt: row.paid_at,
@@ -73,6 +77,7 @@ export function leagueDuesToResponse(dues: LeagueDues) {
   return {
     id: dues.id,
     league_id: dues.leagueId,
+    league_season_id: dues.leagueSeasonId,
     buy_in_amount: dues.buyInAmount,
     payout_structure: dues.payoutStructure,
     currency: dues.currency,
@@ -86,6 +91,7 @@ export function duesPaymentToResponse(payment: DuesPayment) {
   return {
     id: payment.id,
     league_id: payment.leagueId,
+    league_season_id: payment.leagueSeasonId,
     roster_id: payment.rosterId,
     is_paid: payment.isPaid,
     paid_at: payment.paidAt,
