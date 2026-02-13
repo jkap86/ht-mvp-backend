@@ -10,6 +10,12 @@ export type RosterPopulationStatus = 'pending' | 'complete' | 'failed';
 /** Draft phase values for workflow stage */
 export type DraftPhase = 'SETUP' | 'DERBY' | 'LIVE';
 
+/** Timeout behavior when fast auction nominator fails to nominate in time */
+export type FastAuctionTimeoutAction =
+  | 'auto_nominate_and_open_bid'
+  | 'auto_skip_nominator'
+  | 'auto_nominate_no_open_bid';
+
 /** Auction-specific settings stored in draft.settings */
 export interface AuctionSettings {
   auctionMode: 'slow' | 'fast';
@@ -22,6 +28,7 @@ export interface AuctionSettings {
   minBid: number;
   minIncrement: number;
   maxLotDurationSeconds?: number;
+  fastAuctionTimeoutAction?: FastAuctionTimeoutAction;
 }
 
 /** Player pool options for draft eligibility */

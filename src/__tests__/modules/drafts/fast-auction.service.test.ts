@@ -214,6 +214,7 @@ const mockSettings: FastAuctionSettings = {
   minBid: 1,
   minIncrement: 1,
   maxLotDurationSeconds: null,
+  fastAuctionTimeoutAction: 'auto_nominate_and_open_bid',
 };
 
 // Mock repositories
@@ -521,7 +522,7 @@ describe('FastAuctionService', () => {
         draft_id: 1,
         player_id: 100,
         nominator_roster_id: 1,
-        current_bid: 1,
+        current_bid: 5,
         current_bidder_roster_id: 1,
         bid_count: 0,
         bid_deadline: new Date(Date.now() + 60000),
@@ -530,17 +531,14 @@ describe('FastAuctionService', () => {
         winning_bid: null,
         created_at: new Date(),
         updated_at: new Date(),
+        player_full_name: 'Test Player',
       };
 
       runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
         const mockClient = {
           query: jest.fn().mockImplementation((sql: string) => {
-            // Idempotency check: find existing lot with same key
-            if (sql.includes('idempotency_key')) {
-              return { rows: [{ id: 1 }] };
-            }
-            // Fetch lot by id
-            if (sql.includes('SELECT * FROM auction_lots WHERE id')) {
+            // Idempotency check: JOIN query returning lot + player name
+            if (sql.includes('idempotency_key') && sql.includes('JOIN players')) {
               return { rows: [existingLotRow] };
             }
             return { rows: [] };
@@ -553,6 +551,8 @@ describe('FastAuctionService', () => {
 
       expect(result.lot).toBeDefined();
       expect(result.lot.id).toBe(1);
+      // Should return correct player name and bid from existing lot
+      expect(result.message).toBe('Test Player nominated for $5');
       // Should NOT create a new lot
       expect(mockLotRepo.createLotWithClient).not.toHaveBeenCalled();
     });
@@ -2229,6 +2229,334 @@ describe('FastAuctionService', () => {
         draftId: 1,
         leagueId: 1,
       });
+    });
+  });
+
+  describe('retry safety', () => {
+    it('should use ON CONFLICT for proxy bid INSERT in setNominatorAsOpeningBidder', async () => {
+      mockDraftRepo.findById.mockResolvedValue(mockFastDraft);
+      mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster as any);
+
+      const { runWithLock } = require('../../../shared/transaction-runner');
+
+      const capturedQueries: string[] = [];
+      const createdLot: AuctionLot = {
+        ...mockLot,
+        currentBidderRosterId: 1,
+        currentBid: 1,
+      };
+
+      runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        const mockClient = {
+          query: jest.fn().mockImplementation((sql: string) => {
+            capturedQueries.push(sql);
+            if (sql.includes('FROM drafts WHERE') && sql.includes('FOR UPDATE')) {
+              return {
+                rows: [{
+                  status: 'in_progress',
+                  settings: { auctionMode: 'fast', nominationSeconds: 60, minBid: 1, minIncrement: 1 },
+                  current_roster_id: 1,
+                }],
+              };
+            }
+            if (sql.includes('SELECT EXISTS')) {
+              return { rows: [{ exists: false }] };
+            }
+            return { rows: [], rowCount: 1 };
+          }),
+        };
+
+        mockLotRepo.hasActiveLotWithClient.mockResolvedValue(false);
+        mockPlayerRepo.findByIdWithClient.mockResolvedValue(mockPlayer as any);
+        mockLotRepo.findLotByDraftAndPlayerWithClient.mockResolvedValue(null);
+        mockLotRepo.getRosterBudgetDataWithClient.mockResolvedValue({
+          spent: 0, wonCount: 0, leadingCommitment: 0,
+        });
+        mockLeagueRepo.findById.mockResolvedValue(mockLeague);
+        mockLotRepo.createLotWithClient.mockResolvedValue(createdLot);
+
+        return fn(mockClient);
+      });
+
+      await service.nominate(1, 'user-1', 100);
+
+      // Verify proxy bid INSERT uses ON CONFLICT
+      const proxyBidQuery = capturedQueries.find(sql =>
+        sql.includes('auction_proxy_bids') && sql.includes('INSERT')
+      );
+      expect(proxyBidQuery).toBeDefined();
+      expect(proxyBidQuery).toContain('ON CONFLICT');
+    });
+
+    it('should use NOT EXISTS guard for bid history INSERT in setNominatorAsOpeningBidder', async () => {
+      mockDraftRepo.findById.mockResolvedValue(mockFastDraft);
+      mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster as any);
+
+      const { runWithLock } = require('../../../shared/transaction-runner');
+
+      const capturedQueries: string[] = [];
+      const createdLot: AuctionLot = {
+        ...mockLot,
+        currentBidderRosterId: 1,
+        currentBid: 1,
+      };
+
+      runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        const mockClient = {
+          query: jest.fn().mockImplementation((sql: string) => {
+            capturedQueries.push(sql);
+            if (sql.includes('FROM drafts WHERE') && sql.includes('FOR UPDATE')) {
+              return {
+                rows: [{
+                  status: 'in_progress',
+                  settings: { auctionMode: 'fast', nominationSeconds: 60, minBid: 1, minIncrement: 1 },
+                  current_roster_id: 1,
+                }],
+              };
+            }
+            if (sql.includes('SELECT EXISTS')) {
+              return { rows: [{ exists: false }] };
+            }
+            return { rows: [], rowCount: 1 };
+          }),
+        };
+
+        mockLotRepo.hasActiveLotWithClient.mockResolvedValue(false);
+        mockPlayerRepo.findByIdWithClient.mockResolvedValue(mockPlayer as any);
+        mockLotRepo.findLotByDraftAndPlayerWithClient.mockResolvedValue(null);
+        mockLotRepo.getRosterBudgetDataWithClient.mockResolvedValue({
+          spent: 0, wonCount: 0, leadingCommitment: 0,
+        });
+        mockLeagueRepo.findById.mockResolvedValue(mockLeague);
+        mockLotRepo.createLotWithClient.mockResolvedValue(createdLot);
+
+        return fn(mockClient);
+      });
+
+      await service.nominate(1, 'user-1', 100);
+
+      // Verify bid history INSERT uses NOT EXISTS guard
+      const bidHistoryQuery = capturedQueries.find(sql =>
+        sql.includes('auction_bid_history') && sql.includes('INSERT')
+      );
+      expect(bidHistoryQuery).toBeDefined();
+      expect(bidHistoryQuery).toContain('NOT EXISTS');
+    });
+  });
+
+  describe('fastAuctionTimeoutAction', () => {
+    it('auto_skip_nominator: skips lot creation and advances nominator', async () => {
+      const skipDraft = {
+        ...mockFastDraft,
+        settings: {
+          ...mockFastDraft.settings,
+          fastAuctionTimeoutAction: 'auto_skip_nominator' as const,
+        },
+      };
+      mockDraftRepo.findById.mockResolvedValue(skipDraft);
+
+      const { runWithLock } = require('../../../shared/transaction-runner');
+
+      let callCount = 0;
+      runWithLock.mockImplementation(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        callCount++;
+        if (callCount === 1) {
+          // autoNominate transaction: should return timeout_skip immediately
+          const mockClient = {
+            query: jest.fn().mockResolvedValue({ rows: [] }),
+          };
+          mockLotRepo.hasActiveLotWithClient.mockResolvedValue(false);
+          return fn(mockClient);
+        } else {
+          // advanceNominator transaction
+          const mockClient = {
+            query: jest.fn().mockImplementation((sql: string) => {
+              if (sql.includes('FROM drafts WHERE') && sql.includes('FOR UPDATE')) {
+                return {
+                  rows: [{
+                    id: 1,
+                    league_id: 1,
+                    status: 'in_progress',
+                    settings: { auctionMode: 'fast', nominationSeconds: 60, minBid: 1 },
+                    current_pick: 1,
+                  }],
+                };
+              }
+              if (sql.includes('FROM draft_order')) {
+                return {
+                  rows: [
+                    { roster_id: 1, draft_position: 1 },
+                    { roster_id: 2, draft_position: 2 },
+                  ],
+                };
+              }
+              if (sql.includes('FROM leagues WHERE')) {
+                return {
+                  rows: [{
+                    id: 1,
+                    league_settings: { auctionBudget: 200, rosterSlots: 15 },
+                  }],
+                };
+              }
+              if (sql.includes('UPDATE drafts')) {
+                return { rows: [], rowCount: 1 };
+              }
+              return { rows: [] };
+            }),
+          };
+
+          mockPlayerRepo.findRandomEligiblePlayerForAuction.mockResolvedValue(mockPlayer as any);
+          mockLotRepo.getAllRosterBudgetDataWithClient.mockResolvedValue(
+            new Map([
+              [1, { spent: 0, wonCount: 0, leadingCommitment: 0 }],
+              [2, { spent: 0, wonCount: 0, leadingCommitment: 0 }],
+            ])
+          );
+          mockLotRepo.getRosterBudgetDataWithClient.mockResolvedValue({
+            spent: 0, wonCount: 0, leadingCommitment: 0,
+          });
+
+          return fn(mockClient);
+        }
+      });
+
+      const result = await service.autoNominate(1);
+
+      expect(result).toBeNull();
+      // Should NOT create a lot
+      expect(mockLotRepo.createLotWithClient).not.toHaveBeenCalled();
+      // Should advance nominator with timeoutSkippedRosterId in event
+      expect(mockEventBus.publish).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'auction:nominator_changed',
+          payload: expect.objectContaining({
+            draftId: 1,
+            timeoutSkippedRosterId: 1,
+          }),
+        })
+      );
+    });
+
+    it('auto_nominate_no_open_bid: creates lot without opening bidder', async () => {
+      const noOpenBidDraft = {
+        ...mockFastDraft,
+        settings: {
+          ...mockFastDraft.settings,
+          fastAuctionTimeoutAction: 'auto_nominate_no_open_bid' as const,
+        },
+      };
+      mockDraftRepo.findById.mockResolvedValue(noOpenBidDraft);
+
+      const { runWithLock } = require('../../../shared/transaction-runner');
+
+      const createdLot: AuctionLot = {
+        ...mockLot,
+        currentBidderRosterId: null, // No opening bidder
+        currentBid: 1,
+      };
+
+      const capturedQueries: string[] = [];
+
+      runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        const mockClient = {
+          query: jest.fn().mockImplementation((sql: string) => {
+            capturedQueries.push(sql);
+            return { rows: [], rowCount: 1 };
+          }),
+        };
+
+        mockLotRepo.hasActiveLotWithClient.mockResolvedValue(false);
+        mockPlayerRepo.findRandomEligiblePlayerForAuction.mockResolvedValue(mockPlayer as any);
+        mockLotRepo.getRosterBudgetDataWithClient.mockResolvedValue({
+          spent: 0, wonCount: 0, leadingCommitment: 0,
+        });
+        mockLeagueRepo.findById.mockResolvedValue(mockLeague);
+        mockLotRepo.createLotWithClient.mockResolvedValue(createdLot);
+
+        return fn(mockClient);
+      });
+
+      const result = await service.autoNominate(1);
+
+      expect(result).not.toBeNull();
+      expect(result!.lot).toBeDefined();
+      // Lot should NOT have a current bidder
+      expect(result!.lot.currentBidderRosterId).toBeNull();
+      // Should create a lot
+      expect(mockLotRepo.createLotWithClient).toHaveBeenCalled();
+      // Should NOT have proxy bid INSERT (no setNominatorAsOpeningBidder called)
+      const proxyBidQuery = capturedQueries.find(sql =>
+        sql.includes('auction_proxy_bids') && sql.includes('INSERT')
+      );
+      expect(proxyBidQuery).toBeUndefined();
+      // Event should include isAutoNomination
+      expect(mockEventBus.publish).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'auction:lot_started',
+          payload: expect.objectContaining({
+            draftId: 1,
+            isAutoNomination: true,
+          }),
+        })
+      );
+    });
+
+    it('auto_nominate_and_open_bid (default): current behavior unchanged', async () => {
+      // Default behavior - no fastAuctionTimeoutAction set
+      mockDraftRepo.findById.mockResolvedValue(mockFastDraft);
+
+      const { runWithLock } = require('../../../shared/transaction-runner');
+
+      const createdLot: AuctionLot = {
+        ...mockLot,
+        currentBidderRosterId: 1,
+        currentBid: 1,
+      };
+
+      const capturedQueries: string[] = [];
+
+      runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        const mockClient = {
+          query: jest.fn().mockImplementation((sql: string) => {
+            capturedQueries.push(sql);
+            return { rows: [], rowCount: 1 };
+          }),
+        };
+
+        mockLotRepo.hasActiveLotWithClient.mockResolvedValue(false);
+        mockPlayerRepo.findRandomEligiblePlayerForAuction.mockResolvedValue(mockPlayer as any);
+        mockLotRepo.getRosterBudgetDataWithClient.mockResolvedValue({
+          spent: 0, wonCount: 0, leadingCommitment: 0,
+        });
+        mockLeagueRepo.findById.mockResolvedValue(mockLeague);
+        mockLotRepo.createLotWithClient.mockResolvedValue(createdLot);
+
+        return fn(mockClient);
+      });
+
+      const result = await service.autoNominate(1);
+
+      expect(result).not.toBeNull();
+      expect(result!.lot).toBeDefined();
+      // Lot should have nominator as current bidder (default behavior)
+      expect(result!.lot.currentBidderRosterId).toBe(1);
+      // Should create a lot
+      expect(mockLotRepo.createLotWithClient).toHaveBeenCalled();
+      // Should have proxy bid INSERT (setNominatorAsOpeningBidder was called)
+      const proxyBidQuery = capturedQueries.find(sql =>
+        sql.includes('auction_proxy_bids') && sql.includes('INSERT')
+      );
+      expect(proxyBidQuery).toBeDefined();
+      // Event should include isAutoNomination
+      expect(mockEventBus.publish).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'auction:lot_started',
+          payload: expect.objectContaining({
+            draftId: 1,
+            isAutoNomination: true,
+          }),
+        })
+      );
     });
   });
 });

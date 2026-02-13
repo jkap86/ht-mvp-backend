@@ -18,7 +18,7 @@ import {
 } from '../../../utils/exceptions';
 import { runWithLock, LockDomain } from '../../../shared/transaction-runner';
 import { logger } from '../../../config/logger.config';
-import { Draft } from '../drafts.model';
+import { Draft, FastAuctionTimeoutAction } from '../drafts.model';
 import { resolvePriceWithClient } from './auction-price-resolver';
 import { calculateMaxAffordableBid, canAffordMinBid } from './auction-budget-calculator';
 import { finalizeDraftCompletion } from '../draft-completion.utils';
@@ -44,6 +44,7 @@ export interface FastAuctionSettings {
   minBid: number;
   minIncrement: number;
   maxLotDurationSeconds: number | null;
+  fastAuctionTimeoutAction: FastAuctionTimeoutAction;
 }
 
 export interface FastAuctionState {
@@ -100,6 +101,7 @@ export class FastAuctionService {
       minBid: draft.settings?.minBid ?? 1,
       minIncrement: draft.settings?.minIncrement ?? 1,
       maxLotDurationSeconds: draft.settings?.maxLotDurationSeconds ?? null,
+      fastAuctionTimeoutAction: draft.settings?.fastAuctionTimeoutAction ?? 'auto_nominate_and_open_bid',
     };
   }
 
@@ -121,17 +123,24 @@ export class FastAuctionService {
       [nominatorRosterId, lot.id]
     );
 
-    // Insert proxy bid at starting bid
+    // Insert proxy bid at starting bid (ON CONFLICT for retry safety)
     await client.query(
       `INSERT INTO auction_proxy_bids (lot_id, roster_id, max_bid)
-       VALUES ($1, $2, $3)`,
+       VALUES ($1, $2, $3)
+       ON CONFLICT (lot_id, roster_id)
+       DO UPDATE SET max_bid = EXCLUDED.max_bid, updated_at = CURRENT_TIMESTAMP`,
       [lot.id, nominatorRosterId, startingBid]
     );
 
-    // Record opening bid in history
+    // Record opening bid in history (NOT EXISTS guard for retry safety)
     await client.query(
       `INSERT INTO auction_bid_history (lot_id, roster_id, bid_amount, is_proxy)
-       VALUES ($1, $2, $3, $4)`,
+       SELECT $1, $2, $3, $4
+       WHERE NOT EXISTS (
+         SELECT 1 FROM auction_bid_history
+         WHERE lot_id = $1 AND roster_id = $2 AND bid_amount = $3 AND is_proxy = false
+         LIMIT 1
+       )`,
       [lot.id, nominatorRosterId, startingBid, false]
     );
   }
@@ -191,16 +200,21 @@ export class FastAuctionService {
       draftId,
       async (client) => {
         // Idempotency check: return existing lot if same key was already used
+        // Uses JOIN to fetch player name and actual bid in a single query
         if (idempotencyKey) {
           const existing = await client.query(
-            `SELECT id FROM auction_lots WHERE draft_id = $1 AND nominator_roster_id = $2 AND idempotency_key = $3`,
+            `SELECT al.*, p.full_name AS player_full_name
+             FROM auction_lots al
+             JOIN players p ON p.id = al.player_id
+             WHERE al.draft_id = $1 AND al.nominator_roster_id = $2 AND al.idempotency_key = $3`,
             [draftId, roster.id, idempotencyKey]
           );
           if (existing.rows.length > 0) {
-            const lotResult = await client.query('SELECT * FROM auction_lots WHERE id = $1', [existing.rows[0].id]);
-            if (lotResult.rows.length > 0) {
-              return { lot: auctionLotFromDatabase(lotResult.rows[0]), playerName: '', openingBid: settings.minBid };
-            }
+            return {
+              lot: auctionLotFromDatabase(existing.rows[0]),
+              playerName: existing.rows[0].player_full_name,
+              openingBid: existing.rows[0].current_bid,
+            };
           }
         }
 
@@ -703,7 +717,7 @@ export class FastAuctionService {
    * If no teams can nominate (or no eligible players remain), triggers auction completion.
    * Uses transaction with advisory lock to prevent race conditions.
    */
-  async advanceNominator(draftId: number): Promise<void> {
+  async advanceNominator(draftId: number, timeoutSkippedRosterId?: number): Promise<void> {
     const result = await this.advanceNominatorInternal(draftId);
     if (!result) {
       return;
@@ -724,6 +738,7 @@ export class FastAuctionService {
         nominatorRosterId: result.nominatorRosterId,
         nominationNumber: result.nominationNumber,
         nominationDeadline: result.nominationDeadline!.toISOString(),
+        ...(timeoutSkippedRosterId != null && { timeoutSkippedRosterId }),
       },
     });
   }
@@ -788,6 +803,8 @@ export class FastAuctionService {
       return null;
     }
 
+    const timeoutAction = settings.fastAuctionTimeoutAction;
+
     // Use transaction with draft lock to prevent race conditions
     const result = await runWithLock(
       this.pool,
@@ -798,6 +815,11 @@ export class FastAuctionService {
         const hasActive = await this.lotRepo.hasActiveLotWithClient(client, draftId);
         if (hasActive) {
           return null; // Already has an active lot, nothing to do
+        }
+
+        // auto_skip_nominator: skip lot creation entirely, just advance
+        if (timeoutAction === 'auto_skip_nominator') {
+          return { skipReason: 'timeout_skip' as const, skippedRosterId: draft.currentRosterId! };
         }
 
         // Find a random available player using SQL-level filtering
@@ -866,9 +888,13 @@ export class FastAuctionService {
           league.activeLeagueSeasonId
         );
 
-        // Fast auction: Nominator becomes the leader at startingBid
-        await this.setNominatorAsOpeningBidder(client, lot, draft.currentRosterId!, settings.minBid);
-        lot.currentBidderRosterId = draft.currentRosterId!;
+        // auto_nominate_no_open_bid: create lot but skip opening bid
+        // Lot starts with currentBidderRosterId = NULL, settles as passed if nobody bids
+        if (timeoutAction !== 'auto_nominate_no_open_bid') {
+          // auto_nominate_and_open_bid (default): Nominator becomes the leader at startingBid
+          await this.setNominatorAsOpeningBidder(client, lot, draft.currentRosterId!, settings.minBid);
+          lot.currentBidderRosterId = draft.currentRosterId!;
+        }
 
         return { lot, playerName: randomPlayer.fullName, playerId: randomPlayer.id };
       }
@@ -881,11 +907,22 @@ export class FastAuctionService {
 
     // Handle skip cases - advance to next nominator after transaction
     if ('skipReason' in result) {
-      logger.info('Auto-nomination skipped, advancing nominator', {
+      const isTimeoutSkip = result.skipReason === 'timeout_skip';
+      if (isTimeoutSkip) {
+        logger.info('Nomination timeout: skipping nominator', {
+          draftId,
+          skippedRosterId: 'skippedRosterId' in result ? result.skippedRosterId : undefined,
+        });
+      } else {
+        logger.info('Auto-nomination skipped, advancing nominator', {
+          draftId,
+          skipReason: result.skipReason,
+        });
+      }
+      await this.advanceNominator(
         draftId,
-        skipReason: result.skipReason,
-      });
-      await this.advanceNominator(draftId);
+        isTimeoutSkip && 'skippedRosterId' in result ? result.skippedRosterId : undefined
+      );
       return null;
     }
 
