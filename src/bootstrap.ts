@@ -546,6 +546,7 @@ function bootstrap(): void {
         container.resolve(KEYS.SCORING_SERVICE),
         container.resolve(KEYS.PLAYER_REPO),
         container.resolve(KEYS.PLAYER_STATS_REPO),
+        container.resolve(KEYS.PLAYER_PROJECTIONS_REPO),
         container.resolve(KEYS.MEDIAN_SERVICE),
         container.resolve(KEYS.GAME_PROGRESS_SERVICE),
         container.resolve(KEYS.BESTBALL_SERVICE)

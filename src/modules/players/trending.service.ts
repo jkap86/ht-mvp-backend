@@ -5,6 +5,7 @@
 
 import { Pool, PoolClient } from 'pg';
 import { logger } from '../../config/logger.config';
+import { runInTransaction } from '../../shared/transaction-runner';
 
 export interface TrendingPlayer {
   playerId: number;
@@ -30,11 +31,7 @@ export class TrendingService {
    * Run this as a background job (daily or hourly)
    */
   async updateTrendingPlayers(): Promise<{ updated: number }> {
-    const client = await this.db.connect();
-
-    try {
-      await client.query('BEGIN');
-
+    return await runInTransaction(this.db, async (client) => {
       // Get transaction counts for last 24h and last week
       const transactions = await this.getRecentTransactions(client);
 
@@ -103,17 +100,9 @@ export class TrendingService {
         updated++;
       }
 
-      await client.query('COMMIT');
       logger.info(`Updated ${updated} trending players`);
-
       return { updated };
-    } catch (error) {
-      await client.query('ROLLBACK');
-      logger.error(`Failed to update trending players: ${error}`);
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   /**

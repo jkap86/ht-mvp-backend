@@ -102,6 +102,10 @@ export const SOCKET_EVENTS = {
   SCORING: {
     SCORES_UPDATED: 'scoring:scores_updated',
     WEEK_FINALIZED: 'scoring:week_finalized',
+    // Enhanced scoring events (v2) - include actual score data
+    SCORES_UPDATED_V2: 'scoring:scores_updated:v2',
+    SCORES_DELTA: 'scoring:scores_delta',
+    MATCHUP_SNAPSHOT: 'scoring:matchup_snapshot',
   },
 
   // Member events

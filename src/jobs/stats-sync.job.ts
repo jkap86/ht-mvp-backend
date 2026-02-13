@@ -2,12 +2,15 @@ import { Pool } from 'pg';
 import { container, KEYS } from '../container';
 import { StatsService } from '../modules/scoring/stats.service';
 import { ScoringService } from '../modules/scoring/scoring.service';
+import { ScoringPayloadBuilderService } from '../modules/scoring/scoring-payload-builder.service';
 import { MatchupsRepository } from '../modules/matchups/matchups.repository';
+import { LineupsRepository } from '../modules/lineups/lineups.repository';
 import { LineupService } from '../modules/lineups/lineups.service';
 import { LeagueRepository } from '../modules/leagues/leagues.repository';
 import { BestballService } from '../modules/bestball/bestball.service';
 import { LeaderLock } from '../shared/leader-lock';
 import { tryGetEventBus, EventTypes } from '../shared/events';
+import { tryGetSocketService } from '../socket/socket.service';
 import { getLockId, LockDomain } from '../shared/locks';
 import { logger } from '../config/logger.config';
 import { isInGameWindow, getOptimalSyncInterval, SYNC_INTERVALS } from '../utils/game-window';
@@ -61,7 +64,8 @@ function isPastThursdayLockTime(): boolean {
 }
 
 /**
- * Notify leagues with active matchups that scores have been updated
+ * Notify leagues with active matchups that scores have been updated.
+ * Emits BOTH old and new event formats for backward compatibility.
  */
 async function notifyLeaguesOfScoreUpdate(
   matchupsRepo: MatchupsRepository,
@@ -76,12 +80,37 @@ async function notifyLeaguesOfScoreUpdate(
     }
 
     const eventBus = tryGetEventBus();
+    const socketService = tryGetSocketService();
+
+    // Get scoring payload builder for enhanced v2 events
+    const lineupsRepo = container.resolve<LineupsRepository>(KEYS.LINEUPS_REPO);
+    const pool = container.resolve<Pool>(KEYS.POOL);
+    const payloadBuilder = new ScoringPayloadBuilderService(pool, matchupsRepo, lineupsRepo);
+
     for (const leagueId of leagueIds) {
+      // OLD EVENT: Emit via domain event bus for backward compatibility
+      // This maintains existing behavior for old frontend clients
       eventBus?.publish({
         type: EventTypes.SCORES_UPDATED,
         leagueId,
         payload: { week, matchups: [] },
       });
+
+      // NEW EVENT: Emit enhanced v2 payload directly via socket service
+      // This includes actual score data to eliminate frontend HTTP refetches
+      if (socketService) {
+        try {
+          const enhancedPayload = await payloadBuilder.buildLeagueScoresV2(
+            leagueId,
+            season,
+            week
+          );
+          socketService.emitScoresUpdatedV2(leagueId, enhancedPayload);
+        } catch (error) {
+          logger.warn(`Failed to build/emit enhanced payload for league ${leagueId}: ${error}`);
+          // Continue with other leagues even if one fails
+        }
+      }
     }
     logger.info(`Notified ${leagueIds.length} leagues of score updates for week ${week}`);
   } catch (error) {

@@ -136,6 +136,10 @@ export interface MatchupPlayerPerformance {
   slot: string;
   points: number;
   isStarter: boolean;
+  // Projection fields for live scoring
+  projectedPoints?: number; // Projected final points
+  gameStatus?: 'not_started' | 'in_progress' | 'final'; // Game status
+  remainingProjected?: number; // Projected points remaining (calculated)
 }
 
 /**
@@ -171,6 +175,9 @@ export function matchupWithLineupsToResponse(matchup: MatchupWithLineups) {
         slot: p.slot,
         points: p.points,
         is_starter: p.isStarter,
+        projected_points: p.projectedPoints ?? null,
+        game_status: p.gameStatus ?? null,
+        remaining_projected: p.remainingProjected ?? null,
       })),
     },
     team2: {
@@ -185,6 +192,9 @@ export function matchupWithLineupsToResponse(matchup: MatchupWithLineups) {
         slot: p.slot,
         points: p.points,
         is_starter: p.isStarter,
+        projected_points: p.projectedPoints ?? null,
+        game_status: p.gameStatus ?? null,
+        remaining_projected: p.remainingProjected ?? null,
       })),
     },
   };

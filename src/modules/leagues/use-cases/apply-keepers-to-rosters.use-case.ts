@@ -10,6 +10,7 @@ import { LeagueSeasonRepository } from '../league-season.repository';
 import { LeagueRepository } from '../leagues.repository';
 import { NotFoundException, ValidationException } from '../../../utils/exceptions';
 import { getMaxRosterSize } from '../../../shared/roster-defaults';
+import { runInTransaction } from '../../../shared/transaction-runner';
 
 export class ApplyKeepersToRostersUseCase {
   constructor(
@@ -20,11 +21,7 @@ export class ApplyKeepersToRostersUseCase {
   ) {}
 
   async execute(leagueSeasonId: number): Promise<{ playersAdded: number; assetsKept: number }> {
-    const client = await this.pool.connect();
-
-    try {
-      await client.query('BEGIN');
-
+    return await runInTransaction(this.pool, async (client) => {
       // 1. Verify season exists
       const season = await this.leagueSeasonRepo.findById(leagueSeasonId, client);
       if (!season) {
@@ -71,16 +68,8 @@ export class ApplyKeepersToRostersUseCase {
         }
       }
 
-      await client.query('COMMIT');
-
       return { playersAdded, assetsKept };
-
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   /**
@@ -90,11 +79,7 @@ export class ApplyKeepersToRostersUseCase {
     leagueSeasonId: number,
     rosterId: number
   ): Promise<{ playersAdded: number; assetsKept: number }> {
-    const client = await this.pool.connect();
-
-    try {
-      await client.query('BEGIN');
-
+    return await runInTransaction(this.pool, async (client) => {
       // 1. Verify season exists
       const season = await this.leagueSeasonRepo.findById(leagueSeasonId, client);
       if (!season) {
@@ -161,16 +146,8 @@ export class ApplyKeepersToRostersUseCase {
         }
       }
 
-      await client.query('COMMIT');
-
       return { playersAdded, assetsKept };
-
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   /**

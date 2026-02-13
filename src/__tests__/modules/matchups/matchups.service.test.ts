@@ -5,6 +5,7 @@ import { LeagueRepository, RosterRepository } from '../../../modules/leagues/lea
 import { ScoringService } from '../../../modules/scoring/scoring.service';
 import { PlayerRepository } from '../../../modules/players/players.repository';
 import { PlayerStatsRepository } from '../../../modules/scoring/scoring.repository';
+import { PlayerProjectionsRepository } from '../../../modules/scoring/projections.repository';
 import { GameProgressService } from '../../../modules/scoring/game-progress.service';
 import { MedianService } from '../../../modules/matchups/median.service';
 import { BestballService } from '../../../modules/bestball/bestball.service';
@@ -227,9 +228,20 @@ const createMockStatsRepo = (): jest.Mocked<PlayerStatsRepository> =>
     findByPlayersAndWeek: jest.fn(),
   }) as unknown as jest.Mocked<PlayerStatsRepository>;
 
+const createMockProjectionsRepo = (): jest.Mocked<PlayerProjectionsRepository> =>
+  ({
+    findByPlayerAndWeek: jest.fn().mockResolvedValue(null),
+    findByPlayersAndWeek: jest.fn().mockResolvedValue([]),
+    upsert: jest.fn(),
+    bulkUpsert: jest.fn(),
+  }) as unknown as jest.Mocked<PlayerProjectionsRepository>;
+
 const createMockGameProgressService = (): jest.Mocked<GameProgressService> =>
   ({
-    hasGamesInProgress: jest.fn(),
+    hasGamesInProgress: jest.fn().mockResolvedValue(false),
+    getWeekGameStatus: jest.fn().mockResolvedValue(new Map()),
+    getPercentRemaining: jest.fn().mockReturnValue(0),
+    areAllGamesComplete: jest.fn().mockResolvedValue(true),
   }) as unknown as jest.Mocked<GameProgressService>;
 
 const createMockMedianService = (): jest.Mocked<MedianService> =>
@@ -254,6 +266,7 @@ describe('MatchupService', () => {
   let scoringService: jest.Mocked<ScoringService>;
   let playerRepo: jest.Mocked<PlayerRepository>;
   let statsRepo: jest.Mocked<PlayerStatsRepository>;
+  let projectionsRepo: jest.Mocked<PlayerProjectionsRepository>;
   let gameProgressService: jest.Mocked<GameProgressService>;
   let medianService: jest.Mocked<MedianService>;
   let bestballService: jest.Mocked<BestballService>;
@@ -267,6 +280,7 @@ describe('MatchupService', () => {
     scoringService = createMockScoringService();
     playerRepo = createMockPlayerRepo();
     statsRepo = createMockStatsRepo();
+    projectionsRepo = createMockProjectionsRepo();
     gameProgressService = createMockGameProgressService();
     medianService = createMockMedianService();
     bestballService = createMockBestballService();
@@ -280,6 +294,7 @@ describe('MatchupService', () => {
       scoringService,
       playerRepo,
       statsRepo,
+      projectionsRepo,
       medianService,
       gameProgressService,
       bestballService

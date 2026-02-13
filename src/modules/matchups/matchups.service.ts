@@ -4,6 +4,7 @@ import type { LineupsRepository } from '../lineups/lineups.repository';
 import type { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
 import type { ScoringService } from '../scoring/scoring.service';
 import type { PlayerStatsRepository } from '../scoring/scoring.repository';
+import type { PlayerProjectionsRepository } from '../scoring/projections.repository';
 import type { GameProgressService } from '../scoring/game-progress.service';
 import type { ScoringRules } from '../scoring/scoring.model';
 import { normalizeLeagueScoringSettings } from '../scoring/scoring-settings-normalizer';
@@ -42,6 +43,7 @@ export class MatchupService {
     private readonly scoringService: ScoringService,
     private readonly playerRepo: PlayerRepository,
     private readonly statsRepo: PlayerStatsRepository,
+    private readonly projectionsRepo: PlayerProjectionsRepository,
     private readonly medianService?: MedianService,
     private readonly gameProgressService?: GameProgressService,
     private readonly bestballService?: BestballService
@@ -212,15 +214,36 @@ export class MatchupService {
     // Deduplicate player IDs before DB query to prevent duplicate fetches
     const uniquePlayerIds = [...new Set(allPlayerIds)];
 
-    // Fetch players and stats in parallel
-    const [players, stats] = await Promise.all([
+    // Fetch players, stats, and projections in parallel
+    const [players, stats, projections] = await Promise.all([
       this.playerRepo.findByIds(uniquePlayerIds),
       this.statsRepo.findByPlayersAndWeek(uniquePlayerIds, season, week),
+      this.projectionsRepo.findByPlayersAndWeek(uniquePlayerIds, season, week),
     ]);
 
     // Create maps for lookup
     const playerMap = new Map(players.map((p) => [p.id, p]));
     const statsMap = new Map(stats.map((s) => [s.playerId, s]));
+    const projectionsMap = new Map(projections.map((p) => [p.playerId, p]));
+
+    // Fetch game status for all teams if GameProgressService is available
+    let gameStatusMap: Map<string, { status: 'not_started' | 'in_progress' | 'final'; completionPercentage: number }> | undefined;
+    if (this.gameProgressService) {
+      const weekGameStatus = await this.gameProgressService.getWeekGameStatus(season, week);
+      gameStatusMap = new Map();
+      for (const [team, status] of weekGameStatus.entries()) {
+        let gameStatus: 'not_started' | 'in_progress' | 'final';
+        if (status.isComplete) {
+          gameStatus = 'final';
+        } else if (status.isInProgress) {
+          gameStatus = 'in_progress';
+        } else {
+          gameStatus = 'not_started';
+        }
+        const completionPercentage = 1 - this.gameProgressService.getPercentRemaining(status);
+        gameStatusMap.set(team, { status: gameStatus, completionPercentage });
+      }
+    }
 
     // Build player performance list
     const performances: MatchupPlayerPerformance[] = [];
@@ -235,6 +258,16 @@ export class MatchupService {
           ? calculatePlayerPoints(playerStats, scoringRules, player?.position)
           : 0;
 
+        // Calculate projections
+        const { projectedPoints, gameStatus, remainingProjected } = this.calculatePlayerProjection(
+          player?.team ?? undefined,
+          points,
+          projectionsMap.get(playerId),
+          gameStatusMap,
+          scoringRules,
+          player?.position ?? undefined
+        );
+
         performances.push({
           playerId,
           fullName: player?.fullName || 'Unknown Player',
@@ -243,6 +276,9 @@ export class MatchupService {
           slot,
           points,
           isStarter: true,
+          projectedPoints,
+          gameStatus,
+          remainingProjected,
         });
       }
     }
@@ -256,6 +292,16 @@ export class MatchupService {
         ? calculatePlayerPoints(playerStats, scoringRules, player?.position)
         : 0;
 
+      // Calculate projections
+      const { projectedPoints, gameStatus, remainingProjected } = this.calculatePlayerProjection(
+        player?.team ?? undefined,
+        points,
+        projectionsMap.get(playerId),
+        gameStatusMap,
+        scoringRules,
+        player?.position ?? undefined
+      );
+
       performances.push({
         playerId,
         fullName: player?.fullName || 'Unknown Player',
@@ -264,6 +310,9 @@ export class MatchupService {
         slot: 'BN',
         points,
         isStarter: false,
+        projectedPoints,
+        gameStatus,
+        remainingProjected,
       });
     }
 
@@ -277,6 +326,66 @@ export class MatchupService {
       teamName,
       totalPoints: totalPoints ?? computedTotal,
       players: performances,
+    };
+  }
+
+  /**
+   * Calculate player projection based on game status and pre-game projections
+   * @returns Object with projectedPoints, gameStatus, and remainingProjected
+   */
+  private calculatePlayerProjection(
+    playerTeam: string | undefined,
+    actualPoints: number,
+    preGameProjectionStats: any,
+    gameStatusMap: Map<string, { status: 'not_started' | 'in_progress' | 'final'; completionPercentage: number }> | undefined,
+    scoringRules: ScoringRules,
+    position?: string
+  ): { projectedPoints?: number; gameStatus?: 'not_started' | 'in_progress' | 'final'; remainingProjected?: number } {
+    // If no game status available, skip projections
+    if (!gameStatusMap || !playerTeam) {
+      return {};
+    }
+
+    const gameInfo = gameStatusMap.get(playerTeam);
+    if (!gameInfo) {
+      return {};
+    }
+
+    const { status, completionPercentage } = gameInfo;
+
+    // Calculate pre-game projected points from projection stats
+    let preGameProjectedPoints = 0;
+    if (preGameProjectionStats) {
+      preGameProjectedPoints = calculatePlayerPoints(preGameProjectionStats, scoringRules, position);
+    }
+
+    let projectedPoints: number | undefined;
+    let remainingProjected: number | undefined;
+
+    if (status === 'final') {
+      // Game is complete - use actual points as projection
+      projectedPoints = actualPoints;
+      remainingProjected = 0;
+    } else if (status === 'in_progress') {
+      // Game is in progress - blend current pace with pre-game projection
+      const currentPace = completionPercentage > 0.01
+        ? actualPoints / completionPercentage
+        : preGameProjectedPoints;
+
+      // Blend: 70% current pace, 30% pre-game projection
+      // This prevents wild swings while still adapting to game flow
+      projectedPoints = (currentPace * 0.7) + (preGameProjectedPoints * 0.3);
+      remainingProjected = Math.max(0, projectedPoints - actualPoints);
+    } else {
+      // Game not started - use pre-game projection
+      projectedPoints = preGameProjectedPoints;
+      remainingProjected = preGameProjectedPoints;
+    }
+
+    return {
+      projectedPoints,
+      gameStatus: status,
+      remainingProjected,
     };
   }
 

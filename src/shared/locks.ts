@@ -34,26 +34,21 @@
  * - src/modules/drafts/auction/fast-auction.service.ts - ✓ migrated
  * - src/modules/drafts/auction/slow-auction.service.ts - ✓ migrated
  *
- * TRADE OPERATIONS (pending migration - uses getTradeLockId from src/utils/locks.ts):
- * - src/modules/trades/use-cases/propose-trade.use-case.ts: locks league for trade proposal
- * - src/modules/trades/use-cases/accept-trade.use-case.ts: locks league for trade acceptance
- * - src/modules/trades/use-cases/reject-trade.use-case.ts: locks league for trade rejection
- * - src/modules/trades/use-cases/cancel-trade.use-case.ts: locks league for trade cancellation
- * - src/modules/trades/use-cases/counter-trade.use-case.ts: locks league for counter-offers
- * - src/modules/trades/use-cases/process-trades.use-case.ts: locks league for trade processing
+ * TRADE OPERATIONS (MIGRATED to LockDomain.TRADE):
+ * - src/modules/trades/use-cases/propose-trade.use-case.ts: ✓ migrated
+ * - src/modules/trades/use-cases/accept-trade.use-case.ts: ✓ migrated
+ * - src/modules/trades/use-cases/reject-trade.use-case.ts: ✓ migrated
+ * - src/modules/trades/use-cases/cancel-trade.use-case.ts: ✓ migrated
+ * - src/modules/trades/use-cases/counter-trade.use-case.ts: ✓ migrated
+ * - src/modules/trades/use-cases/process-trades.use-case.ts: ✓ migrated
  *
  * WAIVER OPERATIONS (MIGRATED to LockDomain.WAIVER):
  * - src/modules/waivers/use-cases/process-waivers.use-case.ts: locks league for waiver processing
  * - src/modules/waivers/use-cases/submit-claim.use-case.ts: ✓ migrated
  *
- * ROSTER OPERATIONS (pending migration - direct lock IDs):
- * - src/modules/leagues/roster.service.ts
- *   - joinLeague(): locks league (using raw leagueId) for concurrent join prevention
- *   - kickMember(): locks roster (using rosterId + 1000000 offset) for member removal
- * - src/modules/rosters/rosters.service.ts
- *   - addPlayer(): locks league for free agent claims
- *   - dropPlayer(): locks league for player drops
- *   - addDropPlayer(): locks league for add/drop transactions
+ * ROSTER OPERATIONS (MIGRATED to LockDomain.ROSTER/LEAGUE):
+ * - src/modules/leagues/roster.service.ts: ✓ migrated
+ * - src/modules/rosters/rosters.service.ts: ✓ migrated
  *
  * AUCTION OPERATIONS (MIGRATED to LockDomain.ROSTER):
  * - src/modules/drafts/auction/fast-auction.service.ts - ✓ migrated
@@ -68,9 +63,8 @@
  * - src/jobs/trade-expiration.job.ts: TRADE_EXPIRATION_LOCK_ID = 999999003
  * - src/jobs/slow-auction.job.ts: SLOW_AUCTION_LOCK_ID = 999999004
  *
- * NOTE: The legacy src/utils/locks.ts uses 1M-5M namespace offsets.
- * This modern helper (src/shared/locks.ts) uses 100M-900M offsets.
- * All new code should use this helper to prevent lock ID collisions.
+ * NOTE: This is the canonical lock system for the application.
+ * Uses 100M-900M namespace offsets to prevent lock ID collisions between domains.
  * ============================================================================
  */
 

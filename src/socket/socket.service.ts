@@ -1,6 +1,7 @@
 import { Server as HttpServer } from 'http';
 import { Server, Socket } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';
+import { Pool } from 'pg';
 import { verifyToken } from '../utils/jwt';
 import { env } from '../config/env.config';
 import { logger } from '../config/logger.config';
@@ -9,6 +10,9 @@ import { getRedisClient, isRedisAvailable } from '../config/redis.config';
 import { container, KEYS } from '../container';
 import { LeagueRepository } from '../modules/leagues/leagues.repository';
 import { DraftRepository } from '../modules/drafts/drafts.repository';
+import { MatchupsRepository } from '../modules/matchups/matchups.repository';
+import { LineupsRepository } from '../modules/lineups/lineups.repository';
+import { ScoringPayloadBuilderService } from '../modules/scoring/scoring-payload-builder.service';
 import { SOCKET_EVENTS, ROOM_NAMES } from '../constants/socket-events';
 import {
   socketRateLimitMiddleware,
@@ -348,13 +352,18 @@ export class SocketService {
       }
 
       // Join league room (with membership verification)
-      socket.on(SOCKET_EVENTS.LEAGUE.JOIN, async (leagueId: number) => {
+      socket.on(SOCKET_EVENTS.LEAGUE.JOIN, async (data: number | { leagueId: number; season?: number; week?: number }) => {
         if (!this.checkEventRate(socket, SOCKET_EVENTS.LEAGUE.JOIN)) return;
 
         if (!socket.userId) {
           socket.emit(SOCKET_EVENTS.APP.ERROR, { message: 'Not authenticated' });
           return;
         }
+
+        // Support both old format (just leagueId number) and new format (object with optional season/week)
+        const leagueId = typeof data === 'number' ? data : data.leagueId;
+        const season = typeof data === 'object' ? data.season : undefined;
+        const week = typeof data === 'object' ? data.week : undefined;
 
         // Validate leagueId is a positive integer
         if (typeof leagueId !== 'number' || !Number.isInteger(leagueId) || leagueId <= 0) {
@@ -375,6 +384,25 @@ export class SocketService {
           const room = ROOM_NAMES.league(leagueId);
           socket.join(room);
           logger.info(`User ${socket.userId} joined league room ${leagueId}`);
+
+          // OPTIONAL: Send current scores snapshot if season/week provided (reconnection support)
+          if (season !== undefined && week !== undefined) {
+            try {
+              const pool = container.resolve<Pool>(KEYS.POOL);
+              const matchupsRepo = container.resolve<MatchupsRepository>(KEYS.MATCHUPS_REPO);
+              const lineupsRepo = container.resolve<LineupsRepository>(KEYS.LINEUPS_REPO);
+
+              const payloadBuilder = new ScoringPayloadBuilderService(pool, matchupsRepo, lineupsRepo);
+              const snapshot = await payloadBuilder.buildLeagueScoresV2(leagueId, season, week);
+
+              // Send snapshot directly to this socket (not broadcast)
+              socket.emit(SOCKET_EVENTS.SCORING.SCORES_UPDATED_V2, snapshot);
+              logger.debug(`Sent score snapshot to user ${socket.userId} for league ${leagueId} week ${week}`);
+            } catch (snapshotError) {
+              // Don't fail the join if snapshot fails
+              logger.warn(`Failed to send score snapshot on league join: ${snapshotError}`);
+            }
+          }
         } catch (error) {
           logger.error(`Error joining league room: ${error}`);
           socket.emit(SOCKET_EVENTS.APP.ERROR, { message: 'Failed to join league room' });
@@ -745,9 +773,27 @@ export class SocketService {
 
   // Scoring events (emitted to league room)
 
-  // Emit scores updated event (after stats sync)
+  // Emit scores updated event (after stats sync) - OLD VERSION for backward compatibility
   emitScoresUpdated(leagueId: number, data: { week: number; matchups: any[] }): void {
     this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.SCORING.SCORES_UPDATED, data);
+  }
+
+  // Emit scores updated v2 event - ENHANCED VERSION with actual score data
+  emitScoresUpdatedV2(leagueId: number, payload: any): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.SCORING.SCORES_UPDATED_V2, payload);
+  }
+
+  // Emit score delta event - only changed scores
+  emitScoreDelta(leagueId: number, payload: any): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.SCORING.SCORES_DELTA, payload);
+  }
+
+  // Emit matchup snapshot event - full matchup state (for reconnections)
+  emitMatchupSnapshot(matchupId: number, payload: any): void {
+    // Note: Currently using league room, could add matchup-specific rooms in future
+    // this.io.to(`matchup:${matchupId}`).emit(SOCKET_EVENTS.SCORING.MATCHUP_SNAPSHOT, payload);
+    // For now, we'll emit to league room when called
+    logger.warn('emitMatchupSnapshot called but matchup rooms not yet implemented', { matchupId });
   }
 
   // Emit week finalized event
