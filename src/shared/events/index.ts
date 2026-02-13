@@ -7,6 +7,7 @@ export {
 } from './domain-event-bus';
 
 export { SocketEventSubscriber } from './socket-event-subscriber';
+export { NotificationEventSubscriber } from './notification-event-subscriber';
 
 import { container, KEYS } from '../../container';
 import { DomainEventBus } from './domain-event-bus';

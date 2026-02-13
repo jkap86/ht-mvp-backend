@@ -90,7 +90,9 @@ import { LockHelper } from './shared/locks';
 
 // Infrastructure
 import { LeaderLock } from './shared/leader-lock';
-import { DomainEventBus, SocketEventSubscriber } from './shared/events';
+import { DomainEventBus, SocketEventSubscriber, NotificationEventSubscriber } from './shared/events';
+import { NotificationService } from './modules/notifications/notification.service';
+import { initFirebase } from './shared/firebase';
 import { CommandBus, registerAllHandlers } from './domain';
 
 function bootstrap(): void {
@@ -641,11 +643,17 @@ function bootstrap(): void {
   // Infrastructure - Leader Lock for job coordination
   container.register(KEYS.LEADER_LOCK, () => new LeaderLock(container.resolve(KEYS.POOL)));
 
+  // Initialize Firebase Admin SDK for push notifications
+  initFirebase();
+
   // Infrastructure - Domain Event Bus for decoupled socket emissions
   container.register(KEYS.DOMAIN_EVENT_BUS, () => {
     const eventBus = new DomainEventBus();
     // Register the socket subscriber to handle domain events
     eventBus.subscribe(new SocketEventSubscriber());
+    // Register the notification subscriber for push notifications
+    const notificationService = new NotificationService(container.resolve(KEYS.POOL));
+    eventBus.subscribe(new NotificationEventSubscriber(container.resolve(KEYS.POOL), notificationService));
     return eventBus;
   });
 

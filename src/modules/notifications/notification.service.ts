@@ -4,10 +4,10 @@
  */
 
 import { Pool } from 'pg';
+import { MulticastMessage } from 'firebase-admin/messaging';
 import { logger } from '../../config/logger.config';
 import { snakeToCamel } from '../../shared/mappers';
-
-// TODO: Implement Firebase Cloud Messaging push notifications (import firebase-admin)
+import { getFirebaseMessaging } from '../../shared/firebase';
 
 export interface PushNotificationPayload {
   title: string;
@@ -36,9 +36,7 @@ export interface NotificationPreferences {
 }
 
 export class NotificationService {
-  constructor(private readonly db: Pool) {
-    // TODO: Implement Firebase Cloud Messaging push notifications (initialize Firebase Admin SDK)
-  }
+  constructor(private readonly db: Pool) {}
 
   /**
    * Send push notification to a single user
@@ -160,10 +158,19 @@ export class NotificationService {
     topic: string,
     notification: PushNotificationPayload
   ): Promise<{ success: boolean; messageId?: string }> {
+    const messaging = getFirebaseMessaging();
+    if (!messaging) {
+      logger.warn('Firebase Messaging not configured — skipping topic notification');
+      return { success: false };
+    }
+
     try {
-      // TODO: Implement Firebase Cloud Messaging push notifications (topic messaging)
-      logger.info(`Notification to topic ${topic} not yet implemented (FCM pending)`);
-      return { success: true, messageId: 'placeholder-id' };
+      const messageId = await messaging.send({
+        topic,
+        notification: { title: notification.title, body: notification.body },
+        data: notification.data,
+      });
+      return { success: true, messageId };
     } catch (error) {
       logger.error(`Failed to send notification to topic ${topic}: ${error}`);
       return { success: false };
@@ -403,20 +410,60 @@ export class NotificationService {
   }
 
   /**
-   * Send notification to multiple tokens
+   * Send notification to multiple tokens via FCM multicast.
    */
   private async sendToTokens(
     tokens: string[],
     notification: PushNotificationPayload
   ): Promise<{ successCount: number; messageIds: string[]; invalidTokens: string[] }> {
-    // TODO: Implement Firebase Cloud Messaging push notifications (multicast send)
-    logger.info(`Sending notification to ${tokens.length} tokens not yet implemented (FCM pending)`);
-    logger.debug(`Notification: ${notification.title} - ${notification.body}`);
+    const messaging = getFirebaseMessaging();
+    if (!messaging) {
+      logger.warn('Firebase Messaging not configured — skipping push notification');
+      return { successCount: 0, messageIds: [], invalidTokens: [] };
+    }
+
+    const message: MulticastMessage = {
+      tokens,
+      notification: { title: notification.title, body: notification.body },
+      data: notification.data,
+      android: { priority: 'high' as const },
+      apns: { payload: { aps: { sound: 'default' } } },
+    };
+
+    if (notification.imageUrl) {
+      message.notification!.imageUrl = notification.imageUrl;
+    }
+
+    const response = await messaging.sendEachForMulticast(message);
+
+    const invalidTokens: string[] = [];
+    const messageIds: string[] = [];
+
+    response.responses.forEach((r, i) => {
+      if (r.success) {
+        messageIds.push(r.messageId!);
+      } else {
+        // Mark tokens as invalid for messaging/registration-token-not-registered
+        // and messaging/invalid-registration-token errors
+        const code = r.error?.code;
+        if (
+          code === 'messaging/registration-token-not-registered' ||
+          code === 'messaging/invalid-registration-token'
+        ) {
+          invalidTokens.push(tokens[i]);
+        }
+      }
+    });
+
+    logger.info(
+      `FCM multicast: ${response.successCount} sent, ${response.failureCount} failed` +
+        (invalidTokens.length > 0 ? `, ${invalidTokens.length} invalid tokens` : '')
+    );
 
     return {
-      successCount: tokens.length,
-      messageIds: tokens.map((_, i) => `msg-${i}`),
-      invalidTokens: [],
+      successCount: response.successCount,
+      messageIds,
+      invalidTokens,
     };
   }
 
