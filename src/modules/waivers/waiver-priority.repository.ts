@@ -78,6 +78,18 @@ export class WaiverPriorityRepository {
   }
 
   /**
+   * Get the maximum priority value across all rosters in a league/season.
+   */
+  async getMaxPriority(leagueId: number, season: number, client?: PoolClient): Promise<number> {
+    const conn = client || this.db;
+    const result = await conn.query(
+      'SELECT COALESCE(MAX(priority), 0) as max_priority FROM waiver_priority WHERE league_id = $1 AND season = $2',
+      [leagueId, season]
+    );
+    return Number(result.rows[0].max_priority) || 0;
+  }
+
+  /**
    * Rotate priorities - move successful claimer to last place
    * Uses a single atomic statement to avoid UNIQUE constraint violations
    */

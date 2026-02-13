@@ -114,6 +114,7 @@ describe('Waiver Processing', () => {
     mockPriorityRepo = {
       rotatePriority: jest.fn(),
       getByLeague: jest.fn().mockResolvedValue([]),
+      getMaxPriority: jest.fn().mockResolvedValue(2),
     } as unknown as jest.Mocked<WaiverPriorityRepository>;
 
     mockFaabRepo = {
@@ -461,6 +462,7 @@ describe('Round-based Processing', () => {
     mockPriorityRepo = {
       rotatePriority: jest.fn(),
       getByLeague: jest.fn().mockResolvedValue([]),
+      getMaxPriority: jest.fn().mockResolvedValue(2),
     } as unknown as jest.Mocked<WaiverPriorityRepository>;
 
     mockFaabRepo = {
@@ -796,6 +798,7 @@ describe('Stale Claim Handling (Hardening)', () => {
     mockPriorityRepo = {
       rotatePriority: jest.fn(),
       getByLeague: jest.fn().mockResolvedValue([]),
+      getMaxPriority: jest.fn().mockResolvedValue(2),
     } as unknown as jest.Mocked<WaiverPriorityRepository>;
 
     mockFaabRepo = {
@@ -1201,6 +1204,7 @@ describe('Full League Ownership Preload', () => {
     mockPriorityRepo = {
       rotatePriority: jest.fn(),
       getByLeague: jest.fn().mockResolvedValue([]),
+      getMaxPriority: jest.fn().mockResolvedValue(2),
     } as unknown as jest.Mocked<WaiverPriorityRepository>;
 
     mockFaabRepo = {
@@ -1391,6 +1395,406 @@ describe('Full League Ownership Preload', () => {
 
     expect(statusUpdates.find((u) => u.id === 1)?.status).toBe('successful');
     expect(statusUpdates.find((u) => u.id === 2)?.status).toBe('successful');
+  });
+});
+
+describe('MaxPriority Rotation Fix', () => {
+  let mockPool: jest.Mocked<Pool> & { query: jest.Mock };
+  let mockClient: jest.Mocked<PoolClient> & { query: jest.Mock };
+  let mockClaimsRepo: jest.Mocked<WaiverClaimsRepository>;
+  let mockPriorityRepo: jest.Mocked<WaiverPriorityRepository>;
+  let mockFaabRepo: jest.Mocked<FaabBudgetRepository>;
+  let mockWaiverWireRepo: jest.Mocked<WaiverWireRepository>;
+  let mockRosterPlayersRepo: jest.Mocked<RosterPlayersRepository>;
+  let mockTransactionsRepo: jest.Mocked<RosterTransactionsRepository>;
+  let mockLeagueRepo: jest.Mocked<LeagueRepository>;
+  let mockRosterRepo: jest.Mocked<RosterRepository>;
+  let mockRosterMutationService: jest.Mocked<RosterMutationService>;
+
+  const createMockClaim = (
+    id: number,
+    rosterId: number,
+    playerId: number,
+    currentPriority: number | null,
+    bidAmount = 0,
+    claimOrder = 1
+  ): WaiverClaimWithCurrentPriority => ({
+    id,
+    leagueId: 1,
+    rosterId,
+    playerId,
+    dropPlayerId: null,
+    bidAmount,
+    priorityAtClaim: currentPriority,
+    claimOrder,
+    currentPriority,
+    status: 'pending' as WaiverClaimStatus,
+    season: 2024,
+    week: 1,
+    processedAt: null,
+    failureReason: null,
+    processingRunId: null,
+    createdAt: new Date('2024-01-01T00:00:00Z'),
+    updatedAt: new Date('2024-01-01T00:00:00Z'),
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+
+    const mockQuery = jest.fn().mockResolvedValue({ rows: [] });
+    mockClient = {
+      query: mockQuery,
+      release: jest.fn(),
+    } as unknown as jest.Mocked<PoolClient> & { query: jest.Mock };
+
+    mockPool = {
+      connect: jest.fn().mockResolvedValue(mockClient),
+      query: jest.fn().mockResolvedValue({ rows: [] }),
+    } as unknown as jest.Mocked<Pool> & { query: jest.Mock };
+
+    mockClaimsRepo = {
+      getPendingByLeagueWithCurrentPriority: jest.fn(),
+      updateStatus: jest.fn(),
+      findByIdWithDetails: jest.fn(),
+    } as unknown as jest.Mocked<WaiverClaimsRepository>;
+
+    mockPriorityRepo = {
+      rotatePriority: jest.fn(),
+      getByLeague: jest.fn().mockResolvedValue([]),
+      getMaxPriority: jest.fn().mockResolvedValue(10),
+    } as unknown as jest.Mocked<WaiverPriorityRepository>;
+
+    mockFaabRepo = {
+      getByRoster: jest.fn(),
+      deductBudget: jest.fn(),
+      getByLeague: jest.fn().mockResolvedValue([]),
+    } as unknown as jest.Mocked<FaabBudgetRepository>;
+
+    mockWaiverWireRepo = {
+      removePlayer: jest.fn(),
+    } as unknown as jest.Mocked<WaiverWireRepository>;
+
+    mockRosterPlayersRepo = {
+      findOwner: jest.fn().mockResolvedValue(null),
+      findByRosterAndPlayer: jest.fn().mockResolvedValue(true),
+      getPlayerCount: jest.fn().mockResolvedValue(10),
+      getPlayerIdsByRoster: jest.fn().mockResolvedValue([]),
+      getOwnedPlayerIdsByLeague: jest.fn().mockResolvedValue(new Set<number>()),
+    } as unknown as jest.Mocked<RosterPlayersRepository>;
+
+    mockTransactionsRepo = {
+      create: jest.fn(),
+    } as unknown as jest.Mocked<RosterTransactionsRepository>;
+
+    mockLeagueRepo = {
+      findById: jest.fn(),
+    } as unknown as jest.Mocked<LeagueRepository>;
+
+    mockRosterRepo = {
+      findById: jest.fn().mockResolvedValue({ id: 1, userId: 'user1' }),
+    } as unknown as jest.Mocked<RosterRepository>;
+
+    mockRosterMutationService = {
+      addPlayerToRoster: jest.fn(),
+      removePlayerFromRoster: jest.fn(),
+    } as unknown as jest.Mocked<RosterMutationService>;
+  });
+
+  it('should rotate winner to true max league priority, not just claiming rosters', async () => {
+    // Setup: 2 rosters with claims (priorities 1, 2) in a 10-team league
+    // getMaxPriority returns 10 (the real league size)
+    // After A wins, A should rotate to priority 10 (not 2)
+
+    const mockLeague = {
+      id: 1,
+      season: '2024',
+      currentWeek: 1,
+      settings: {
+        waiver_type: 'standard',
+        waiver_day: 2,
+        waiver_hour: 3,
+        roster_size: 15,
+        current_week: 1,
+      },
+    };
+
+    mockLeagueRepo.findById.mockResolvedValue(mockLeague as any);
+
+    // Only 2 rosters have claims, but league has 10 teams
+    const claims: WaiverClaimWithCurrentPriority[] = [
+      createMockClaim(1, 101, 1001, 1, 0, 1), // Roster A: priority 1
+      createMockClaim(2, 101, 1002, 1, 0, 2), // Roster A: second claim
+      createMockClaim(3, 102, 1003, 2, 0, 1), // Roster B: priority 2
+    ];
+
+    mockClaimsRepo.getPendingByLeagueWithCurrentPriority.mockResolvedValue(claims);
+
+    // getMaxPriority returns 10 (10-team league)
+    (mockPriorityRepo as any).getMaxPriority.mockResolvedValue(10);
+
+    const statusUpdates: Array<{ id: number; status: string }> = [];
+    mockClaimsRepo.updateStatus.mockImplementation(async (id, status) => {
+      statusUpdates.push({ id, status });
+      return { ...claims.find((c) => c.id === id)!, status } as WaiverClaim;
+    });
+
+    const ctx: ProcessWaiversContext = {
+      db: mockPool,
+      claimsRepo: mockClaimsRepo,
+      priorityRepo: mockPriorityRepo,
+      faabRepo: mockFaabRepo,
+      waiverWireRepo: mockWaiverWireRepo,
+      rosterPlayersRepo: mockRosterPlayersRepo,
+      transactionsRepo: mockTransactionsRepo,
+      leagueRepo: mockLeagueRepo,
+      rosterRepo: mockRosterRepo,
+      rosterMutationService: mockRosterMutationService,
+    };
+
+    await processLeagueClaims(ctx, 1);
+
+    // getMaxPriority should have been called to get the real league max
+    expect(mockPriorityRepo.getMaxPriority).toHaveBeenCalledWith(1, 2024, expect.anything());
+
+    // All 3 claims should be processed
+    expect(statusUpdates.find((u) => u.id === 1)?.status).toBe('successful');
+    expect(statusUpdates.find((u) => u.id === 3)?.status).toBe('successful');
+  });
+});
+
+describe('Detailed Failure Reasons', () => {
+  let mockPool: jest.Mocked<Pool> & { query: jest.Mock };
+  let mockClient: jest.Mocked<PoolClient> & { query: jest.Mock };
+  let mockClaimsRepo: jest.Mocked<WaiverClaimsRepository>;
+  let mockPriorityRepo: jest.Mocked<WaiverPriorityRepository>;
+  let mockFaabRepo: jest.Mocked<FaabBudgetRepository>;
+  let mockWaiverWireRepo: jest.Mocked<WaiverWireRepository>;
+  let mockRosterPlayersRepo: jest.Mocked<RosterPlayersRepository>;
+  let mockTransactionsRepo: jest.Mocked<RosterTransactionsRepository>;
+  let mockLeagueRepo: jest.Mocked<LeagueRepository>;
+  let mockRosterRepo: jest.Mocked<RosterRepository>;
+  let mockRosterMutationService: jest.Mocked<RosterMutationService>;
+
+  const createMockClaim = (
+    id: number,
+    rosterId: number,
+    playerId: number,
+    currentPriority: number | null,
+    bidAmount = 0,
+    claimOrder = 1
+  ): WaiverClaimWithCurrentPriority => ({
+    id,
+    leagueId: 1,
+    rosterId,
+    playerId,
+    dropPlayerId: null,
+    bidAmount,
+    priorityAtClaim: currentPriority,
+    claimOrder,
+    currentPriority,
+    status: 'pending' as WaiverClaimStatus,
+    season: 2024,
+    week: 1,
+    processedAt: null,
+    failureReason: null,
+    processingRunId: null,
+    createdAt: new Date('2024-01-01T00:00:00Z'),
+    updatedAt: new Date('2024-01-01T00:00:00Z'),
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+
+    const mockQuery = jest.fn().mockResolvedValue({ rows: [] });
+    mockClient = {
+      query: mockQuery,
+      release: jest.fn(),
+    } as unknown as jest.Mocked<PoolClient> & { query: jest.Mock };
+
+    mockPool = {
+      connect: jest.fn().mockResolvedValue(mockClient),
+      query: jest.fn().mockResolvedValue({ rows: [] }),
+    } as unknown as jest.Mocked<Pool> & { query: jest.Mock };
+
+    mockClaimsRepo = {
+      getPendingByLeagueWithCurrentPriority: jest.fn(),
+      updateStatus: jest.fn(),
+      findByIdWithDetails: jest.fn(),
+    } as unknown as jest.Mocked<WaiverClaimsRepository>;
+
+    mockPriorityRepo = {
+      rotatePriority: jest.fn(),
+      getByLeague: jest.fn().mockResolvedValue([]),
+      getMaxPriority: jest.fn().mockResolvedValue(2),
+    } as unknown as jest.Mocked<WaiverPriorityRepository>;
+
+    mockFaabRepo = {
+      getByRoster: jest.fn(),
+      deductBudget: jest.fn(),
+      getByLeague: jest.fn().mockResolvedValue([]),
+    } as unknown as jest.Mocked<FaabBudgetRepository>;
+
+    mockWaiverWireRepo = {
+      removePlayer: jest.fn(),
+    } as unknown as jest.Mocked<WaiverWireRepository>;
+
+    mockRosterPlayersRepo = {
+      findOwner: jest.fn().mockResolvedValue(null),
+      findByRosterAndPlayer: jest.fn().mockResolvedValue(true),
+      getPlayerCount: jest.fn().mockResolvedValue(10),
+      getPlayerIdsByRoster: jest.fn().mockResolvedValue([]),
+      getOwnedPlayerIdsByLeague: jest.fn().mockResolvedValue(new Set<number>()),
+    } as unknown as jest.Mocked<RosterPlayersRepository>;
+
+    mockTransactionsRepo = {
+      create: jest.fn(),
+    } as unknown as jest.Mocked<RosterTransactionsRepository>;
+
+    mockLeagueRepo = {
+      findById: jest.fn(),
+    } as unknown as jest.Mocked<LeagueRepository>;
+
+    mockRosterRepo = {
+      findById: jest.fn().mockResolvedValue({ id: 1, userId: 'user1' }),
+    } as unknown as jest.Mocked<RosterRepository>;
+
+    mockRosterMutationService = {
+      addPlayerToRoster: jest.fn(),
+      removePlayerFromRoster: jest.fn(),
+    } as unknown as jest.Mocked<RosterMutationService>;
+  });
+
+  it('should provide "Roster is full" reason when all candidates have full rosters', async () => {
+    // Setup: Roster A has 15 players (full), claims Player X without a drop player
+    // All candidates fail validation -> should get specific reason
+
+    const mockLeague = {
+      id: 1,
+      season: '2024',
+      currentWeek: 1,
+      settings: {
+        waiver_type: 'standard',
+        waiver_day: 2,
+        waiver_hour: 3,
+        roster_size: 15,
+        current_week: 1,
+      },
+    };
+
+    mockLeagueRepo.findById.mockResolvedValue(mockLeague as any);
+
+    const claims: WaiverClaimWithCurrentPriority[] = [
+      createMockClaim(1, 101, 1001, 1, 0, 1), // Roster A claims Player X, no drop
+    ];
+
+    mockClaimsRepo.getPendingByLeagueWithCurrentPriority.mockResolvedValue(claims);
+
+    // Roster is full (15 players = max roster size)
+    mockRosterPlayersRepo.getPlayerIdsByRoster.mockResolvedValue(
+      Array.from({ length: 15 }, (_, i) => 2000 + i)
+    );
+
+    const statusUpdates: Array<{ id: number; status: string; reason?: string }> = [];
+    mockClaimsRepo.updateStatus.mockImplementation(async (id, status, reason) => {
+      statusUpdates.push({ id, status, reason });
+      return { ...claims.find((c) => c.id === id)!, status } as WaiverClaim;
+    });
+
+    const ctx: ProcessWaiversContext = {
+      db: mockPool,
+      claimsRepo: mockClaimsRepo,
+      priorityRepo: mockPriorityRepo,
+      faabRepo: mockFaabRepo,
+      waiverWireRepo: mockWaiverWireRepo,
+      rosterPlayersRepo: mockRosterPlayersRepo,
+      transactionsRepo: mockTransactionsRepo,
+      leagueRepo: mockLeagueRepo,
+      rosterRepo: mockRosterRepo,
+      rosterMutationService: mockRosterMutationService,
+    };
+
+    const result = await processLeagueClaims(ctx, 1);
+
+    expect(result.processed).toBe(1);
+    expect(result.successful).toBe(0);
+
+    // Should get specific "Roster is full" reason, not generic "No eligible claimers"
+    const claimUpdate = statusUpdates.find((u) => u.id === 1);
+    expect(claimUpdate?.status).toBe('invalid');
+    expect(claimUpdate?.reason).toBe('Roster is full');
+  });
+
+  it('should provide specific FAAB budget reason when all candidates have insufficient budget', async () => {
+    // Setup: 2 rosters claim same player with FAAB bids
+    // BOTH have insufficient budget — each gets a specific reason during validation
+
+    const mockLeague = {
+      id: 1,
+      season: '2024',
+      currentWeek: 1,
+      settings: {
+        waiver_type: 'faab',
+        waiver_day: 2,
+        waiver_hour: 3,
+        roster_size: 15,
+        current_week: 1,
+        faab_budget: 100,
+      },
+    };
+
+    mockLeagueRepo.findById.mockResolvedValue(mockLeague as any);
+
+    // Both bid more than they can afford
+    const claims: WaiverClaimWithCurrentPriority[] = [
+      createMockClaim(1, 101, 1001, 1, 10, 1), // A bids $10 for Player X
+      createMockClaim(2, 102, 1001, 2, 20, 1), // B bids $20 for Player X
+    ];
+
+    mockClaimsRepo.getPendingByLeagueWithCurrentPriority.mockResolvedValue(claims);
+
+    // Mock FAAB budgets - A has $5 (can't afford $10), B has $10 (can't afford $20)
+    mockFaabRepo.getByRoster.mockImplementation(async (rosterId) => ({
+      id: rosterId,
+      leagueId: 1,
+      rosterId,
+      season: 2024,
+      initialBudget: 100,
+      remainingBudget: rosterId === 101 ? 5 : 10,
+      updatedAt: new Date(),
+    }));
+
+    const statusUpdates: Array<{ id: number; status: string; reason?: string }> = [];
+    mockClaimsRepo.updateStatus.mockImplementation(async (id, status, reason) => {
+      statusUpdates.push({ id, status, reason });
+      return { ...claims.find((c) => c.id === id)!, status } as WaiverClaim;
+    });
+
+    const ctx: ProcessWaiversContext = {
+      db: mockPool,
+      claimsRepo: mockClaimsRepo,
+      priorityRepo: mockPriorityRepo,
+      faabRepo: mockFaabRepo,
+      waiverWireRepo: mockWaiverWireRepo,
+      rosterPlayersRepo: mockRosterPlayersRepo,
+      transactionsRepo: mockTransactionsRepo,
+      leagueRepo: mockLeagueRepo,
+      rosterRepo: mockRosterRepo,
+      rosterMutationService: mockRosterMutationService,
+    };
+
+    const result = await processLeagueClaims(ctx, 1);
+
+    expect(result.processed).toBe(2);
+    expect(result.successful).toBe(0);
+
+    // Both should be marked invalid with specific FAAB budget reasons
+    const claim1Update = statusUpdates.find((u) => u.id === 1);
+    expect(claim1Update?.status).toBe('invalid');
+    expect(claim1Update?.reason).toContain('Insufficient FAAB budget');
+
+    const claim2Update = statusUpdates.find((u) => u.id === 2);
+    expect(claim2Update?.status).toBe('invalid');
+    expect(claim2Update?.reason).toContain('Insufficient FAAB budget');
   });
 });
 

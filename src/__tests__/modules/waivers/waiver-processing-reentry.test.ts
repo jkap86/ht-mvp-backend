@@ -51,6 +51,7 @@ describe('processLeagueClaims — re-entry protection', () => {
     mockProcessingRunsRepo = {
       tryCreate: jest.fn(),
       updateStatus: jest.fn(),
+      delete: jest.fn().mockResolvedValue(true),
     };
 
     ctx = {
@@ -88,6 +89,7 @@ describe('processLeagueClaims — re-entry protection', () => {
         rotateAfterWin: jest.fn(),
         initializeForLeague: jest.fn(),
         ensureRosterPriority: jest.fn(),
+        getMaxPriority: jest.fn().mockResolvedValue(0),
       } as any,
       faabRepo: {
         getByRoster: jest.fn(),
@@ -118,10 +120,10 @@ describe('processLeagueClaims — re-entry protection', () => {
     // tryCreate returns a new run (first invocation)
     mockProcessingRunsRepo.tryCreate.mockResolvedValue({ id: 42 });
 
-    // Snapshot returns 0 claims
-    (ctx.claimsRepo.snapshotClaimsForProcessingRun as jest.Mock).mockResolvedValue(0);
+    // Snapshot returns some claims
+    (ctx.claimsRepo.snapshotClaimsForProcessingRun as jest.Mock).mockResolvedValue(2);
 
-    // No claims to process
+    // But no claims returned from query (edge case safety net)
     (ctx.claimsRepo.getPendingByProcessingRun as jest.Mock).mockResolvedValue([]);
 
     const result = await processLeagueClaims(ctx, 1);
@@ -141,6 +143,25 @@ describe('processLeagueClaims — re-entry protection', () => {
     expect(ctx.claimsRepo.snapshotClaimsForProcessingRun).toHaveBeenCalledWith(
       1, 2024, 5, 42, expect.anything()
     );
+  });
+
+  it('should delete processing run when zero claims are snapshotted', async () => {
+    // tryCreate returns a new run
+    mockProcessingRunsRepo.tryCreate.mockResolvedValue({ id: 42 });
+
+    // Snapshot returns 0 claims
+    (ctx.claimsRepo.snapshotClaimsForProcessingRun as jest.Mock).mockResolvedValue(0);
+
+    const result = await processLeagueClaims(ctx, 1);
+
+    // Should return zero processed (early exit)
+    expect(result).toEqual({ processed: 0, successful: 0 });
+
+    // Should have deleted the processing run to prevent hour-long freeze
+    expect(mockProcessingRunsRepo.delete).toHaveBeenCalledWith(42, expect.anything());
+
+    // Should NOT have fetched claims (early exit before fetch)
+    expect(ctx.claimsRepo.getPendingByProcessingRun).not.toHaveBeenCalled();
   });
 
   it('should process normally without processingRunsRepo (legacy mode)', async () => {

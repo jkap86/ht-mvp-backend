@@ -133,6 +133,12 @@ export async function processLeagueClaims(
           client
         );
         logger.debug(`Snapshotted ${snapshotCount} claims for processing run ${processingRunId}`, { leagueId });
+
+        if (snapshotCount === 0) {
+          logger.debug(`No claims to process, cleaning up processing run ${processingRunId}`, { leagueId });
+          await ctx.processingRunsRepo.delete(processingRunId, client);
+          return { processed: 0, successful: 0 };
+        }
       }
 
       // Get claims to process - either snapshotted claims (if using processing runs)
@@ -150,6 +156,9 @@ export async function processLeagueClaims(
       }
 
       if (allClaims.length === 0) {
+        if (processingRunId && ctx.processingRunsRepo) {
+          await ctx.processingRunsRepo.delete(processingRunId, client);
+        }
         return { processed: 0, successful: 0 };
       }
 
@@ -174,10 +183,13 @@ export async function processLeagueClaims(
         claimsByRoster.set(claim.rosterId, existing);
       }
 
-      // Track max priority for rotation
-      let maxPriority = 0;
-      for (const state of rosterStates.values()) {
-        maxPriority = Math.max(maxPriority, state.currentPriority);
+      // Track max priority for rotation — query the real max from ALL league rosters
+      let maxPriority = await ctx.priorityRepo.getMaxPriority(leagueId, season, client);
+      // Fallback: if no priorities exist yet, use claiming rosters as minimum
+      if (maxPriority === 0) {
+        for (const state of rosterStates.values()) {
+          maxPriority = Math.max(maxPriority, state.currentPriority);
+        }
       }
 
       let processedCount = 0;
@@ -323,7 +335,13 @@ export async function processLeagueClaims(
             if (state.processedClaimIds.has(claim.id)) continue;
 
             // Determine failure reason based on whether anyone won
-            const reason = executedWinner ? 'Outbid by another team' : 'No eligible claimers';
+            let reason: string;
+            if (executedWinner) {
+              reason = 'Outbid by another team';
+            } else {
+              const validation = validateClaimWithState(claim, state, settings.waiverType, maxRosterSize);
+              reason = validation.reason || 'No eligible claimers';
+            }
             await ctx.claimsRepo.updateStatus(claim.id, 'failed', reason, client);
             processedCount++;
             state.processedClaimIds.add(claim.id);

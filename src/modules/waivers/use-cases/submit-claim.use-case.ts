@@ -64,7 +64,10 @@ export async function submitClaim(
   }
 
   const season = parseInt(league.season, 10);
-  const currentWeek = resolveLeagueCurrentWeek(league) ?? 1;
+  const currentWeek = resolveLeagueCurrentWeek(league);
+  if (currentWeek === null) {
+    throw new ValidationException("Waivers aren't available until the season starts (Week 1).");
+  }
 
   // Idempotency check OUTSIDE transaction to avoid unnecessary lock acquisition
   if (idempotencyKey) {

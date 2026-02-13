@@ -9,6 +9,7 @@ import {
   UpdateClaimRequest,
   parseWaiverSettings,
   waiverClaimToResponse,
+  resolveLeagueCurrentWeek,
 } from '../waivers.model';
 import {
   NotFoundException,
@@ -125,6 +126,11 @@ export async function updateClaim(
   const settings = parseWaiverSettings(league.settings);
   const season = parseInt(league.season, 10);
 
+  const currentWeek = resolveLeagueCurrentWeek(league);
+  if (currentWeek === null) {
+    throw new ValidationException("Waivers aren't available until the season starts (Week 1).");
+  }
+
   // Execute update within WAIVER lock for consistent budget reads
   await runWithLock(
     ctx.db,
@@ -201,6 +207,13 @@ export async function reorderClaims(
   const roster = await ctx.rosterRepo.findByLeagueAndUser(leagueId, userId);
   if (!roster) {
     throw new ForbiddenException('You are not a member of this league');
+  }
+
+  const league = await ctx.leagueRepo.findById(leagueId);
+  if (!league) throw new NotFoundException('League not found');
+  const currentWeek = resolveLeagueCurrentWeek(league);
+  if (currentWeek === null) {
+    throw new ValidationException("Waivers aren't available until the season starts (Week 1).");
   }
 
   if (!claimIds || claimIds.length === 0) {
