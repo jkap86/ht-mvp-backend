@@ -12,9 +12,9 @@ import {
   WaiverCancelClaimPayload,
   WaiverReorderClaimsPayload,
   WaiverProcessLeaguePayload,
-} from '../commands';
-import { container, KEYS } from '../../container';
-import type { WaiversService } from '../../modules/waivers/waivers.service';
+} from '../../../domain/commands';
+import { container, KEYS } from '../../../container';
+import type { WaiversService } from '../../../modules/waivers/waivers.service';
 
 export class WaiverSubmitClaimHandler implements CommandHandler<WaiverSubmitClaimPayload> {
   readonly commandType = CommandTypes.WAIVER_SUBMIT_CLAIM;

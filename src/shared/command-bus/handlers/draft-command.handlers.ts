@@ -15,10 +15,10 @@ import {
   DraftResumePayload,
   DraftCompletePayload,
   DraftUndoPickPayload,
-} from '../commands';
-import { container, KEYS } from '../../container';
-import type { DraftPickService } from '../../modules/drafts/draft-pick.service';
-import type { DraftStateService } from '../../modules/drafts/draft-state.service';
+} from '../../../domain/commands';
+import { container, KEYS } from '../../../container';
+import type { DraftPickService } from '../../../modules/drafts/draft-pick.service';
+import type { DraftStateService } from '../../../modules/drafts/draft-state.service';
 
 export class DraftMakePickHandler implements CommandHandler<DraftMakePickPayload> {
   readonly commandType = CommandTypes.DRAFT_MAKE_PICK;

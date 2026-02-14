@@ -1,8 +1,8 @@
 import { BasePlayoffEngine } from './base-playoff.engine';
 import { AdvanceResult, PlayoffEngineContext } from './playoff-engine.interface';
-import { BracketType, SeriesAggregation } from '../playoff.model';
-import { PlayoffRepository } from '../playoff.repository';
-import { logger } from '../../../config/logger.config';
+import { BracketType, SeriesAggregation } from '../../modules/playoffs/playoff.model';
+import { PlayoffRepository } from '../../modules/playoffs/playoff.repository';
+import { logger } from '../../config/logger.config';
 
 /**
  * Third Place Engine

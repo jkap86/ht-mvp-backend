@@ -13,9 +13,9 @@ import {
   TradeRejectPayload,
   TradeCancelPayload,
   TradeVotePayload,
-} from '../commands';
-import { container, KEYS } from '../../container';
-import type { TradesService } from '../../modules/trades/trades.service';
+} from '../../../domain/commands';
+import { container, KEYS } from '../../../container';
+import type { TradesService } from '../../../modules/trades/trades.service';
 
 export class TradeProposeHandler implements CommandHandler<TradeProposePayload> {
   readonly commandType = CommandTypes.TRADE_PROPOSE;

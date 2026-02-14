@@ -4,3 +4,6 @@ export * from './base-draft.engine';
 export * from './snake-draft.engine';
 export * from './linear-draft.engine';
 export * from './draft-engine.factory';
+
+// Playoff Engine exports
+export * from './playoffs';

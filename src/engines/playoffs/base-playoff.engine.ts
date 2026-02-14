@@ -11,13 +11,13 @@ import {
   SeriesAggregation,
   getWeekRangeForRound,
   calculateTotalRounds,
-} from '../playoff.model';
-import { PlayoffRepository } from '../playoff.repository';
-import { logger } from '../../../config/logger.config';
+} from '../../modules/playoffs/playoff.model';
+import { PlayoffRepository } from '../../modules/playoffs/playoff.repository';
+import { logger } from '../../config/logger.config';
 import {
   resolveSeriesWinner as domainResolveSeriesWinner,
   resolveSeriesLoser as domainResolveSeriesLoser,
-} from '../../../domain/playoff/bracket';
+} from '../../domain/playoff/bracket';
 
 /**
  * Base Playoff Engine

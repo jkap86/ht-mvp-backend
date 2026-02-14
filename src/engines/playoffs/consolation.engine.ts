@@ -1,9 +1,9 @@
 import { v4 as uuidv4 } from 'uuid';
 import { BasePlayoffEngine } from './base-playoff.engine';
 import { AdvanceResult, PlayoffEngineContext, SeriesWinner } from './playoff-engine.interface';
-import { BracketType, SeriesAggregation, calculateTotalRounds, getWeekRangeForRound } from '../playoff.model';
-import { PlayoffRepository } from '../playoff.repository';
-import { logger } from '../../../config/logger.config';
+import { BracketType, SeriesAggregation, calculateTotalRounds, getWeekRangeForRound } from '../../modules/playoffs/playoff.model';
+import { PlayoffRepository } from '../../modules/playoffs/playoff.repository';
+import { logger } from '../../config/logger.config';
 
 /**
  * Consolation Engine

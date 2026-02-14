@@ -1,10 +1,10 @@
 import { v4 as uuidv4 } from 'uuid';
 import { BasePlayoffEngine } from './base-playoff.engine';
 import { AdvanceResult, PlayoffEngineContext } from './playoff-engine.interface';
-import { BracketType, SeriesAggregation, getWeekRangeForRound } from '../playoff.model';
-import { PlayoffRepository } from '../playoff.repository';
-import { EventTypes, tryGetEventBus } from '../../../shared/events';
-import { logger } from '../../../config/logger.config';
+import { BracketType, SeriesAggregation, getWeekRangeForRound } from '../../modules/playoffs/playoff.model';
+import { PlayoffRepository } from '../../modules/playoffs/playoff.repository';
+import { EventTypes, tryGetEventBus } from '../../shared/events';
+import { logger } from '../../config/logger.config';
 
 /**
  * Single Elimination Engine

@@ -1,5 +1,5 @@
 import { PoolClient } from 'pg';
-import { BracketType, SeriesAggregation, PlayoffBracket } from '../playoff.model';
+import { BracketType, SeriesAggregation, PlayoffBracket } from '../../modules/playoffs/playoff.model';
 
 /**
  * Result of advancing from a playoff week

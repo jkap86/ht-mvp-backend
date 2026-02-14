@@ -97,7 +97,7 @@ import { LeaderLock } from './shared/leader-lock';
 import { DomainEventBus, SocketEventSubscriber, NotificationEventSubscriber } from './shared/events';
 import { NotificationService } from './modules/notifications/notification.service';
 import { initFirebase } from './shared/firebase';
-import { CommandBus, registerAllHandlers } from './domain';
+import { CommandBus, registerAllHandlers } from './shared/command-bus';
 
 function bootstrap(): void {
   // Database

@@ -1,6 +1,6 @@
 import { IPlayoffEngine } from './playoff-engine.interface';
-import { BracketType } from '../playoff.model';
-import { PlayoffRepository } from '../playoff.repository';
+import { BracketType } from '../../modules/playoffs/playoff.model';
+import { PlayoffRepository } from '../../modules/playoffs/playoff.repository';
 import { SingleEliminationEngine } from './single-elimination.engine';
 import { ThirdPlaceEngine } from './third-place.engine';
 import { ConsolationEngine } from './consolation.engine';

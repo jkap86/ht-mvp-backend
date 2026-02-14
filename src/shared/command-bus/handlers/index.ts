@@ -5,7 +5,7 @@
  */
 
 import { CommandBus } from '../command-bus';
-import { logger } from '../../config/logger.config';
+import { logger } from '../../../config/logger.config';
 import { getDraftCommandHandlers } from './draft-command.handlers';
 import { getAuctionCommandHandlers } from './auction-command.handlers';
 import { getTradeCommandHandlers } from './trade-command.handlers';

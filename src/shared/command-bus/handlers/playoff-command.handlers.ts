@@ -11,9 +11,9 @@ import {
   PlayoffGenerateBracketPayload,
   PlayoffAdvanceWinnersPayload,
   PlayoffFinalizePayload,
-} from '../commands';
-import { container, KEYS } from '../../container';
-import type { PlayoffService } from '../../modules/playoffs/playoff.service';
+} from '../../../domain/commands';
+import { container, KEYS } from '../../../container';
+import type { PlayoffService } from '../../../modules/playoffs/playoff.service';
 
 export class PlayoffGenerateBracketHandler implements CommandHandler<PlayoffGenerateBracketPayload> {
   readonly commandType = CommandTypes.PLAYOFF_GENERATE_BRACKET;

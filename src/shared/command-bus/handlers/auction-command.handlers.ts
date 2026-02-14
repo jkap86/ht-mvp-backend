@@ -11,10 +11,10 @@ import {
   AuctionNominatePayload,
   AuctionSetMaxBidPayload,
   AuctionPlaceBidPayload,
-} from '../commands';
-import { container, KEYS } from '../../container';
-import type { FastAuctionService } from '../../modules/drafts/auction/fast-auction.service';
-import type { SlowAuctionService } from '../../modules/drafts/auction/slow-auction.service';
+} from '../../../domain/commands';
+import { container, KEYS } from '../../../container';
+import type { FastAuctionService } from '../../../modules/drafts/auction/fast-auction.service';
+import type { SlowAuctionService } from '../../../modules/drafts/auction/slow-auction.service';
 
 export class AuctionNominateHandler implements CommandHandler<AuctionNominatePayload> {
   readonly commandType = CommandTypes.AUCTION_NOMINATE;
@@ -52,7 +52,7 @@ export class AuctionPlaceBidHandler implements CommandHandler<AuctionPlaceBidPay
 
     // SlowAuctionService.setMaxBid takes rosterId (number), not userId (string).
     // Resolve the roster first, then delegate to the service.
-    const { RosterRepository } = await import('../../modules/rosters/roster.repository');
+    const { RosterRepository } = await import('../../../modules/rosters/roster.repository');
     const rosterRepo = container.resolve<InstanceType<typeof RosterRepository>>(KEYS.ROSTER_REPO);
     const roster = await rosterRepo.findByLeagueAndUser(leagueId, userId);
     if (!roster) throw new Error('User does not have a roster in this league');

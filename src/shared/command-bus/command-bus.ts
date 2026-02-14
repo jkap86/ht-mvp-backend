@@ -12,8 +12,8 @@
  * - Extensible: new handlers can be registered dynamically
  */
 
-import { logger } from '../config/logger.config';
-import { Command, CommandType } from './commands';
+import { logger } from '../../config/logger.config';
+import { Command, CommandType } from '../../domain/commands';
 
 /**
  * Result of executing a command
