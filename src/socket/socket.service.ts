@@ -739,6 +739,12 @@ export class SocketService {
     this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.TRADE.INVALIDATED, data);
   }
 
+  // Trade block events (emitted to league room)
+
+  emitTradeBlockUpdated(leagueId: number, data: any): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.TRADE.BLOCK_UPDATED, data);
+  }
+
   // Waiver events (emitted to league room)
 
   // Emit waiver claim submitted event

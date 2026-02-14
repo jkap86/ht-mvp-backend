@@ -211,6 +211,13 @@ export class SocketEventSubscriber implements DomainEventSubscriber {
         }
         break;
 
+      // Trade block events
+      case EventTypes.TRADE_BLOCK_UPDATED:
+        if (event.leagueId) {
+          socketService.emitTradeBlockUpdated(event.leagueId, event.payload);
+        }
+        break;
+
       // Waiver events
       case EventTypes.WAIVER_CLAIMED:
         if (event.leagueId) {

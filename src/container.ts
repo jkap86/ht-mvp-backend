@@ -165,6 +165,10 @@ export const KEYS = {
   DOMAIN_EVENT_BUS: 'domainEventBus',
   COMMAND_BUS: 'commandBus',
 
+  // Trade Block
+  TRADE_BLOCK_REPO: 'tradeBlockRepo',
+  TRADE_BLOCK_SERVICE: 'tradeBlockService',
+
   // Validation Services
   ROSTER_RULES_SERVICE: 'rosterRulesService',
 };

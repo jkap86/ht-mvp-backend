@@ -247,6 +247,7 @@ export const EventTypes = {
   TRADE_INVALIDATED: 'trade:invalidated',
   TRADE_VOTE_CAST: 'trade:vote_cast',
   PICK_TRADED: 'trade:pick_traded',
+  TRADE_BLOCK_UPDATED: 'trade_block:updated',
 
   // Waiver events
   WAIVER_CLAIMED: 'waiver:claimed',

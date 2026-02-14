@@ -85,6 +85,7 @@ export const SOCKET_EVENTS = {
     VETOED: 'trade:vetoed',
     VOTE_CAST: 'trade:vote_cast',
     INVALIDATED: 'trade:invalidated',
+    BLOCK_UPDATED: 'trade_block:updated',
   },
 
   // Waiver events

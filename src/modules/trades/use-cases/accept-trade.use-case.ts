@@ -414,6 +414,14 @@ export async function executeTrade(
         client
       );
     }
+
+    // Auto-remove traded players from their original roster's trade block
+    for (const item of playerItems) {
+      await client.query(
+        'DELETE FROM trade_block_items WHERE roster_id = $1 AND player_id = $2',
+        [item.fromRosterId, item.playerId!]
+      );
+    }
   }
 
   // Execute pick ownership transfers (collect events for after commit)

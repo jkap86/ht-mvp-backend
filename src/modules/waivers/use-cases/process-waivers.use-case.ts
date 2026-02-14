@@ -704,6 +704,12 @@ async function executeClaim(
         client
       );
 
+      // Auto-remove dropped player from trade block
+      await client.query(
+        'DELETE FROM trade_block_items WHERE roster_id = $1 AND player_id = $2',
+        [claim.rosterId, claim.dropPlayerId]
+      );
+
       // Add dropped player to waiver wire
       await addToWaiverWire(ctx, claim.leagueId, claim.dropPlayerId, claim.rosterId, client);
     } catch (err) {

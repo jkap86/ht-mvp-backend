@@ -82,6 +82,8 @@ import { InvitationsService } from './modules/invitations/invitations.service';
 import { DuesRepository } from './modules/dues/dues.repository';
 import { DuesService } from './modules/dues/dues.service';
 import { BestballService } from './modules/bestball/bestball.service';
+import { TradeBlockRepository } from './modules/trade-block/trade-block.repository';
+import { TradeBlockService } from './modules/trade-block/trade-block.service';
 
 // Engines
 import { DraftEngineFactory } from './engines';
@@ -579,6 +581,22 @@ function bootstrap(): void {
         container.resolve(KEYS.ROSTER_MUTATION_SERVICE),
         container.resolve(KEYS.EVENT_LISTENER_SERVICE),
         container.resolve(KEYS.PICK_ASSET_REPO)
+      )
+  );
+
+  // Trade block
+  container.register(
+    KEYS.TRADE_BLOCK_REPO,
+    () => new TradeBlockRepository(container.resolve(KEYS.POOL))
+  );
+  container.register(
+    KEYS.TRADE_BLOCK_SERVICE,
+    () =>
+      new TradeBlockService(
+        container.resolve(KEYS.POOL),
+        container.resolve(KEYS.TRADE_BLOCK_REPO),
+        container.resolve(KEYS.ROSTER_REPO),
+        container.resolve(KEYS.ROSTER_PLAYERS_REPO)
       )
   );
 

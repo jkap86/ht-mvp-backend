@@ -308,6 +308,12 @@ export class RosterService {
         league.activeLeagueSeasonId
       );
 
+      // Auto-remove from trade block
+      await client.query(
+        'DELETE FROM trade_block_items WHERE roster_id = $1 AND player_id = $2',
+        [globalRosterId, playerId]
+      );
+
       // Add to waiver wire if league has waivers enabled
       await this.addToWaiverWireIfEnabled(league, playerId, globalRosterId, client);
     });
@@ -410,6 +416,12 @@ export class RosterService {
         client,
         league.activeLeagueSeasonId,
         idempotencyKey
+      );
+
+      // Auto-remove dropped player from trade block
+      await client.query(
+        'DELETE FROM trade_block_items WHERE roster_id = $1 AND player_id = $2',
+        [globalRosterId, dropPlayerId]
       );
 
       // Add dropped player to waiver wire if league has waivers enabled

@@ -20,6 +20,7 @@ import {
   createUserSearchRoutes,
 } from '../invitations/invitations.routes';
 import { createDuesRoutes } from '../dues/dues.routes';
+import { createTradeBlockRoutes } from '../trade-block/trade-block.routes';
 import { asyncHandler } from '../../shared/async-handler';
 import { WaiversController } from '../waivers/waivers.controller';
 import { WaiversService } from '../waivers/waivers.service';
@@ -149,6 +150,9 @@ router.use('/:leagueId/invitations', createLeagueInvitationRoutes());
 
 // Mount user search routes - /api/leagues/:leagueId/users/*
 router.use('/:leagueId/users', createUserSearchRoutes());
+
+// Mount trade block routes - /api/leagues/:leagueId/trade-block/*
+router.use('/:leagueId/trade-block', createTradeBlockRoutes());
 
 // Mount dues routes - /api/leagues/:leagueId/dues/*
 router.use('/:leagueId/dues', createDuesRoutes());
