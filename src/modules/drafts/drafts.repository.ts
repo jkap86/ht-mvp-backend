@@ -329,6 +329,8 @@ export class DraftRepository {
       completedAt?: Date | null;
     };
     idempotencyKey?: string;
+    isAutoPick?: boolean;
+    timeUsedSeconds?: number;
   }): Promise<{
     selectionId: number;
     selectedAt: Date;
@@ -353,6 +355,8 @@ export class DraftRepository {
         completedAt?: Date | null;
       };
       idempotencyKey?: string;
+      isAutoPick?: boolean;
+      timeUsedSeconds?: number;
     }
   ): Promise<{
     selectionId: number;

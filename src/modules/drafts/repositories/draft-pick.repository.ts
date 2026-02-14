@@ -400,6 +400,7 @@ export class DraftPickRepository {
     };
     idempotencyKey?: string;
     isAutoPick?: boolean;
+    timeUsedSeconds?: number;
   }): Promise<{
     selectionId: number;
     selectedAt: Date;
@@ -431,6 +432,7 @@ export class DraftPickRepository {
       };
       idempotencyKey?: string;
       isAutoPick?: boolean;
+      timeUsedSeconds?: number;
     }
   ): Promise<{
     selectionId: number;
@@ -508,10 +510,10 @@ export class DraftPickRepository {
 
       // Insert the selection with previous owner tracking
       const selectionResult = await client.query(
-        `INSERT INTO vet_draft_pick_selections (draft_id, draft_pick_asset_id, pick_number, roster_id, previous_owner_roster_id, is_auto_pick)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO vet_draft_pick_selections (draft_id, draft_pick_asset_id, pick_number, roster_id, previous_owner_roster_id, is_auto_pick, time_used_seconds)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING *`,
-        [params.draftId, params.draftPickAssetId, params.expectedPickNumber, params.rosterId, previousOwnerRosterId, params.isAutoPick ?? false]
+        [params.draftId, params.draftPickAssetId, params.expectedPickNumber, params.rosterId, previousOwnerRosterId, params.isAutoPick ?? false, params.timeUsedSeconds ?? null]
       );
 
       // Transfer ownership of the pick asset to the drafter

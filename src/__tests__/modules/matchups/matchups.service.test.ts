@@ -317,7 +317,7 @@ describe('MatchupService', () => {
       expect(result[0].roster1TeamName).toBe('Team Alpha');
       expect(leagueRepo.isUserMember).toHaveBeenCalledWith(LEAGUE_ID, USER_ID);
       expect(leagueRepo.findById).toHaveBeenCalledWith(LEAGUE_ID);
-      expect(matchupsRepo.findByLeagueAndWeekWithDetails).toHaveBeenCalledWith(LEAGUE_ID, SEASON, WEEK);
+      expect(matchupsRepo.findByLeagueAndWeekWithDetails).toHaveBeenCalledWith(LEAGUE_ID, SEASON, WEEK, undefined);
     });
 
     it('should throw ForbiddenException when user is not a league member', async () => {
@@ -344,7 +344,7 @@ describe('MatchupService', () => {
       const result = await service.getAllMatchups(LEAGUE_ID, USER_ID);
 
       expect(result).toHaveLength(1);
-      expect(matchupsRepo.findAllByLeagueAndSeasonWithDetails).toHaveBeenCalledWith(LEAGUE_ID, SEASON);
+      expect(matchupsRepo.findAllByLeagueAndSeasonWithDetails).toHaveBeenCalledWith(LEAGUE_ID, SEASON, undefined);
     });
 
     it('should use seasonOverride when provided', async () => {
@@ -358,7 +358,8 @@ describe('MatchupService', () => {
       expect(result).toHaveLength(0);
       expect(matchupsRepo.findAllByLeagueAndSeasonWithDetails).toHaveBeenCalledWith(
         LEAGUE_ID,
-        overrideSeason
+        overrideSeason,
+        undefined
       );
     });
 

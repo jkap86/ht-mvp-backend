@@ -11,6 +11,7 @@ import {
   ValidationException,
   ConflictException,
 } from '../../../utils/exceptions';
+import { DraftStateError } from '../../../modules/drafts/draft-state.error';
 import { container, KEYS } from '../../../container';
 import * as locks from '../../../shared/locks';
 
@@ -357,16 +358,16 @@ describe('DraftPickService', () => {
       );
     });
 
-    it('should throw ValidationException when draft is not in progress', async () => {
+    it('should throw DraftStateError when draft is not in progress', async () => {
       mockLeagueRepo.isUserMember.mockResolvedValue(true);
       mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster);
       mockDraftRepo.findByIdWithClient.mockResolvedValue({ ...mockDraft, status: 'not_started' });
 
       await expect(draftPickService.makePick(1, 1, 'user-123', 100)).rejects.toThrow(
-        ValidationException
+        DraftStateError
       );
       await expect(draftPickService.makePick(1, 1, 'user-123', 100)).rejects.toThrow(
-        'not in progress'
+        'Cannot make pick - draft is not_started'
       );
     });
 

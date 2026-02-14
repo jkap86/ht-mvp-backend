@@ -576,6 +576,7 @@ export class DraftPickService {
 
         // Chess clock: deduct time and compute next state with clock context
         const isChessClock = (draft.settings as DraftSettings)?.timerMode === 'chess_clock';
+        let timeUsedSeconds: number | undefined;
         let chessClockContext: { remainingSeconds: number } | undefined;
         let clocksMap: Record<number, number> | undefined;
 
@@ -588,6 +589,7 @@ export class DraftPickService {
             ? new Date(draft.draftState.turnStartedAt) : (draft.startedAt ?? now);
           const elapsed = Math.max(0, (now.getTime() - turnStartedAt.getTime()) / 1000);
           await chessClockRepo.deductTimeWithClient(client, draftId, draft.currentRosterId!, elapsed);
+          timeUsedSeconds = elapsed;
 
           // Determine next picker's remaining seconds for deadline calculation
           const nextPick = draft.currentPick + 1;
@@ -621,6 +623,7 @@ export class DraftPickService {
           rosterId: userRoster.id,
           nextPickState: computedNextPickState,
           idempotencyKey,
+          timeUsedSeconds,
         });
 
         // Update turnStartedAt for chess clock mode

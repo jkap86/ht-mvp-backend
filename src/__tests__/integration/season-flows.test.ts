@@ -861,6 +861,7 @@ describe('Season Sanity Integration Tests', () => {
         getByLeague: jest.fn(),
         rotatePriority: jest.fn(),
         initializeForLeague: jest.fn(),
+        getMaxPriority: jest.fn().mockResolvedValue(2),
       } as unknown as jest.Mocked<WaiverPriorityRepository>;
 
       mockFaabRepo = {

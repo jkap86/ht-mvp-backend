@@ -193,8 +193,8 @@ describe('Socket Event Contracts', () => {
       ];
 
       for (const event of allEvents) {
-        // Event format: namespace:event_name (snake_case)
-        expect(event).toMatch(/^[a-z]+:[a-z_]+$/);
+        // Event format: namespace:event_name[:suffix] (snake_case, segments separated by colons)
+        expect(event).toMatch(/^[a-z][a-z_]*(:[a-z][a-z0-9_]*)+$/);
       }
     });
   });

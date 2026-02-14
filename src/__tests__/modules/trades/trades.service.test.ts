@@ -709,6 +709,7 @@ describe('TradesService', () => {
 
     it('should throw ValidationException when trade not in review', async () => {
       mockTradesRepo.findById.mockResolvedValue(mockTrade); // pending, not in_review
+      mockRosterRepo.findByLeagueAndUser.mockResolvedValue(thirdRoster);
 
       await expect(tradesService.voteTrade(1, 'user-789', 'approve')).rejects.toThrow(
         ValidationException
