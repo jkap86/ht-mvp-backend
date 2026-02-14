@@ -86,6 +86,8 @@ export enum LockDomain {
   LINEUP = 6,
   DRAFT = 7,
   JOB = 9,
+  LIVE_SCORING_ACTUAL = 10,
+  LIVE_SCORING_PROJECTED = 11,
 }
 
 /**
@@ -109,6 +111,8 @@ const LOCK_NAMESPACE_OFFSET: Record<LockDomain, number> = {
   [LockDomain.LINEUP]: 600_000_000,
   [LockDomain.DRAFT]: 700_000_000,
   [LockDomain.JOB]: 900_000_000,
+  [LockDomain.LIVE_SCORING_ACTUAL]: 1_000_000_000,
+  [LockDomain.LIVE_SCORING_PROJECTED]: 1_100_000_000,
 };
 
 /**
@@ -149,6 +153,14 @@ export function getLockId(domain: LockDomain, id: number): number {
   }
 
   return lockId;
+}
+
+/**
+ * Generates a composite lock ID from leagueId and week.
+ * Used for per-league-per-week locks (e.g., live scoring).
+ */
+export function makeCompositeLockId(leagueId: number, week: number): number {
+  return leagueId * 100 + week;
 }
 
 /**

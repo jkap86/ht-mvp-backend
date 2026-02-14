@@ -511,39 +511,60 @@ describe('FastAuctionService', () => {
       expect(mockLotRepo.createLotWithClient).toHaveBeenCalled();
     });
 
-    it('should return existing lot when idempotency key matches (idempotent nomination)', async () => {
+    it('should return existing lot when idempotency key matches (idempotent nomination via ON CONFLICT)', async () => {
       mockDraftRepo.findById.mockResolvedValue(mockFastDraft);
       mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster as any);
 
       const { runWithLock } = require('../../../shared/transaction-runner');
 
-      const existingLotRow = {
+      const existingLot = {
         id: 1,
-        draft_id: 1,
-        player_id: 100,
-        nominator_roster_id: 1,
-        current_bid: 5,
-        current_bidder_roster_id: 1,
-        bid_count: 0,
-        bid_deadline: new Date(Date.now() + 60000),
-        status: 'active',
-        winning_roster_id: null,
-        winning_bid: null,
-        created_at: new Date(),
-        updated_at: new Date(),
-        player_full_name: 'Test Player',
+        draftId: 1,
+        playerId: 100,
+        nominatorRosterId: 1,
+        currentBid: 5,
+        currentBidderRosterId: 1,
+        bidCount: 0,
+        bidDeadline: new Date(Date.now() + 60000),
+        status: 'active' as const,
+        winningRosterId: null,
+        winningBid: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
       };
 
       runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
         const mockClient = {
           query: jest.fn().mockImplementation((sql: string) => {
-            // Idempotency check: JOIN query returning lot + player name
-            if (sql.includes('idempotency_key') && sql.includes('JOIN players')) {
-              return { rows: [existingLotRow] };
+            // Draft state check
+            if (sql.includes('SELECT status, settings, current_roster_id')) {
+              return { rows: [{
+                status: 'in_progress',
+                settings: { auctionMode: 'fast', nominationSeconds: 60, minBid: 1, minIncrement: 1 },
+                current_roster_id: 1,
+              }] };
             }
-            return { rows: [] };
+            // Player drafted check
+            if (sql.includes('SELECT EXISTS')) {
+              return { rows: [{ exists: false }] };
+            }
+            // Opening bidder updates
+            return { rows: [], rowCount: 1 };
           }),
         };
+
+        // createLotWithClient returns existing lot (ON CONFLICT re-select)
+        mockLotRepo.createLotWithClient.mockResolvedValue(existingLot);
+        mockLotRepo.hasActiveLotWithClient.mockResolvedValue(false);
+        mockPlayerRepo.findByIdWithClient.mockResolvedValue(mockPlayer as any);
+        mockLotRepo.findLotByDraftAndPlayerWithClient.mockResolvedValue(null);
+        mockLotRepo.getRosterBudgetDataWithClient.mockResolvedValue({
+          spent: 0,
+          wonCount: 0,
+          leadingCommitment: 0,
+        });
+        mockLeagueRepo.findById.mockResolvedValue(mockLeague);
+
         return fn(mockClient);
       });
 
@@ -551,10 +572,8 @@ describe('FastAuctionService', () => {
 
       expect(result.lot).toBeDefined();
       expect(result.lot.id).toBe(1);
-      // Should return correct player name and bid from existing lot
-      expect(result.message).toBe('Test Player nominated for $5');
-      // Should NOT create a new lot
-      expect(mockLotRepo.createLotWithClient).not.toHaveBeenCalled();
+      // createLotWithClient is called but returns existing lot via ON CONFLICT
+      expect(mockLotRepo.createLotWithClient).toHaveBeenCalled();
     });
 
     it('should reject nomination when budget is exceeded', async () => {

@@ -201,15 +201,6 @@ export class RosterService {
 
     // Use runWithLock with league lock to prevent concurrent free agent claims
     const rosterPlayer = await runWithLock(this.db, LockDomain.LEAGUE, leagueId, async (client) => {
-      // Double-check idempotency inside lock
-      if (idempotencyKey) {
-        const existing = await this.transactionsRepo.findByIdempotencyKey(leagueId, globalRosterId, idempotencyKey, client);
-        if (existing) {
-          const rp = await this.rosterPlayersRepo.findByRosterAndPlayer(globalRosterId, playerId, client);
-          if (rp) return rp;
-        }
-      }
-
       // Get league for transaction recording
       const league = await this.leagueRepo.findById(leagueId);
       if (!league) {
@@ -357,15 +348,6 @@ export class RosterService {
 
     // Use runWithLock with league lock to prevent concurrent free agent claims
     const rosterPlayer = await runWithLock(this.db, LockDomain.LEAGUE, leagueId, async (client) => {
-      // Double-check idempotency inside lock
-      if (idempotencyKey) {
-        const existing = await this.transactionsRepo.findByIdempotencyKey(leagueId, globalRosterId, idempotencyKey, client);
-        if (existing) {
-          const rp = await this.rosterPlayersRepo.findByRosterAndPlayer(globalRosterId, addPlayerId, client);
-          if (rp) return rp;
-        }
-      }
-
       const league = await this.leagueRepo.findById(leagueId);
       if (!league) {
         throw new NotFoundException('League not found');

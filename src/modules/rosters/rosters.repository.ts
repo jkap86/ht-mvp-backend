@@ -430,22 +430,37 @@ export class RosterTransactionsRepository {
     idempotencyKey?: string
   ): Promise<RosterTransaction> {
     const db = client || this.db;
+    // Concurrency-safe: ON CONFLICT replaces check-then-insert race
     if (leagueSeasonId) {
       const result = await db.query(
         `INSERT INTO roster_transactions (league_id, roster_id, player_id, transaction_type, season, week, related_transaction_id, league_season_id, idempotency_key)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         ON CONFLICT (league_id, roster_id, idempotency_key) WHERE idempotency_key IS NOT NULL
+         DO NOTHING
          RETURNING *`,
         [leagueId, rosterId, playerId, transactionType, season, week, relatedTransactionId || null, leagueSeasonId, idempotencyKey || null]
       );
-      return rosterTransactionFromDatabase(result.rows[0]);
+      if (result.rows.length > 0) {
+        return rosterTransactionFromDatabase(result.rows[0]);
+      }
+      // Conflict: re-select existing transaction by idempotency key
+      const existing = await this.findByIdempotencyKey(leagueId, rosterId, idempotencyKey!, db as PoolClient);
+      return existing!;
     }
     const result = await db.query(
       `INSERT INTO roster_transactions (league_id, roster_id, player_id, transaction_type, season, week, related_transaction_id, idempotency_key)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (league_id, roster_id, idempotency_key) WHERE idempotency_key IS NOT NULL
+       DO NOTHING
        RETURNING *`,
       [leagueId, rosterId, playerId, transactionType, season, week, relatedTransactionId || null, idempotencyKey || null]
     );
 
-    return rosterTransactionFromDatabase(result.rows[0]);
+    if (result.rows.length > 0) {
+      return rosterTransactionFromDatabase(result.rows[0]);
+    }
+    // Conflict: re-select existing transaction by idempotency key
+    const existing = await this.findByIdempotencyKey(leagueId, rosterId, idempotencyKey!, db as PoolClient);
+    return existing!;
   }
 }

@@ -36,11 +36,14 @@ export class WaiverClaimsRepository {
     idempotencyKey?: string
   ): Promise<WaiverClaim> {
     const conn = client || this.db;
+    // Concurrency-safe: ON CONFLICT replaces check-then-insert race
     const result = await conn.query(
       `INSERT INTO waiver_claims (
         league_id, roster_id, player_id, drop_player_id,
         bid_amount, priority_at_claim, season, week, claim_order, idempotency_key
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      ON CONFLICT (league_id, roster_id, idempotency_key) WHERE idempotency_key IS NOT NULL
+      DO NOTHING
       RETURNING *`,
       [
         leagueId,
@@ -55,7 +58,18 @@ export class WaiverClaimsRepository {
         idempotencyKey || null,
       ]
     );
-    return waiverClaimFromDatabase(result.rows[0]);
+
+    if (result.rows.length > 0) {
+      return waiverClaimFromDatabase(result.rows[0]);
+    }
+
+    // Conflict: re-select existing claim by idempotency key
+    const existing = await conn.query(
+      `SELECT * FROM waiver_claims
+       WHERE league_id = $1 AND roster_id = $2 AND idempotency_key = $3`,
+      [leagueId, rosterId, idempotencyKey]
+    );
+    return waiverClaimFromDatabase(existing.rows[0]);
   }
 
   /**

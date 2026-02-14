@@ -285,20 +285,6 @@ export class SlowAuctionService {
           { domain: LockDomain.DRAFT, id: draftId },
         ],
         async (client) => {
-          // Idempotency check: return existing lot if same key was already used
-          if (idempotencyKey) {
-            const existingByKey = await client.query(
-              `SELECT id FROM auction_lots WHERE draft_id = $1 AND nominator_roster_id = $2 AND idempotency_key = $3`,
-              [draftId, rosterId, idempotencyKey]
-            );
-            if (existingByKey.rows.length > 0) {
-              const lotResult = await client.query('SELECT * FROM auction_lots WHERE id = $1', [existingByKey.rows[0].id]);
-              if (lotResult.rows.length > 0) {
-                return { lot: auctionLotFromDatabase(lotResult.rows[0]), message: 'Player nominated successfully' };
-              }
-            }
-          }
-
           // 4. Check roster has remaining slots (re-check under lock)
           const budgetData = await this.lotRepo.getRosterBudgetDataWithClient(client, draftId, rosterId);
           if (budgetData.wonCount >= rosterSlots) {

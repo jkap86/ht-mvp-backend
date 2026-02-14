@@ -63,15 +63,24 @@ export class LeagueOperationsRepository {
   ): Promise<LeagueOperation> {
     const db = client || this.pool;
 
+    // Concurrency-safe: ON CONFLICT replaces check-then-insert race
     const result = await db.query(
       `INSERT INTO league_operations
        (idempotency_key, league_id, user_id, operation_type, response_data)
        VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (idempotency_key, user_id, operation_type)
+       DO NOTHING
        RETURNING id, idempotency_key, league_id, user_id, operation_type,
                  response_data, created_at, expires_at`,
       [idempotencyKey, leagueId, userId, operationType, JSON.stringify(responseData)]
     );
 
-    return leagueOperationFromDatabase(result.rows[0]);
+    if (result.rows.length > 0) {
+      return leagueOperationFromDatabase(result.rows[0]);
+    }
+
+    // Conflict: re-select existing operation
+    const existing = await this.findByKey(leagueId, userId, idempotencyKey, client);
+    return existing!;
   }
 }

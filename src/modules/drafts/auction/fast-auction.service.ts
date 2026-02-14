@@ -201,25 +201,6 @@ export class FastAuctionService {
       LockDomain.DRAFT,
       draftId,
       async (client) => {
-        // Idempotency check: return existing lot if same key was already used
-        // Uses JOIN to fetch player name and actual bid in a single query
-        if (idempotencyKey) {
-          const existing = await client.query(
-            `SELECT al.*, p.full_name AS player_full_name
-             FROM auction_lots al
-             JOIN players p ON p.id = al.player_id
-             WHERE al.draft_id = $1 AND al.nominator_roster_id = $2 AND al.idempotency_key = $3`,
-            [draftId, roster.id, idempotencyKey]
-          );
-          if (existing.rows.length > 0) {
-            return {
-              lot: auctionLotFromDatabase(existing.rows[0]),
-              playerName: existing.rows[0].player_full_name,
-              openingBid: existing.rows[0].current_bid,
-            };
-          }
-        }
-
         // Re-validate draft state inside lock (prevents TOCTOU race)
         const draftCheck = await client.query('SELECT status, settings, current_roster_id FROM drafts WHERE id = $1 FOR UPDATE', [draftId]);
         if (draftCheck.rows.length === 0) {

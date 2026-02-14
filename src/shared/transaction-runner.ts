@@ -212,6 +212,70 @@ export async function runWithLocks<T>(
 }
 
 /**
+ * Run a function within a transaction with a try-lock (non-blocking).
+ * Returns `null` if the lock is already held (skip), otherwise returns the result.
+ * Uses pg_try_advisory_xact_lock which is released on COMMIT/ROLLBACK.
+ *
+ * @param pool - PostgreSQL pool
+ * @param domain - Lock domain from LockDomain enum
+ * @param id - Entity ID to lock
+ * @param fn - Async function receiving the client, to execute within transaction
+ * @returns Result of the callback, or null if lock was not acquired
+ *
+ * @example
+ * const result = await runWithTryLock(pool, LockDomain.LIVE_SCORING_ACTUAL, compositeId, async (client) => {
+ *   await updateScores(client, leagueId, week);
+ *   return { updated: true };
+ * });
+ * if (result === null) {
+ *   logger.debug('Skipped: lock held by another process');
+ * }
+ */
+export async function runWithTryLock<T>(
+  pool: PoolLike,
+  domain: LockDomain,
+  id: number,
+  fn: (client: PoolClient) => Promise<T>
+): Promise<T | null> {
+  const client = await pool.connect();
+  const eventBus = tryGetEventBus();
+
+  const execute = async () => {
+    try {
+      await client.query('BEGIN');
+
+      const lockId = getLockId(domain, id);
+      const lockResult = await client.query<{ pg_try_advisory_xact_lock: boolean }>(
+        'SELECT pg_try_advisory_xact_lock($1) AS pg_try_advisory_xact_lock',
+        [lockId]
+      );
+
+      if (!lockResult.rows[0].pg_try_advisory_xact_lock) {
+        await client.query('ROLLBACK');
+        return null;
+      }
+
+      const result = await fn(client);
+      await client.query('COMMIT');
+      eventBus?.commitTransaction();
+      return result;
+    } catch (error) {
+      eventBus?.rollbackTransaction();
+      await client.query('ROLLBACK');
+      throw error;
+    }
+  };
+
+  try {
+    return eventBus
+      ? await eventBus.runInTransaction(execute)
+      : await execute();
+  } finally {
+    client.release();
+  }
+}
+
+/**
  * Valid PostgreSQL isolation levels for runtime validation.
  * TypeScript types are erased at runtime, so we need a runtime check too.
  */
