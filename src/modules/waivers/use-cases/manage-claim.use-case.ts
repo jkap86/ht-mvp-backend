@@ -255,7 +255,8 @@ export async function reorderClaims(
     }
   );
 
-  // Fetch updated claims AFTER transaction commit
+  // Re-fetch after commit — getPendingByRoster returns claims
+  // sorted by claim_order ASC (canonical processing order).
   const updatedClaims = await ctx.claimsRepo.getPendingByRoster(roster.id);
 
   // Emit event AFTER transaction commit

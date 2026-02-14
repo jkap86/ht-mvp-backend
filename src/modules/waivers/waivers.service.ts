@@ -27,6 +27,7 @@ import { NotFoundException } from '../../utils/exceptions';
 // Import use-cases
 import {
   submitClaim as submitClaimUseCase,
+  computeChainWarnings as computeChainWarningsUseCase,
   getMyClaims as getMyClaimsUseCase,
   cancelClaim as cancelClaimUseCase,
   updateClaim as updateClaimUseCase,
@@ -90,6 +91,28 @@ export class WaiversService {
       request,
       idempotencyKey,
       leagueSeasonId
+    );
+  }
+
+  /**
+   * Compute non-blocking warnings for a newly submitted claim.
+   */
+  async computeChainWarnings(
+    leagueId: number,
+    claim: WaiverClaimWithDetails
+  ): Promise<string[]> {
+    return computeChainWarningsUseCase(
+      {
+        db: this.db,
+        priorityRepo: this.priorityRepo,
+        faabRepo: this.faabRepo,
+        claimsRepo: this.claimsRepo,
+        rosterRepo: this.rosterRepo,
+        rosterPlayersRepo: this.rosterPlayersRepo,
+        leagueRepo: this.leagueRepo,
+      },
+      claim,
+      leagueId
     );
   }
 

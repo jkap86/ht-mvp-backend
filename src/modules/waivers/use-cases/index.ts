@@ -1,4 +1,4 @@
-export { submitClaim, SubmitClaimContext } from './submit-claim.use-case';
+export { submitClaim, computeChainWarnings, SubmitClaimContext } from './submit-claim.use-case';
 export {
   getMyClaims,
   cancelClaim,
@@ -15,4 +15,9 @@ export {
   requiresWaiverClaim,
   WaiverInfoContext,
 } from './waiver-info.use-case';
-export { processLeagueClaims, ProcessWaiversContext } from './process-waivers.use-case';
+export {
+  processLeagueClaims,
+  compareClaims,
+  ProcessWaiversContext,
+  RosterProcessingState,
+} from './process-waivers.use-case';

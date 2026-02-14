@@ -33,7 +33,7 @@ import { logger } from '../../../config/logger.config';
  * In-memory state for a roster during round-based waiver processing.
  * Tracks changes from earlier rounds that affect later claims.
  */
-interface RosterProcessingState {
+export interface RosterProcessingState {
   rosterId: number;
   currentPriority: number;
   remainingBudget: number;
@@ -543,6 +543,40 @@ function extractRoundClaims(
 }
 
 /**
+ * Compare two waiver claims for sorting priority.
+ *
+ * Tie-break hierarchy:
+ *   FAAB:     bid DESC → priority ASC → timestamp ASC → claim ID ASC
+ *   Standard: priority ASC → timestamp ASC → claim ID ASC
+ *
+ * Returns negative if `a` wins (sorts first), positive if `b` wins.
+ */
+export function compareClaims(
+  a: WaiverClaimWithCurrentPriority,
+  b: WaiverClaimWithCurrentPriority,
+  waiverType: WaiverType,
+  rosterStates: Map<number, RosterProcessingState>
+): number {
+  const aPriority = rosterStates.get(a.rosterId)?.currentPriority ?? Infinity;
+  const bPriority = rosterStates.get(b.rosterId)?.currentPriority ?? Infinity;
+
+  if (waiverType === 'faab') {
+    // Higher bid wins
+    if (a.bidAmount !== b.bidAmount) return b.bidAmount - a.bidAmount;
+    // Tiebreaker: priority (lower wins)
+    if (aPriority !== bPriority) return aPriority - bPriority;
+  } else {
+    // Standard: lower priority number wins
+    if (aPriority !== bPriority) return aPriority - bPriority;
+  }
+  // Final tiebreaker: earlier claim wins
+  const timeDiff = a.createdAt.getTime() - b.createdAt.getTime();
+  if (timeDiff !== 0) return timeDiff;
+  // Deterministic tie-breaker for same-millisecond claims
+  return a.id - b.id;
+}
+
+/**
  * Sort claims by current roster state (priority/bid).
  * Uses in-memory state that reflects rotations from earlier rounds.
  */
@@ -551,27 +585,7 @@ function sortClaimsByRosterState(
   waiverType: WaiverType,
   rosterStates: Map<number, RosterProcessingState>
 ): WaiverClaimWithCurrentPriority[] {
-  return [...claims].sort((a, b) => {
-    const aState = rosterStates.get(a.rosterId);
-    const bState = rosterStates.get(b.rosterId);
-    const aPriority = aState?.currentPriority ?? Infinity;
-    const bPriority = bState?.currentPriority ?? Infinity;
-
-    if (waiverType === 'faab') {
-      // Higher bid wins
-      if (a.bidAmount !== b.bidAmount) return b.bidAmount - a.bidAmount;
-      // Tiebreaker: priority (lower wins)
-      if (aPriority !== bPriority) return aPriority - bPriority;
-    } else {
-      // Standard: lower priority number wins
-      if (aPriority !== bPriority) return aPriority - bPriority;
-    }
-    // Final tiebreaker: earlier claim wins
-    const timeDiff = a.createdAt.getTime() - b.createdAt.getTime();
-    if (timeDiff !== 0) return timeDiff;
-    // Deterministic tie-breaker for same-millisecond claims
-    return a.id - b.id;
-  });
+  return [...claims].sort((a, b) => compareClaims(a, b, waiverType, rosterStates));
 }
 
 /**

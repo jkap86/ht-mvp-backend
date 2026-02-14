@@ -204,6 +204,63 @@ export async function submitClaim(
   return claimWithDetails;
 }
 
+/**
+ * Compute non-blocking warnings after submitting claim #2+.
+ *
+ * Checks for:
+ * - Duplicate drop player: another pending claim with a lower claim_order
+ *   already drops the same player.
+ * - FAAB overcommitment: total pending bids exceed remaining budget.
+ */
+export async function computeChainWarnings(
+  ctx: SubmitClaimContext,
+  newClaim: WaiverClaimWithDetails,
+  leagueId: number
+): Promise<string[]> {
+  const warnings: string[] = [];
+
+  const pendingClaims = await ctx.claimsRepo.getPendingByRoster(newClaim.rosterId);
+  const otherClaims = pendingClaims.filter((c) => c.id !== newClaim.id);
+
+  if (otherClaims.length === 0) return warnings;
+
+  // Check duplicate drop player (only earlier claims = lower claimOrder)
+  if (newClaim.dropPlayerId) {
+    for (const other of otherClaims) {
+      if (
+        other.dropPlayerId === newClaim.dropPlayerId &&
+        other.claimOrder < newClaim.claimOrder
+      ) {
+        const dropName = newClaim.dropPlayerName || `Player #${newClaim.dropPlayerId}`;
+        warnings.push(
+          `${dropName} is also being dropped in claim #${other.claimOrder}. If that claim succeeds, this drop may fail.`
+        );
+        break; // Only warn once per drop player
+      }
+    }
+  }
+
+  // Check FAAB overcommitment
+  const league = await ctx.leagueRepo.findById(leagueId);
+  if (league) {
+    const settings = parseWaiverSettings(league.settings);
+    if (settings.waiverType === 'faab') {
+      const season = parseInt(league.season, 10);
+      const budget = await ctx.faabRepo.getByRoster(newClaim.rosterId, season);
+      if (budget) {
+        const totalBids = pendingClaims.reduce((sum, c) => sum + c.bidAmount, 0);
+        if (totalBids > budget.remainingBudget) {
+          warnings.push(
+            `Total pending bids ($${totalBids}) exceed remaining budget ($${budget.remainingBudget}). Later claims may fail.`
+          );
+        }
+      }
+    }
+  }
+
+  return warnings;
+}
+
 function emitClaimSubmitted(leagueId: number, claim: WaiverClaimWithDetails): void {
   const eventBus = tryGetEventBus();
   eventBus?.publish({

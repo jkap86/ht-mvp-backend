@@ -1,7 +1,9 @@
 import { Pool, PoolClient } from 'pg';
 import {
   processLeagueClaims,
+  compareClaims,
   ProcessWaiversContext,
+  RosterProcessingState,
 } from '../../../modules/waivers/use-cases/process-waivers.use-case';
 import {
   WaiverClaimWithCurrentPriority,
@@ -227,5 +229,89 @@ describe('Waiver Determinism & Atomicity', () => {
       undefined,
       expect.anything()
     );
+  });
+});
+
+describe('compareClaims()', () => {
+  function makeClaim(
+    overrides: Partial<WaiverClaimWithCurrentPriority>
+  ): WaiverClaimWithCurrentPriority {
+    return {
+      id: 1,
+      rosterId: 1,
+      playerId: 10,
+      bidAmount: 0,
+      createdAt: new Date('2024-01-01T00:00:00Z'),
+      claimOrder: 1,
+      status: 'pending',
+      priorityAtClaim: 1,
+      currentPriority: 1,
+      leagueId: 1,
+      dropPlayerId: null,
+      season: 2024,
+      week: 1,
+      ...overrides,
+    } as WaiverClaimWithCurrentPriority;
+  }
+
+  function makeStates(
+    entries: Array<{ rosterId: number; priority: number }>
+  ): Map<number, RosterProcessingState> {
+    const map = new Map<number, RosterProcessingState>();
+    for (const e of entries) {
+      map.set(e.rosterId, {
+        rosterId: e.rosterId,
+        currentPriority: e.priority,
+        remainingBudget: 100,
+        currentRosterSize: 5,
+        ownedPlayerIds: new Set(),
+        processedClaimIds: new Set(),
+      });
+    }
+    return map;
+  }
+
+  test('FAAB: same bid + same priority → earlier timestamp wins', () => {
+    const earlier = new Date('2024-01-01T10:00:00Z');
+    const later = new Date('2024-01-01T10:00:01Z');
+    const states = makeStates([
+      { rosterId: 1, priority: 3 },
+      { rosterId: 2, priority: 3 },
+    ]);
+
+    const a = makeClaim({ id: 10, rosterId: 1, bidAmount: 50, createdAt: earlier });
+    const b = makeClaim({ id: 20, rosterId: 2, bidAmount: 50, createdAt: later });
+
+    expect(compareClaims(a, b, 'faab', states)).toBeLessThan(0);
+    expect(compareClaims(b, a, 'faab', states)).toBeGreaterThan(0);
+  });
+
+  test('FAAB: same bid + same priority + same timestamp → lower ID wins', () => {
+    const now = new Date('2024-01-01T10:00:00Z');
+    const states = makeStates([
+      { rosterId: 1, priority: 3 },
+      { rosterId: 2, priority: 3 },
+    ]);
+
+    const a = makeClaim({ id: 5, rosterId: 1, bidAmount: 50, createdAt: now });
+    const b = makeClaim({ id: 99, rosterId: 2, bidAmount: 50, createdAt: now });
+
+    expect(compareClaims(a, b, 'faab', states)).toBeLessThan(0);
+    expect(compareClaims(b, a, 'faab', states)).toBeGreaterThan(0);
+  });
+
+  test('Standard: same priority → earlier timestamp wins', () => {
+    const earlier = new Date('2024-01-01T10:00:00Z');
+    const later = new Date('2024-01-01T10:00:01Z');
+    const states = makeStates([
+      { rosterId: 1, priority: 5 },
+      { rosterId: 2, priority: 5 },
+    ]);
+
+    const a = makeClaim({ id: 10, rosterId: 1, createdAt: earlier });
+    const b = makeClaim({ id: 20, rosterId: 2, createdAt: later });
+
+    expect(compareClaims(a, b, 'standard', states)).toBeLessThan(0);
+    expect(compareClaims(b, a, 'standard', states)).toBeGreaterThan(0);
   });
 });

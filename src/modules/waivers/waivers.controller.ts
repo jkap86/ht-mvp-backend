@@ -35,7 +35,9 @@ export class WaiversController {
       leagueSeasonId
     );
 
-    res.status(201).json(waiverClaimToResponse(claim));
+    const warnings = await this.waiversService.computeChainWarnings(leagueId, claim);
+
+    res.status(201).json({ ...waiverClaimToResponse(claim), warnings });
   };
 
   getClaims = async (req: AuthRequest, res: Response): Promise<void> => {
