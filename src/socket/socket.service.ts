@@ -583,6 +583,18 @@ export class SocketService {
     this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.DRAFT.PICK_TRADED, data);
   }
 
+  // Roster events (emitted to league room)
+
+  // Emit roster player added event
+  emitRosterPlayerAdded(leagueId: number, payload: any): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.ROSTER.PLAYER_ADDED, payload);
+  }
+
+  // Emit roster player dropped event
+  emitRosterPlayerDropped(leagueId: number, payload: any): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.ROSTER.PLAYER_DROPPED, payload);
+  }
+
   // Emit chat message to all users in league room
   emitChatMessage(leagueId: number, message: any): void {
     this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.CHAT.MESSAGE, message);

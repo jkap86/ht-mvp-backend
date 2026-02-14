@@ -18,7 +18,10 @@ export type MessageType =
   | 'member_kicked'
   | 'member_benched'
   | 'dues_paid'
-  | 'dues_unpaid';
+  | 'dues_unpaid'
+  | 'fa_add'
+  | 'fa_drop'
+  | 'fa_add_drop';
 
 /**
  * Metadata for system messages - stores event-specific details
@@ -45,6 +48,14 @@ export interface SystemMessageMetadata {
 
   // Generic
   eventType?: string;
+
+  // FA events
+  playerPosition?: string;
+  playerTeam?: string;
+  droppedPlayerName?: string;
+  droppedPlayerId?: number;
+  droppedPlayerPosition?: string;
+  droppedPlayerTeam?: string;
 
   // Trade details for 'details' mode (formatted trade breakdown)
   details?: string;

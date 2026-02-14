@@ -16,6 +16,7 @@ import { tryGetEventBus, EventTypes } from '../../shared/events';
 import { getActiveLeagueSeasonId } from '../../shared/season-context';
 import { SubmitKeeperSelectionUseCase } from './use-cases/submit-keeper-selection.use-case';
 import { ApplyKeepersToRostersUseCase } from './use-cases/apply-keepers-to-rosters.use-case';
+import { LeagueOperationsRepository } from './league-operations.repository';
 
 export function createSeasonRoutes(pool: Pool): Router {
   const router = Router();
@@ -23,8 +24,9 @@ export function createSeasonRoutes(pool: Pool): Router {
   const leagueSeasonRepo = new LeagueSeasonRepository(pool);
   const keeperRepo = new KeeperSelectionRepository(pool);
   const leagueRepo = container.resolve<LeagueRepository>(KEYS.LEAGUE_REPO);
+  const leagueOpsRepo = new LeagueOperationsRepository(pool);
 
-  const rolloverUseCase = new RolloverToNewSeasonUseCase(pool, leagueRepo, leagueSeasonRepo);
+  const rolloverUseCase = new RolloverToNewSeasonUseCase(pool, leagueRepo, leagueSeasonRepo, leagueOpsRepo);
   const submitKeepersUseCase = new SubmitKeeperSelectionUseCase(pool, leagueSeasonRepo, keeperRepo, leagueRepo);
   const applyKeepersUseCase = new ApplyKeepersToRostersUseCase(pool, keeperRepo, leagueSeasonRepo, leagueRepo);
 

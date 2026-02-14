@@ -109,6 +109,12 @@ export const SOCKET_EVENTS = {
     MATCHUP_SNAPSHOT: 'scoring:matchup_snapshot',
   },
 
+  // Roster events
+  ROSTER: {
+    PLAYER_ADDED: 'roster:player_added',
+    PLAYER_DROPPED: 'roster:player_dropped',
+  },
+
   // Member events
   MEMBER: {
     KICKED: 'member:kicked',

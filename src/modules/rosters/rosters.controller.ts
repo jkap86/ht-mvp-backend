@@ -52,9 +52,10 @@ export class RostersController {
     if (typeof playerId !== 'number' || !Number.isInteger(playerId)) {
       throw new ValidationException('playerId must be an integer');
     }
+    const idempotencyKey = req.headers['x-idempotency-key'] as string | undefined;
 
-    const rosterPlayer = await this.rosterService.addPlayer(leagueId, rosterId, playerId, userId);
-    res.status(201).json({ player: rosterPlayer });
+    const result = await this.rosterService.addPlayer(leagueId, rosterId, playerId, userId, idempotencyKey);
+    res.status(result.cached ? 200 : 201).json({ player: result.rosterPlayer });
   }
 
   // DELETE /api/leagues/:leagueId/rosters/:rosterId/players/:playerId
@@ -82,15 +83,17 @@ export class RostersController {
     if (typeof dropPlayerId !== 'number' || !Number.isInteger(dropPlayerId)) {
       throw new ValidationException('dropPlayerId must be an integer');
     }
+    const idempotencyKey = req.headers['x-idempotency-key'] as string | undefined;
 
-    const rosterPlayer = await this.rosterService.addDropPlayer(
+    const result = await this.rosterService.addDropPlayer(
       leagueId,
       rosterId,
       addPlayerId,
       dropPlayerId,
-      userId
+      userId,
+      idempotencyKey
     );
-    res.status(201).json({ player: rosterPlayer });
+    res.status(result.cached ? 200 : 201).json({ player: result.rosterPlayer });
   }
 
   // GET /api/leagues/:leagueId/free-agents

@@ -474,7 +474,9 @@ function bootstrap(): void {
         container.resolve(KEYS.ROSTER_REPO),
         container.resolve(KEYS.LEAGUE_REPO),
         container.resolve(KEYS.WAIVER_WIRE_REPO),
-        container.resolve(KEYS.ROSTER_MUTATION_SERVICE)
+        container.resolve(KEYS.ROSTER_MUTATION_SERVICE),
+        container.resolve(KEYS.EVENT_LISTENER_SERVICE),
+        container.resolve(KEYS.PLAYER_REPO)
       )
   );
 

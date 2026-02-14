@@ -341,6 +341,83 @@ export class EventListenerService {
   }
 
   /**
+   * Handle free agent add event
+   */
+  async handleFreeAgentAdd(
+    leagueId: number,
+    teamName: string,
+    playerName: string,
+    playerId: number,
+    position: string,
+    team: string
+  ): Promise<void> {
+    const shouldNotify = await this.shouldNotifyLeagueChat(leagueId, 'fa_add');
+    if (!shouldNotify) return;
+
+    await this.systemMessageService.createAndBroadcast(leagueId, 'fa_add', {
+      teamName,
+      playerName,
+      playerId,
+      playerPosition: position,
+      playerTeam: team,
+    });
+  }
+
+  /**
+   * Handle free agent drop event
+   */
+  async handleFreeAgentDrop(
+    leagueId: number,
+    teamName: string,
+    playerName: string,
+    playerId: number,
+    position: string,
+    team: string
+  ): Promise<void> {
+    const shouldNotify = await this.shouldNotifyLeagueChat(leagueId, 'fa_drop');
+    if (!shouldNotify) return;
+
+    await this.systemMessageService.createAndBroadcast(leagueId, 'fa_drop', {
+      teamName,
+      playerName,
+      playerId,
+      playerPosition: position,
+      playerTeam: team,
+    });
+  }
+
+  /**
+   * Handle free agent add/drop event
+   */
+  async handleFreeAgentAddDrop(
+    leagueId: number,
+    teamName: string,
+    addPlayerName: string,
+    addPlayerId: number,
+    addPlayerPosition: string,
+    addPlayerTeam: string,
+    dropPlayerName: string,
+    dropPlayerId: number,
+    dropPlayerPosition: string,
+    dropPlayerTeam: string
+  ): Promise<void> {
+    const shouldNotify = await this.shouldNotifyLeagueChat(leagueId, 'fa_add_drop');
+    if (!shouldNotify) return;
+
+    await this.systemMessageService.createAndBroadcast(leagueId, 'fa_add_drop', {
+      teamName,
+      playerName: addPlayerName,
+      playerId: addPlayerId,
+      playerPosition: addPlayerPosition,
+      playerTeam: addPlayerTeam,
+      droppedPlayerName: dropPlayerName,
+      droppedPlayerId: dropPlayerId,
+      droppedPlayerPosition: dropPlayerPosition,
+      droppedPlayerTeam: dropPlayerTeam,
+    });
+  }
+
+  /**
    * Check if a system message should be sent to league chat
    * based on league settings and optional user preference
    */

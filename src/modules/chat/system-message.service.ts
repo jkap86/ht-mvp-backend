@@ -35,6 +35,9 @@ const TEMPLATES: Record<MessageType, (m: SystemMessageMetadata) => string> = {
   member_benched: (m) => `${m.teamName} has been benched due to league size reduction`,
   dues_paid: (m) => `${m.teamName} paid their dues`,
   dues_unpaid: (m) => `${m.teamName}'s dues payment was unmarked`,
+  fa_add: (m) => `${m.teamName} added ${m.playerName} (${m.playerPosition} - ${m.playerTeam})`,
+  fa_drop: (m) => `${m.teamName} dropped ${m.playerName} (${m.playerPosition} - ${m.playerTeam})`,
+  fa_add_drop: (m) => `${m.teamName} added ${m.playerName} (${m.playerPosition} - ${m.playerTeam}), dropped ${m.droppedPlayerName} (${m.droppedPlayerPosition} - ${m.droppedPlayerTeam})`,
 };
 
 /**

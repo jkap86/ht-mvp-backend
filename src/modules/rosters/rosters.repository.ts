@@ -396,6 +396,25 @@ export class RosterTransactionsRepository {
   }
 
   /**
+   * Find a transaction by idempotency key (for replay detection)
+   */
+  async findByIdempotencyKey(
+    leagueId: number,
+    rosterId: number,
+    idempotencyKey: string,
+    client?: PoolClient
+  ): Promise<RosterTransaction | null> {
+    const db = client || this.db;
+    const result = await db.query(
+      `SELECT * FROM roster_transactions
+       WHERE league_id = $1 AND roster_id = $2 AND idempotency_key = $3`,
+      [leagueId, rosterId, idempotencyKey]
+    );
+    if (result.rows.length === 0) return null;
+    return rosterTransactionFromDatabase(result.rows[0]);
+  }
+
+  /**
    * Record a transaction
    */
   async create(
@@ -407,23 +426,24 @@ export class RosterTransactionsRepository {
     week: number,
     relatedTransactionId?: number,
     client?: PoolClient,
-    leagueSeasonId?: number
+    leagueSeasonId?: number,
+    idempotencyKey?: string
   ): Promise<RosterTransaction> {
     const db = client || this.db;
     if (leagueSeasonId) {
       const result = await db.query(
-        `INSERT INTO roster_transactions (league_id, roster_id, player_id, transaction_type, season, week, related_transaction_id, league_season_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `INSERT INTO roster_transactions (league_id, roster_id, player_id, transaction_type, season, week, related_transaction_id, league_season_id, idempotency_key)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING *`,
-        [leagueId, rosterId, playerId, transactionType, season, week, relatedTransactionId || null, leagueSeasonId]
+        [leagueId, rosterId, playerId, transactionType, season, week, relatedTransactionId || null, leagueSeasonId, idempotencyKey || null]
       );
       return rosterTransactionFromDatabase(result.rows[0]);
     }
     const result = await db.query(
-      `INSERT INTO roster_transactions (league_id, roster_id, player_id, transaction_type, season, week, related_transaction_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO roster_transactions (league_id, roster_id, player_id, transaction_type, season, week, related_transaction_id, idempotency_key)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
-      [leagueId, rosterId, playerId, transactionType, season, week, relatedTransactionId || null]
+      [leagueId, rosterId, playerId, transactionType, season, week, relatedTransactionId || null, idempotencyKey || null]
     );
 
     return rosterTransactionFromDatabase(result.rows[0]);

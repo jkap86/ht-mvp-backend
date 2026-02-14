@@ -2,6 +2,7 @@ import { Pool, PoolClient } from 'pg';
 import { RolloverToNewSeasonUseCase } from '../../modules/leagues/use-cases/rollover-to-new-season.use-case';
 import { LeagueRepository } from '../../modules/leagues/leagues.repository';
 import { LeagueSeasonRepository } from '../../modules/leagues/league-season.repository';
+import { LeagueOperationsRepository } from '../../modules/leagues/league-operations.repository';
 import { League } from '../../modules/leagues/leagues.model';
 import { LeagueSeason } from '../../modules/leagues/league-season.model';
 
@@ -85,10 +86,16 @@ describe('RolloverToNewSeasonUseCase', () => {
       create: jest.fn().mockResolvedValue(newSeason),
     } as unknown as jest.Mocked<LeagueSeasonRepository>;
 
+    const mockLeagueOpsRepo = {
+      findByKey: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockResolvedValue(undefined),
+    } as unknown as jest.Mocked<LeagueOperationsRepository>;
+
     useCase = new RolloverToNewSeasonUseCase(
       mockPool,
       mockLeagueRepo,
-      mockLeagueSeasonRepo
+      mockLeagueSeasonRepo,
+      mockLeagueOpsRepo
     );
   });
 

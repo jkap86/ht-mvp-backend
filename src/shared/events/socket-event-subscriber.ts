@@ -300,10 +300,17 @@ export class SocketEventSubscriber implements DomainEventSubscriber {
         break;
 
       // Roster events
+      case EventTypes.PLAYER_ADDED:
+        if (event.leagueId) {
+          socketService.emitRosterPlayerAdded(event.leagueId, event.payload);
+        }
+        break;
+      case EventTypes.PLAYER_DROPPED:
+        if (event.leagueId) {
+          socketService.emitRosterPlayerDropped(event.leagueId, event.payload);
+        }
+        break;
       case EventTypes.ROSTER_UPDATED:
-        // No direct socket method for this - roster updates are typically
-        // reflected through other events (waiver processed, trade completed, etc.)
-        // Skip for now as there's no generic roster:updated event handler
         break;
 
       // League events
