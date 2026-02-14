@@ -41,7 +41,8 @@ Located in `src/shared/locks.ts`:
 | Operation | Lock Type | Lock ID | Implementation |
 |-----------|-----------|---------|----------------|
 | Propose trade | None | N/A | Immediate insert |
-| Accept trade | TRADE + ROSTER | leagueId, rosterIds | Lock both rosters in ID order |
+| Accept trade | ROSTER + TRADE | rosterIds, leagueId | Lock both rosters in sorted order, then trade lock |
+| Process review-complete | ROSTER + TRADE | rosterIds, leagueId | Same lock pattern as accept trade |
 | Cancel trade | TRADE | tradeId | |
 | Expire trades | JOB | 900001 | `trade-expiration.job.ts` |
 

@@ -207,10 +207,10 @@ function setupBatchValidationMock(
     }
 
     // Handle atomic swap query for trade execution
+    // Params layout: [...playerIds, ...toRosterIds, playerIds[], fromRosterIds[]]
     if (typeof query === 'string' && query.includes('UPDATE roster_players')) {
-      // Return all player IDs as successfully swapped
-      const playerIdParams = params?.filter((p): p is number => typeof p === 'number' && !Array.isArray(p));
-      const playerIdsArray = Array.isArray(params?.[params.length - 1]) ? params![params.length - 1] as number[] : [];
+      // playerIds array is second-to-last param (last is fromRosterIds)
+      const playerIdsArray = Array.isArray(params?.[params!.length - 2]) ? params![params!.length - 2] as number[] : [];
       return Promise.resolve({
         rows: playerIdsArray.map((id: number) => ({ player_id: id, roster_id: 2 })),
         rowCount: playerIdsArray.length,

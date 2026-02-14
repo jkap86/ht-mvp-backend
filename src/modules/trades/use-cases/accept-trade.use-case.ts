@@ -358,6 +358,7 @@ export async function executeTrade(
     // Build atomic swap using SQL CASE statement
     // This updates all roster_id values in a single atomic operation
     const playerIds = playerItems.map((item) => item.playerId!);
+    const fromRosterIds = [...new Set(playerItems.map((item) => item.fromRosterId))];
 
     // Build WHEN clauses for CASE statement - map each player to its destination roster
     const whenClauses = playerItems.map((item, idx) =>
@@ -371,15 +372,16 @@ export async function executeTrade(
     ];
 
     // Execute atomic swap - all players move simultaneously, preventing duplicate ownership
+    // Defense-in-depth: roster_id filter ensures we only move players from expected rosters
     const swapResult = await client.query(
       `UPDATE roster_players
        SET roster_id = CASE
          ${whenClauses}
        END,
        acquired_type = 'trade'
-       WHERE player_id = ANY($${params.length + 1})
+       WHERE player_id = ANY($${params.length + 1}) AND roster_id = ANY($${params.length + 2})
        RETURNING player_id, roster_id`,
-      [...params, playerIds]
+      [...params, playerIds, fromRosterIds]
     );
 
     // Validate all players were swapped

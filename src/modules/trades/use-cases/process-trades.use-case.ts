@@ -2,7 +2,7 @@ import { Pool, PoolClient } from 'pg';
 import { TradesRepository, TradeVotesRepository } from '../trades.repository';
 import { Trade } from '../trades.model';
 import { EventTypes, tryGetEventBus } from '../../../shared/events';
-import { runWithLock, LockDomain } from '../../../shared/transaction-runner';
+import { runWithLock, runWithLocks, LockDomain } from '../../../shared/transaction-runner';
 import { executeTrade, AcceptTradeContext, PickTradedEvent } from './accept-trade.use-case';
 import type { EventListenerService } from '../../chat/event-listener.service';
 import { getMaxRosterSize } from '../../../shared/roster-defaults';
@@ -146,10 +146,13 @@ export async function processExpiredTrades(ctx: { tradesRepo: TradesRepository; 
  * Process trades with completed review period (called by job)
  *
  * LOCK CONTRACT:
- * - Acquires TRADE lock (300M + leagueId) via runWithLock per trade — serializes trade completion
- * - executeTrade() runs inside the same TRADE lock (no additional advisory locks)
+ * - Acquires ROSTER locks (200M + rosterId) for both participating rosters (sorted order)
+ * - Acquires TRADE lock (300M + leagueId) — serializes trade completion per league
+ * - Lock acquisition follows domain priority order (ROSTER before TRADE) to prevent deadlocks
+ * - executeTrade() runs inside these locks (no additional advisory locks)
  *
- * Only one lock domain (TRADE) is acquired per trade. No nested cross-domain advisory locks.
+ * Matches the lock contract of acceptTrade() to prevent races with concurrent
+ * waiver claims or FA pickups during trade execution.
  */
 export async function processReviewCompleteTrades(ctx: ProcessTradesContext): Promise<number> {
   const trades = await ctx.tradesRepo.findReviewCompleteTrades();
@@ -168,11 +171,17 @@ export async function processReviewCompleteTrades(ctx: ProcessTradesContext): Pr
     let pickTradedEvents: PickTradedEvent[] = [];
     let failureReason: string | undefined;
 
+    // Acquire ROSTER + TRADE locks in domain priority order (matches acceptTrade pattern)
+    const rosterIds = [trade.proposerRosterId, trade.recipientRosterId].sort((a, b) => a - b);
+    const locks = [
+      ...rosterIds.map((id) => ({ domain: LockDomain.ROSTER, id })),
+      { domain: LockDomain.TRADE, id: trade.leagueId },
+    ];
+
     try {
-      const result = await runWithLock(
+      const result = await runWithLocks(
         ctx.db,
-        LockDomain.TRADE,
-        trade.leagueId,
+        locks,
         async (client) => {
           // Read veto count inside the lock to prevent stale data from a vote cast
           // between the read and the lock acquisition
