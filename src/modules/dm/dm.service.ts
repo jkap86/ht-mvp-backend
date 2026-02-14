@@ -136,31 +136,38 @@ export class DmService {
   }
 
   /**
-   * Mark a conversation as read
+   * Mark a conversation as read.
+   * Only emits DM_READ event when the read marker actually advances.
    */
-  async markAsRead(userId: string, conversationId: number): Promise<void> {
+  async markAsRead(
+    userId: string,
+    conversationId: number
+  ): Promise<{ changed: boolean; conversationId: number }> {
     // Verify user is a participant
     const isParticipant = await this.dmRepo.isUserParticipant(conversationId, userId);
     if (!isParticipant) {
       throw new ForbiddenException('You are not a participant in this conversation');
     }
 
-    await this.dmRepo.markAsRead(conversationId, userId);
+    const result = await this.dmRepo.markAsRead(conversationId, userId);
 
-    // Optionally notify the other user that messages were read
-    const conversation = await this.dmRepo.findById(conversationId);
-    if (conversation) {
-      const otherUserId = this.dmRepo.getOtherUserId(conversation, userId);
-      const eventBus = tryGetEventBus();
-      eventBus?.publish({
-        type: EventTypes.DM_READ,
-        userId: otherUserId,
-        payload: {
-          conversationId,
-          readByUserId: userId,
-        },
-      });
+    if (result.changed) {
+      const conversation = await this.dmRepo.findById(conversationId);
+      if (conversation) {
+        const otherUserId = this.dmRepo.getOtherUserId(conversation, userId);
+        const eventBus = tryGetEventBus();
+        eventBus?.publish({
+          type: EventTypes.DM_READ,
+          userId: otherUserId,
+          payload: {
+            conversationId,
+            readByUserId: userId,
+          },
+        });
+      }
     }
+
+    return result;
   }
 
   /**

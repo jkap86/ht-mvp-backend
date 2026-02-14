@@ -55,16 +55,33 @@ describe('NotificationService', () => {
   });
 
   describe('unregisterDeviceToken', () => {
-    it('should scope deactivation to the requesting user', async () => {
+    it('should scope deactivation to the requesting user and only active tokens', async () => {
       const mockPool = createMockPool();
+      // Override to return rowCount: 1 while still capturing the query
+      mockPool.query.mockImplementationOnce(async (text: string, values?: unknown[]) => {
+        mockPool.queries.push({ text, values: values || [] });
+        return { rows: [], rowCount: 1 };
+      });
       const service = new NotificationService(mockPool as any);
 
-      await service.unregisterDeviceToken('user-a', 'some-token');
+      const result = await service.unregisterDeviceToken('user-a', 'some-token');
 
       expect(mockPool.queries).toHaveLength(1);
       const query = mockPool.queries[0];
       expect(query.text).toContain('user_id = $2');
+      expect(query.text).toContain('AND is_active = true');
       expect(query.values).toEqual(['some-token', 'user-a']);
+      expect(result).toEqual({ changed: true });
+    });
+
+    it('should return changed: false when token already inactive', async () => {
+      const mockPool = createMockPool();
+      const service = new NotificationService(mockPool as any);
+
+      // Default mock returns rowCount: 0
+      const result = await service.unregisterDeviceToken('user-a', 'some-token');
+
+      expect(result).toEqual({ changed: false });
     });
 
     it('should not affect tokens owned by other users', async () => {
@@ -72,12 +89,14 @@ describe('NotificationService', () => {
       const service = new NotificationService(mockPool as any);
 
       // User B tries to unregister user A's token — SQL includes user_id filter
-      await service.unregisterDeviceToken('user-b', 'user-a-token');
+      // Default mock returns rowCount: 0
+      const result = await service.unregisterDeviceToken('user-b', 'user-a-token');
 
       const query = mockPool.queries[0];
-      // The WHERE clause includes both token AND user_id
-      expect(query.text).toMatch(/WHERE\s+token\s*=\s*\$1\s+AND\s+user_id\s*=\s*\$2/);
+      // The WHERE clause includes token, user_id, AND is_active
+      expect(query.text).toMatch(/WHERE\s+token\s*=\s*\$1\s+AND\s+user_id\s*=\s*\$2\s+AND\s+is_active\s*=\s*true/);
       expect(query.values[1]).toBe('user-b');
+      expect(result).toEqual({ changed: false });
     });
   });
 });

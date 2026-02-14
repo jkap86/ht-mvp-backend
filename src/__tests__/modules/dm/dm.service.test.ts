@@ -259,9 +259,9 @@ describe('DmService', () => {
   });
 
   describe('markAsRead', () => {
-    it('should mark conversation as read and emit socket event', async () => {
+    it('should mark conversation as read and emit socket event when changed', async () => {
       mockDmRepo.isUserParticipant.mockResolvedValue(true);
-      mockDmRepo.markAsRead.mockResolvedValue(undefined);
+      mockDmRepo.markAsRead.mockResolvedValue({ changed: true, conversationId: 1 });
       mockDmRepo.findById.mockResolvedValue({
         id: 1,
         user1Id: 'user-123',
@@ -269,9 +269,23 @@ describe('DmService', () => {
       } as any);
       mockDmRepo.getOtherUserId.mockReturnValue('user-456');
 
-      await dmService.markAsRead('user-123', 1);
+      const result = await dmService.markAsRead('user-123', 1);
 
+      expect(result).toEqual({ changed: true, conversationId: 1 });
       expect(mockDmRepo.markAsRead).toHaveBeenCalledWith(1, 'user-123');
+      expect(mockDmRepo.findById).toHaveBeenCalledWith(1);
+    });
+
+    it('should skip event and findById when nothing changed', async () => {
+      mockDmRepo.isUserParticipant.mockResolvedValue(true);
+      mockDmRepo.markAsRead.mockResolvedValue({ changed: false, conversationId: 1 });
+
+      const result = await dmService.markAsRead('user-123', 1);
+
+      expect(result).toEqual({ changed: false, conversationId: 1 });
+      expect(mockDmRepo.markAsRead).toHaveBeenCalledWith(1, 'user-123');
+      expect(mockDmRepo.findById).not.toHaveBeenCalled();
+      expect(mockDmRepo.getOtherUserId).not.toHaveBeenCalled();
     });
 
     it('should throw ForbiddenException if not participant', async () => {

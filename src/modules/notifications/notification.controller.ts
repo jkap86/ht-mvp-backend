@@ -58,8 +58,8 @@ export class NotificationController {
     const userId = req.user!.userId;
     const { token } = req.body;
 
-    await this.notificationService.unregisterDeviceToken(userId, token);
-    res.status(204).send();
+    const result = await this.notificationService.unregisterDeviceToken(userId, token);
+    res.status(200).json({ ok: true, changed: result.changed });
   };
 
   /**

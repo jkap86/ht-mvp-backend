@@ -309,35 +309,41 @@ export class DmRepository {
   }
 
   /**
-   * Mark messages as read for a user in a conversation
-   * Updates the user's last_read_message_id to the latest message
-   * Uses atomic query to prevent race conditions
+   * Mark messages as read for a user in a conversation.
+   * Only updates when the read marker actually advances (monotonic).
+   * Returns whether any change was made.
    */
-  async markAsRead(conversationId: number, userId: string): Promise<void> {
-    // Atomic update - updates the appropriate column based on which user is reading
-    // Uses subquery to get latest message ID and CASE to determine which column to update
-    // Note: ORDER BY id DESC ensures consistency with unread count calculation (dm.id > last_read_message_id)
-    await this.pool.query(
-      `UPDATE conversations
-       SET user1_last_read_message_id = CASE
-             WHEN user1_id = $2 THEN (
-               SELECT id FROM direct_messages
-               WHERE conversation_id = $1
-               ORDER BY id DESC LIMIT 1
-             )
-             ELSE user1_last_read_message_id
-           END,
-           user2_last_read_message_id = CASE
-             WHEN user2_id = $2 THEN (
-               SELECT id FROM direct_messages
-               WHERE conversation_id = $1
-               ORDER BY id DESC LIMIT 1
-             )
-             ELSE user2_last_read_message_id
-           END
-       WHERE id = $1 AND (user1_id = $2 OR user2_id = $2)`,
+  async markAsRead(
+    conversationId: number,
+    userId: string
+  ): Promise<{ changed: boolean; conversationId: number }> {
+    const result = await this.pool.query(
+      `WITH latest_msg AS (
+        SELECT id FROM direct_messages
+        WHERE conversation_id = $1
+        ORDER BY id DESC LIMIT 1
+      )
+      UPDATE conversations c
+      SET user1_last_read_message_id = CASE
+            WHEN c.user1_id = $2 THEN lm.id
+            ELSE c.user1_last_read_message_id
+          END,
+          user2_last_read_message_id = CASE
+            WHEN c.user2_id = $2 THEN lm.id
+            ELSE c.user2_last_read_message_id
+          END
+      FROM latest_msg lm
+      WHERE c.id = $1
+        AND (c.user1_id = $2 OR c.user2_id = $2)
+        AND (
+          (c.user1_id = $2 AND (c.user1_last_read_message_id IS NULL OR c.user1_last_read_message_id < lm.id))
+          OR
+          (c.user2_id = $2 AND (c.user2_last_read_message_id IS NULL OR c.user2_last_read_message_id < lm.id))
+        )`,
       [conversationId, userId]
     );
+
+    return { changed: (result.rowCount ?? 0) > 0, conversationId };
   }
 
   /**

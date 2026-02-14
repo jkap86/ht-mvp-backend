@@ -350,14 +350,19 @@ export class NotificationService {
   }
 
   /**
-   * Unregister a device token (scoped to the owning user)
+   * Unregister a device token (scoped to the owning user).
+   * Only updates tokens that are currently active (idempotent).
    */
-  async unregisterDeviceToken(userId: string, token: string): Promise<void> {
-    await this.db.query(
-      'UPDATE device_tokens SET is_active = false, updated_at = NOW() WHERE token = $1 AND user_id = $2',
+  async unregisterDeviceToken(userId: string, token: string): Promise<{ changed: boolean }> {
+    const result = await this.db.query(
+      'UPDATE device_tokens SET is_active = false, updated_at = NOW() WHERE token = $1 AND user_id = $2 AND is_active = true',
       [token, userId]
     );
-    logger.info(`Device token unregistered for user ${userId}`);
+    const changed = (result.rowCount ?? 0) > 0;
+    if (changed) {
+      logger.info(`Device token unregistered for user ${userId}`);
+    }
+    return { changed };
   }
 
   /**

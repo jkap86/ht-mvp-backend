@@ -128,8 +128,8 @@ export class DmController {
     const userId = requireUserId(req);
     const conversationId = requireConversationId(req);
 
-    await this.dmService.markAsRead(userId, conversationId);
-    res.status(204).send();
+    const result = await this.dmService.markAsRead(userId, conversationId);
+    res.status(200).json({ ok: true, conversationId, changed: result.changed });
   };
 
   getUnreadCount = async (req: AuthRequest, res: Response) => {
