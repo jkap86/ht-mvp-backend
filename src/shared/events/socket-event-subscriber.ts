@@ -120,7 +120,7 @@ export class SocketEventSubscriber implements DomainEventSubscriber {
       case EventTypes.DRAFT_QUEUE_UPDATED:
         socketService.emitQueueUpdated(
           event.payload.draftId as number,
-          event.payload as { playerId: number; action: string }
+          event.payload as { playerId?: number; pickAssetId?: number; action: string }
         );
         break;
       case EventTypes.DRAFT_AUTODRAFT_TOGGLED:

@@ -10,6 +10,8 @@ export interface VetDraftPickSelection {
   draftPickAssetId: number;
   pickNumber: number;
   rosterId: number;
+  previousOwnerRosterId: number;
+  isAutoPick: boolean;
   selectedAt: Date;
 }
 
@@ -29,6 +31,8 @@ function selectionFromDatabase(row: any): VetDraftPickSelection {
     draftPickAssetId: row.draft_pick_asset_id,
     pickNumber: row.pick_number,
     rosterId: row.roster_id,
+    previousOwnerRosterId: row.previous_owner_roster_id,
+    isAutoPick: row.is_auto_pick ?? false,
     selectedAt: row.selected_at,
   };
 }
@@ -44,15 +48,17 @@ export class VetDraftPickSelectionRepository {
     draftPickAssetId: number,
     pickNumber: number,
     rosterId: number,
+    previousOwnerRosterId: number,
+    isAutoPick?: boolean,
     client?: PoolClient
   ): Promise<VetDraftPickSelection> {
     const queryRunner = client || this.db;
     const result = await queryRunner.query(
       `INSERT INTO vet_draft_pick_selections
-        (draft_id, draft_pick_asset_id, pick_number, roster_id)
-       VALUES ($1, $2, $3, $4)
+        (draft_id, draft_pick_asset_id, pick_number, roster_id, previous_owner_roster_id, is_auto_pick)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING *`,
-      [draftId, draftPickAssetId, pickNumber, rosterId]
+      [draftId, draftPickAssetId, pickNumber, rosterId, previousOwnerRosterId, isAutoPick ?? false]
     );
     return selectionFromDatabase(result.rows[0]);
   }

@@ -550,8 +550,8 @@ export class SocketService {
     this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.DRAFT.NEXT_PICK, pickInfo);
   }
 
-  // Emit queue update event when a player is removed from all queues
-  emitQueueUpdated(draftId: number, data: { playerId: number; action: string }): void {
+  // Emit queue update event when a player or pick asset is removed from all queues
+  emitQueueUpdated(draftId: number, data: { playerId?: number; pickAssetId?: number; action: string }): void {
     this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.DRAFT.QUEUE_UPDATED, data);
   }
 

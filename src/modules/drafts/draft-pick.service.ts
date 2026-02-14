@@ -44,7 +44,7 @@ export interface PickAssetSelectionResponse {
   pick_in_round: number;
   roster_id: number;
   player_id: null;
-  is_auto_pick: false;
+  is_auto_pick: boolean;
   picked_at: Date;
   draft_pick_asset_id: number;
   pick_asset_season: number;
@@ -121,7 +121,7 @@ export class DraftPickService {
       pick_in_round: totalRosters > 0 ? ((selection.pickNumber - 1) % totalRosters) + 1 : selection.pickNumber,
       roster_id: selection.rosterId,
       player_id: null,
-      is_auto_pick: false,
+      is_auto_pick: selection.isAutoPick,
       picked_at: selection.selectedAt,
       // Pick asset specific fields
       draft_pick_asset_id: selection.draftPickAssetId,
@@ -304,7 +304,7 @@ export class DraftPickService {
     const eventBus = tryGetEventBus();
     eventBus?.publish({
       type: EventTypes.DRAFT_PICK,
-      payload: { draftId, pick: enrichedPick },
+      payload: enrichedPick,
     });
 
     // Notify all users in draft that this player was removed from queues
@@ -580,7 +580,13 @@ export class DraftPickService {
     const eventBus = tryGetEventBus();
     eventBus?.publish({
       type: EventTypes.DRAFT_PICK,
-      payload: { draftId, pick: response },
+      payload: { draftId, ...response },
+    });
+
+    // Notify all users in draft that this pick asset was removed from queues
+    eventBus?.publish({
+      type: EventTypes.DRAFT_QUEUE_UPDATED,
+      payload: { draftId, pickAssetId: draftPickAssetId, action: 'removed' },
     });
 
     if (nextPickState.status !== 'completed') {

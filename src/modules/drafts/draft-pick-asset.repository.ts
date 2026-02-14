@@ -613,6 +613,69 @@ export class DraftPickAssetRepository {
   }
 
   /**
+   * Get available pick assets for a vet draft using an existing client (for transactions).
+   * Same logic as getAvailablePickAssetsForVetDraft but uses a transaction client.
+   */
+  async getAvailablePickAssetsForVetDraftWithClient(
+    client: PoolClient,
+    leagueId: number,
+    vetDraftId: number,
+    season: number,
+    maxRounds?: number
+  ): Promise<DraftPickAssetWithDetails[]> {
+    const params: (number | string)[] = [leagueId, season, vetDraftId];
+    let roundFilter = '';
+    if (maxRounds !== undefined && maxRounds > 0) {
+      params.push(maxRounds);
+      roundFilter = `AND dpa.round <= $${params.length}`;
+    }
+
+    const result = await client.query(
+      `SELECT
+        ${PICK_ASSET_COLUMNS_ALIASED},
+        orig_u.username as original_username,
+        owner_u.username as current_owner_username,
+        COALESCE(orig_r.settings->>'teamName', orig_u.username) as original_team_name,
+        COALESCE(owner_r.settings->>'teamName', owner_u.username) as current_owner_team_name
+       FROM draft_pick_assets dpa
+       JOIN rosters orig_r ON dpa.original_roster_id = orig_r.id
+       JOIN users orig_u ON orig_r.user_id = orig_u.id
+       JOIN rosters owner_r ON dpa.current_owner_roster_id = owner_r.id
+       JOIN users owner_u ON owner_r.user_id = owner_u.id
+       WHERE dpa.league_id = $1
+         AND dpa.season = $2
+         ${roundFilter}
+         -- Exclude picks already selected in this vet draft
+         AND NOT EXISTS (
+           SELECT 1 FROM vet_draft_pick_selections vdps
+           WHERE vdps.draft_id = $3 AND vdps.draft_pick_asset_id = dpa.id
+         )
+         -- Exclude picks already used in any rookie draft
+         AND NOT EXISTS (
+           SELECT 1 FROM draft_picks dp
+           WHERE dp.draft_pick_asset_id = dpa.id
+         )
+         -- Exclude picks in pending/active trades
+         AND NOT EXISTS (
+           SELECT 1 FROM trade_items ti
+           JOIN trades t ON ti.trade_id = t.id
+           WHERE ti.draft_pick_asset_id = dpa.id
+             AND t.status IN ('pending', 'countered', 'accepted', 'in_review')
+         )
+       ORDER BY dpa.round, dpa.original_pick_position`,
+      params
+    );
+
+    return result.rows.map((row) => ({
+      ...draftPickAssetFromDatabase(row),
+      originalTeamName: row.original_team_name,
+      originalUsername: row.original_username,
+      currentOwnerTeamName: row.current_owner_team_name,
+      currentOwnerUsername: row.current_owner_username,
+    }));
+  }
+
+  /**
    * Get distinct seasons that have pick assets for a league
    */
   async getSeasons(leagueId: number): Promise<number[]> {

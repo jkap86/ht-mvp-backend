@@ -1373,7 +1373,7 @@ export class DraftStateService {
     const { draftId } = params;
     const pool = container.resolve<Pool>(KEYS.POOL);
 
-    const { response, nextPickState } = await runInDraftTransaction(
+    const { response, nextPickState, chessClocks } = await runInDraftTransaction(
       pool,
       draftId,
       async (client) => {
@@ -1390,12 +1390,47 @@ export class DraftStateService {
           ? await this.pickAssetRepo.findByDraftIdWithClient(client, draftId)
           : [];
 
-        // Compute next state (as if a pick was made)
+        // Chess clock: deduct skipped picker's time and get next picker's budget
+        const isChessClock = this.isChessClockMode(draft);
+        let chessClockContext: { remainingSeconds: number } | undefined;
+        let clocksMap: Record<number, number> | undefined;
+
+        if (isChessClock) {
+          const chessClockRepo = this.getChessClockRepo();
+          const now = new Date();
+
+          // Deduct elapsed time from the skipped picker's budget
+          await this.deductChessClockTime(client, chessClockRepo, draft, now);
+
+          // Peek at next picker to determine their remaining budget for deadline calculation
+          const totalRosters = draftOrder.length;
+          const nextPick = draft.currentPick + 1;
+          const totalPicks = totalRosters * draft.rounds;
+          if (nextPick <= totalPicks) {
+            const actualNextPicker = engine.getActualPickerForPickNumber?.(
+              draft, draftOrder, pickAssets, nextPick
+            );
+            const nextPickerRosterId = actualNextPicker?.rosterId ??
+              engine.getPickerForPickNumber(draft, draftOrder, nextPick)?.rosterId;
+            if (nextPickerRosterId) {
+              const nextRemaining = await chessClockRepo.getRemainingWithClient(
+                client, draftId, nextPickerRosterId
+              );
+              chessClockContext = { remainingSeconds: nextRemaining };
+            }
+          }
+
+          // Load all clocks for event payload (inside transaction for consistency)
+          clocksMap = await chessClockRepo.getClockMapWithClient(client, draftId);
+        }
+
+        // Compute next state (as if a pick was made), with chess clock context
         const computedNextPickState = this.computeNextPickState(
           draft,
           draftOrder,
           engine,
-          pickAssets
+          pickAssets,
+          chessClockContext
         );
 
         // Update draft state without recording a pick
@@ -1406,6 +1441,10 @@ export class DraftStateService {
           pickDeadline: computedNextPickState.pickDeadline,
           status: computedNextPickState.status,
           completedAt: computedNextPickState.completedAt,
+          // Update turnStartedAt for chess clock mode
+          ...(isChessClock && computedNextPickState.status !== 'completed'
+            ? { draftState: { ...draft.draftState, turnStartedAt: new Date().toISOString() } }
+            : {}),
         });
 
         if (computedNextPickState.status === 'completed') {
@@ -1425,11 +1464,12 @@ export class DraftStateService {
         return {
           response: draftToResponse(updatedDraft),
           nextPickState: computedNextPickState,
+          chessClocks: clocksMap,
         };
       }
     );
 
-    // Emit next pick event
+    // Emit next pick event AFTER transaction commits
     const eventBus = tryGetEventBus();
     if (nextPickState.status !== 'completed') {
       eventBus?.publish({
@@ -1437,6 +1477,7 @@ export class DraftStateService {
         payload: {
           draftId,
           ...nextPickState,
+          ...(chessClocks ? { chessClocks } : {}),
         },
       });
     } else {
@@ -1657,7 +1698,7 @@ export class DraftStateService {
     const eventBus = tryGetEventBus();
     eventBus?.publish({
       type: EventTypes.DRAFT_PICK,
-      payload: { draftId, pick: enrichedPick },
+      payload: enrichedPick,
     });
 
     eventBus?.publish({

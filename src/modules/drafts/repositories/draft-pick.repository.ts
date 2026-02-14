@@ -399,6 +399,7 @@ export class DraftPickRepository {
       completedAt?: Date | null;
     };
     idempotencyKey?: string;
+    isAutoPick?: boolean;
   }): Promise<{
     selectionId: number;
     selectedAt: Date;
@@ -429,6 +430,7 @@ export class DraftPickRepository {
         completedAt?: Date | null;
       };
       idempotencyKey?: string;
+      isAutoPick?: boolean;
     }
   ): Promise<{
     selectionId: number;
@@ -491,8 +493,9 @@ export class DraftPickRepository {
       }
 
       // Defensive validation: verify pick asset belongs to this draft's league
+      // Also capture current_owner_roster_id for undo tracking
       const assetCheck = await client.query(
-        'SELECT league_id FROM draft_pick_assets WHERE id = $1',
+        'SELECT league_id, current_owner_roster_id FROM draft_pick_assets WHERE id = $1',
         [params.draftPickAssetId]
       );
       if (assetCheck.rows.length === 0) {
@@ -501,13 +504,14 @@ export class DraftPickRepository {
       if (assetCheck.rows[0].league_id !== currentDraft.leagueId) {
         throw new ConflictException('Pick asset does not belong to this league');
       }
+      const previousOwnerRosterId = assetCheck.rows[0].current_owner_roster_id;
 
-      // Insert the selection
+      // Insert the selection with previous owner tracking
       const selectionResult = await client.query(
-        `INSERT INTO vet_draft_pick_selections (draft_id, draft_pick_asset_id, pick_number, roster_id)
-         VALUES ($1, $2, $3, $4)
+        `INSERT INTO vet_draft_pick_selections (draft_id, draft_pick_asset_id, pick_number, roster_id, previous_owner_roster_id, is_auto_pick)
+         VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING *`,
-        [params.draftId, params.draftPickAssetId, params.expectedPickNumber, params.rosterId]
+        [params.draftId, params.draftPickAssetId, params.expectedPickNumber, params.rosterId, previousOwnerRosterId, params.isAutoPick ?? false]
       );
 
       // Transfer ownership of the pick asset to the drafter
@@ -646,12 +650,13 @@ export class DraftPickRepository {
         // Undo pick-asset selection
         await client.query('DELETE FROM vet_draft_pick_selections WHERE id = $1', [lastAssetSelection.id]);
 
-        // Revert pick asset ownership back to original roster
+        // Revert pick asset ownership back to the previous owner (not original_roster_id,
+        // which could be wrong if the pick was traded before the vet draft)
         await client.query(
           `UPDATE draft_pick_assets
-           SET current_owner_roster_id = original_roster_id, updated_at = CURRENT_TIMESTAMP
-           WHERE id = $1`,
-          [lastAssetSelection.draft_pick_asset_id]
+           SET current_owner_roster_id = $1, updated_at = CURRENT_TIMESTAMP
+           WHERE id = $2`,
+          [lastAssetSelection.previous_owner_roster_id, lastAssetSelection.draft_pick_asset_id]
         );
 
         undoneSelection = {

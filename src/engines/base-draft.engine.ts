@@ -38,6 +38,8 @@ interface AutoPickEventData {
   assetResponse?: Record<string, any>;
   /** Player ID (for queue update event) */
   playerId?: number;
+  /** Pick asset ID (for queue update event on asset picks) */
+  pickAssetId?: number;
   /** Next pick info (null if draft completed) */
   nextPickInfo?: NextPickDetails | null;
   /** Next pick state (for asset picks with richer data) */
@@ -548,8 +550,36 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     }
 
     // Fall back to best available player
-    const result = await this.performAutoPickPlayer(draft, draftOrder, null, false, client, chessClockContext, timeUsedSeconds);
-    if (chessClocks) result.eventData.chessClocks = chessClocks;
+    let fallbackResult: AutoPickInternalResult | null = null;
+    try {
+      fallbackResult = await this.performAutoPickPlayer(draft, draftOrder, null, false, client, chessClockContext, timeUsedSeconds);
+    } catch (_playerError) {
+      // No available players - try pick assets if enabled
+      fallbackResult = null;
+    }
+
+    // If no player available and includeRookiePicks is enabled, try best available pick asset
+    if (!fallbackResult && includeRookiePicks) {
+      const settings = draft.settings as DraftSettings;
+      const pickAssetRepo = container.resolve<DraftPickAssetRepository>(KEYS.PICK_ASSET_REPO);
+      const availableAssets = await pickAssetRepo.getAvailablePickAssetsForVetDraftWithClient(
+        client,
+        draft.leagueId,
+        draft.id,
+        settings.rookiePicksSeason!,
+        settings.rookiePicksRounds
+      );
+
+      if (availableAssets.length > 0) {
+        fallbackResult = await this.performAutoPickAsset(draft, draftOrder, availableAssets[0].id, client, chessClockContext, timeUsedSeconds);
+      }
+    }
+
+    if (!fallbackResult) {
+      throw new Error(`No available players or pick assets for auto-pick in draft ${draft.id}`);
+    }
+
+    if (chessClocks) fallbackResult.eventData.chessClocks = chessClocks;
 
     // Update turnStartedAt for chess clock mode after autopick
     if (isChessClock) {
@@ -561,7 +591,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
       });
     }
 
-    return result;
+    return fallbackResult;
   }
 
   /**
@@ -729,6 +759,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
       rosterId: draft.currentRosterId!,
       nextPickState,
       idempotencyKey: `autopick-asset-${draft.id}-${draft.currentPick}`,
+      isAutoPick: true,
     };
     // Use WithClient variant if a client is provided (caller already holds the lock),
     // otherwise fall back to the standalone transaction variant
@@ -797,6 +828,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
         type: 'asset',
         draftId: draft.id,
         assetResponse: response,
+        pickAssetId: pickAssetId,
         nextPickState,
         completedDraftResponse,
       },
@@ -1072,6 +1104,18 @@ export abstract class BaseDraftEngine implements IDraftEngine {
           ...eventData.assetResponse!,
         },
       });
+
+      // Publish queue update event for pick asset removal
+      if (eventData.pickAssetId) {
+        eventBus?.publish({
+          type: EventTypes.DRAFT_QUEUE_UPDATED,
+          payload: {
+            draftId: eventData.draftId,
+            pickAssetId: eventData.pickAssetId,
+            action: 'removed',
+          },
+        });
+      }
 
       const nextPickState = eventData.nextPickState!;
       if (nextPickState.status !== 'completed') {
