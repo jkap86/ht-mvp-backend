@@ -1033,12 +1033,35 @@ export abstract class BaseDraftEngine implements IDraftEngine {
       nextRosterId = originalPicker?.rosterId || null;
     }
 
-    const pickDeadline = this.calculatePickDeadline(draft);
+    // Chess clock: load next picker's remaining budget for deadline calculation
+    const isChessClock = (draft.settings as DraftSettings)?.timerMode === 'chess_clock';
+    let deadlineContext: PickDeadlineContext | undefined;
+
+    if (isChessClock && nextRosterId) {
+      try {
+        const chessClockRepo = container.resolve<DraftChessClockRepository>(KEYS.CHESS_CLOCK_REPO);
+        const nextRemaining = await chessClockRepo.getRemainingWithClient(client, draft.id, nextRosterId);
+        deadlineContext = { chessClockRemainingSeconds: nextRemaining };
+      } catch (error) {
+        logger.warn(`Failed to fetch chess clock for draft ${draft.id}, using default deadline`, error);
+      }
+    }
+
+    const pickDeadline = this.calculatePickDeadline(draft, deadlineContext);
+
+    // Build the draft state update, including turnStartedAt for chess clock mode
+    const draftStateUpdate = isChessClock
+      ? `, draft_state = jsonb_set(COALESCE(draft_state, '{}'::jsonb), '{turnStartedAt}', to_jsonb($6::text))`
+      : '';
+    const params: any[] = [nextPick, nextRound, nextRosterId, pickDeadline, draft.id];
+    if (isChessClock) {
+      params.push(new Date().toISOString());
+    }
 
     await client.query(
       `UPDATE drafts SET current_pick = $1, current_round = $2, current_roster_id = $3,
-       pick_deadline = $4, updated_at = CURRENT_TIMESTAMP WHERE id = $5`,
-      [nextPick, nextRound, nextRosterId, pickDeadline, draft.id]
+       pick_deadline = $4, updated_at = CURRENT_TIMESTAMP${draftStateUpdate} WHERE id = $5`,
+      params
     );
 
     return {

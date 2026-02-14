@@ -285,6 +285,7 @@ export class DraftRepository {
     };
     idempotencyKey?: string;
     isAutoPick?: boolean;
+    timeUsedSeconds?: number;
   }): Promise<{ pick: DraftPick; draft: Draft }> {
     return this.pick.makePickAndAdvanceTx(params);
   }
@@ -308,6 +309,7 @@ export class DraftRepository {
       };
       idempotencyKey?: string;
       isAutoPick?: boolean;
+      timeUsedSeconds?: number;
     }
   ): Promise<{ pick: DraftPick; draft: Draft }> {
     return this.pick.makePickAndAdvanceTxWithClient(client, params);
