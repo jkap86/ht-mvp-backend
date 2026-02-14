@@ -34,6 +34,9 @@ export interface AuctionSettings {
 /** Player pool options for draft eligibility */
 export type PlayerPoolType = 'veteran' | 'rookie' | 'college';
 
+/** Timer mode for drafts */
+export type TimerMode = 'per_pick' | 'chess_clock';
+
 /** Draft settings that extend auction settings with player pool filtering */
 export interface DraftSettings extends Partial<AuctionSettings> {
   playerPool?: PlayerPoolType[];  // default: ['veteran', 'rookie']
@@ -49,6 +52,12 @@ export interface DraftSettings extends Partial<AuctionSettings> {
   overnightPauseStart?: string;
   /** Overnight pause window: end time in HH:MM format (UTC) */
   overnightPauseEnd?: string;
+  /** Timer mode: per_pick (default) or chess_clock */
+  timerMode?: TimerMode;
+  /** Total seconds for chess clock mode (e.g. 1800 for 30 min) */
+  chessClockTotalSeconds?: number;
+  /** Minimum seconds per pick when chess clock budget is depleted (default 10) */
+  chessClockMinPickSeconds?: number;
 }
 
 /** Default auction settings */
@@ -113,6 +122,15 @@ export interface DraftPick {
   playerPosition?: string;
   playerTeam?: string;
   username?: string;
+  /** Seconds used for this pick (chess clock mode) */
+  timeUsedSeconds?: number;
+}
+
+/** Chess clock entry for a single roster in a draft */
+export interface ChessClockEntry {
+  draftId: number;
+  rosterId: number;
+  remainingSeconds: number;
 }
 
 export function draftFromDatabase(row: any): Draft {
@@ -187,6 +205,8 @@ export interface DraftResponse {
   created_at: Date;
   updated_at: Date;
   label: string;
+  /** Chess clock remaining seconds per roster (only present in chess clock mode) */
+  chess_clocks?: Record<number, number>;
 }
 
 /** DraftResponse extended with optional warnings (e.g. schedule generation failure) */

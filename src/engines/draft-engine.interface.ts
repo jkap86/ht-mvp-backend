@@ -43,6 +43,8 @@ export interface PickDeadlineContext {
   pickNumber?: number;
   /** The round number (for future round-specific deadlines) */
   round?: number;
+  /** Remaining chess clock seconds for the next picker (chess clock mode) */
+  chessClockRemainingSeconds?: number;
 }
 
 /**

@@ -76,6 +76,7 @@ export class DraftPickMapper {
       playerPosition: row.player_position,
       playerTeam: row.player_team,
       username: row.username,
+      timeUsedSeconds: row.time_used_seconds != null ? parseFloat(row.time_used_seconds) : undefined,
     };
   }
 

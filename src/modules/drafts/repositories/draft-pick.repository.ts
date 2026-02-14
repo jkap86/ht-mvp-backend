@@ -258,6 +258,7 @@ export class DraftPickRepository {
     };
     idempotencyKey?: string;
     isAutoPick?: boolean;
+    timeUsedSeconds?: number;
   }): Promise<{ pick: DraftPick; draft: Draft }> {
     return runWithLock(this.db, LockDomain.DRAFT, params.draftId, (client) =>
       this.makePickAndAdvanceTxWithClient(client, params)
@@ -287,6 +288,7 @@ export class DraftPickRepository {
       };
       idempotencyKey?: string;
       isAutoPick?: boolean;
+      timeUsedSeconds?: number;
     }
   ): Promise<{ pick: DraftPick; draft: Draft }> {
     return (async () => {
@@ -344,8 +346,8 @@ export class DraftPickRepository {
 
       // Insert the pick
       const pickResult = await client.query(
-        `INSERT INTO draft_picks (draft_id, pick_number, round, pick_in_round, roster_id, player_id, idempotency_key, is_auto_pick)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `INSERT INTO draft_picks (draft_id, pick_number, round, pick_in_round, roster_id, player_id, idempotency_key, is_auto_pick, time_used_seconds)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING *`,
         [
           params.draftId,
@@ -356,6 +358,7 @@ export class DraftPickRepository {
           params.playerId,
           params.idempotencyKey || null,
           params.isAutoPick ?? false,
+          params.timeUsedSeconds ?? null,
         ]
       );
 

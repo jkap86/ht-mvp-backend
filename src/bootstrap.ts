@@ -48,6 +48,7 @@ import { DraftStateService } from './modules/drafts/draft-state.service';
 import { DraftQueueService } from './modules/drafts/draft-queue.service';
 import { AuctionLotRepository } from './modules/drafts/auction/auction-lot.repository';
 import { DraftPickAssetRepository } from './modules/drafts/draft-pick-asset.repository';
+import { DraftChessClockRepository } from './modules/drafts/repositories/draft-chess-clock.repository';
 import { VetDraftPickSelectionRepository } from './modules/drafts/vet-draft-pick-selection.repository';
 import { DerbyRepository } from './modules/drafts/derby/derby.repository';
 import { DerbyService } from './modules/drafts/derby/derby.service';
@@ -349,6 +350,11 @@ function bootstrap(): void {
   container.register(
     KEYS.VET_PICK_SELECTION_REPO,
     () => new VetDraftPickSelectionRepository(container.resolve(KEYS.POOL))
+  );
+
+  container.register(
+    KEYS.CHESS_CLOCK_REPO,
+    () => new DraftChessClockRepository(container.resolve(KEYS.POOL))
   );
 
   // Derby (draft order selection mode)

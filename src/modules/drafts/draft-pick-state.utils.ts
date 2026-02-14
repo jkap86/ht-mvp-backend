@@ -29,6 +29,11 @@ export interface NextPickState {
   completedAt?: Date | null;
 }
 
+/** Context for chess clock deadline calculation */
+export interface ChessClockContext {
+  remainingSeconds: number;
+}
+
 /**
  * Pre-compute the next pick state without making any DB changes.
  *
@@ -46,13 +51,15 @@ export interface NextPickState {
  * @param draftOrder - The draft order entries
  * @param engine - The draft engine (provides pick order logic and deadline calculation)
  * @param pickAssets - Draft pick assets for traded pick awareness (default: [])
+ * @param chessClockContext - Optional chess clock context for the next picker
  * @returns The computed next pick state
  */
 export function computeNextPickState(
   draft: Draft,
   draftOrder: DraftOrderEntry[],
   engine: IDraftEngine,
-  pickAssets: DraftPickAsset[] = []
+  pickAssets: DraftPickAsset[] = [],
+  chessClockContext?: ChessClockContext
 ): NextPickState {
   const totalRosters = draftOrder.length;
   const totalPicks = totalRosters * draft.rounds;
@@ -86,7 +93,9 @@ export function computeNextPickState(
   const originalPicker = engine.getPickerForPickNumber(draft, draftOrder, nextPick);
   const nextPickerRosterId = actualPicker?.rosterId ?? originalPicker?.rosterId ?? null;
 
-  const pickDeadline = engine.calculatePickDeadline(draft);
+  const pickDeadline = engine.calculatePickDeadline(draft, {
+    chessClockRemainingSeconds: chessClockContext?.remainingSeconds,
+  });
 
   return {
     currentPick: nextPick,

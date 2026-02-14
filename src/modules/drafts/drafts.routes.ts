@@ -144,6 +144,9 @@ router.post(
   asyncHandler(draftController.makePick)
 );
 
+// GET /api/leagues/:leagueId/drafts/:draftId/chess-clocks
+router.get('/:draftId/chess-clocks', apiReadLimiter, asyncHandler(draftController.getChessClocks));
+
 // GET /api/leagues/:leagueId/drafts/:draftId/auction/state
 router.get('/:draftId/auction/state', apiReadLimiter, asyncHandler(draftController.getAuctionState));
 

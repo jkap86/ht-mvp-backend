@@ -29,6 +29,9 @@ export const auctionSettingsSchema = z.object({
   min_increment: z.number().int().min(1).default(1),
 });
 
+/** Timer mode schema */
+export const timerModeSchema = z.enum(['per_pick', 'chess_clock']).default('per_pick');
+
 export const createDraftSchema = z.object({
   draft_type: draftTypeSchema.default('snake'),
   rounds: z
@@ -51,7 +54,21 @@ export const createDraftSchema = z.object({
   rookie_picks_season: z.number().int().min(2020).max(2100).optional(),
   /** Number of rounds for generated rookie picks (1-5, default 5) */
   rookie_picks_rounds: z.number().int().min(1).max(5).optional(),
-});
+  /** Timer mode: per_pick (default) or chess_clock */
+  timer_mode: timerModeSchema.optional(),
+  /** Total seconds for chess clock mode (60-7200) */
+  chess_clock_total_seconds: z.number().int().min(60).max(7200).optional(),
+  /** Minimum seconds per pick when chess clock budget is depleted (5-60, default 10) */
+  chess_clock_min_pick_seconds: z.number().int().min(5).max(60).default(10).optional(),
+}).refine(
+  (data) => {
+    if (data.timer_mode === 'chess_clock' && !data.chess_clock_total_seconds) {
+      return false;
+    }
+    return true;
+  },
+  { message: 'chess_clock_total_seconds is required when timer_mode is chess_clock' }
+);
 
 /** Schema for updating draft settings (commissioner only) */
 export const updateDraftSettingsSchema = z.object({
@@ -77,6 +94,12 @@ export const updateDraftSettingsSchema = z.object({
   rookie_picks_season: z.number().int().min(2020).max(2100).optional(),
   /** Number of rounds for generated rookie picks (1-5, default 5) */
   rookie_picks_rounds: z.number().int().min(1).max(5).optional(),
+  /** Timer mode: per_pick or chess_clock */
+  timer_mode: timerModeSchema.optional(),
+  /** Total seconds for chess clock mode */
+  chess_clock_total_seconds: z.number().int().min(60).max(7200).optional(),
+  /** Minimum seconds per pick when chess clock budget is depleted */
+  chess_clock_min_pick_seconds: z.number().int().min(5).max(60).optional(),
 });
 
 export const makePickSchema = z.object({

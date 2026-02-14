@@ -14,6 +14,8 @@ import {
 import { ValidationException } from '../../utils/exceptions';
 import { ActionDispatcher } from './action-handlers';
 import { auctionLotToResponse, auctionBidHistoryToResponse } from './auction/auction.models';
+import { DraftChessClockRepository } from './repositories/draft-chess-clock.repository';
+import { container, KEYS } from '../../container';
 
 /**
  * Convert budget to snake_case for API response
@@ -84,6 +86,9 @@ export class DraftController {
       include_rookie_picks,
       rookie_picks_season,
       rookie_picks_rounds,
+      timer_mode,
+      chess_clock_total_seconds,
+      chess_clock_min_pick_seconds,
     } = req.body;
 
     const draft = await this.draftService.createDraft(leagueId, userId, {
@@ -97,6 +102,9 @@ export class DraftController {
       rookiePicksSeason: rookie_picks_season,
       rookiePicksRounds: rookie_picks_rounds,
       leagueSeasonId,
+      timerMode: timer_mode,
+      chessClockTotalSeconds: chess_clock_total_seconds,
+      chessClockMinPickSeconds: chess_clock_min_pick_seconds,
     });
     res.status(201).json(draft);
   };
@@ -433,6 +441,9 @@ export class DraftController {
       overnight_pause_enabled,
       overnight_pause_start,
       overnight_pause_end,
+      timer_mode,
+      chess_clock_total_seconds,
+      chess_clock_min_pick_seconds,
     } = req.body;
 
     // Handle scheduled_start: parse date string, or pass null to clear it
@@ -456,6 +467,9 @@ export class DraftController {
       overnightPauseEnabled: overnight_pause_enabled,
       overnightPauseStart: overnight_pause_start,
       overnightPauseEnd: overnight_pause_end,
+      timerMode: timer_mode,
+      chessClockTotalSeconds: chess_clock_total_seconds,
+      chessClockMinPickSeconds: chess_clock_min_pick_seconds,
     });
 
     res.status(200).json(draft);
@@ -499,5 +513,20 @@ export class DraftController {
     );
 
     res.status(200).json(result);
+  };
+
+  getChessClocks = async (req: AuthRequest, res: Response) => {
+    const userId = requireUserId(req);
+    const leagueId = requireLeagueId(req);
+    const draftId = requireDraftId(req);
+
+    // Verify membership
+    if (this.authService) {
+      await this.authService.ensureLeagueMember(leagueId, userId);
+    }
+
+    const chessClockRepo = container.resolve<DraftChessClockRepository>(KEYS.CHESS_CLOCK_REPO);
+    const chessClocks = await chessClockRepo.getClockMap(draftId);
+    res.status(200).json({ chess_clocks: chessClocks });
   };
 }

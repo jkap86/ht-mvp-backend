@@ -16,6 +16,7 @@ import { DraftOrderService } from './draft-order.service';
 import { DraftPickService } from './draft-pick.service';
 import { DraftStateService } from './draft-state.service';
 import { DraftPickAssetRepository } from './draft-pick-asset.repository';
+import { DraftChessClockRepository } from './repositories/draft-chess-clock.repository';
 import { EventTypes, tryGetEventBus } from '../../shared/events';
 import { logger } from '../../config/logger.config';
 import { container, KEYS } from '../../container';
@@ -133,7 +134,16 @@ export class DraftService {
       throw new NotFoundException('Draft not found');
     }
 
-    return draftToResponse(draft);
+    const response = draftToResponse(draft);
+
+    // Include chess clocks if in chess clock mode and draft is active
+    const settings = draft.settings as DraftSettings;
+    if (settings?.timerMode === 'chess_clock' && draft.status !== 'not_started') {
+      const chessClockRepo = container.resolve<DraftChessClockRepository>(KEYS.CHESS_CLOCK_REPO);
+      response.chess_clocks = await chessClockRepo.getClockMap(draftId);
+    }
+
+    return response;
   }
 
   async createDraft(
@@ -160,6 +170,9 @@ export class DraftService {
       rookiePicksSeason?: number;
       rookiePicksRounds?: number;
       leagueSeasonId?: number;
+      timerMode?: 'per_pick' | 'chess_clock';
+      chessClockTotalSeconds?: number;
+      chessClockMinPickSeconds?: number;
     }
   ): Promise<any> {
     const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
@@ -197,6 +210,20 @@ export class DraftService {
     }
     if (options.rookiePicksRounds !== undefined) {
       settings.rookiePicksRounds = options.rookiePicksRounds;
+    }
+
+    // Chess clock settings (only for snake/linear)
+    if (options.timerMode) {
+      if (options.timerMode === 'chess_clock' && options.draftType === 'auction') {
+        throw new ValidationException('Chess clock mode is not supported for auction drafts');
+      }
+      settings.timerMode = options.timerMode;
+    }
+    if (options.chessClockTotalSeconds !== undefined) {
+      settings.chessClockTotalSeconds = options.chessClockTotalSeconds;
+    }
+    if (options.chessClockMinPickSeconds !== undefined) {
+      settings.chessClockMinPickSeconds = options.chessClockMinPickSeconds;
     }
 
     // Get league for validation and roster config
@@ -636,6 +663,9 @@ export class DraftService {
       overnightPauseEnabled?: boolean;
       overnightPauseStart?: string;
       overnightPauseEnd?: string;
+      timerMode?: 'per_pick' | 'chess_clock';
+      chessClockTotalSeconds?: number;
+      chessClockMinPickSeconds?: number;
     }
   ): Promise<any> {
     // 1. Verify commissioner
@@ -741,6 +771,25 @@ export class DraftService {
     }
     if (updates.rookiePicksRounds !== undefined) {
       mergedSettings.rookiePicksRounds = updates.rookiePicksRounds;
+    }
+
+    // Handle chess clock settings
+    if (updates.timerMode !== undefined) {
+      // Prevent changing timer mode after draft starts
+      if (draft.status !== 'not_started') {
+        throw new ValidationException('Cannot change timer mode after draft has started');
+      }
+      const effectiveDraftType = updates.draftType || draft.draftType;
+      if (updates.timerMode === 'chess_clock' && effectiveDraftType === 'auction') {
+        throw new ValidationException('Chess clock mode is not supported for auction drafts');
+      }
+      mergedSettings.timerMode = updates.timerMode;
+    }
+    if (updates.chessClockTotalSeconds !== undefined) {
+      mergedSettings.chessClockTotalSeconds = updates.chessClockTotalSeconds;
+    }
+    if (updates.chessClockMinPickSeconds !== undefined) {
+      mergedSettings.chessClockMinPickSeconds = updates.chessClockMinPickSeconds;
     }
 
     // 6. Perform the update

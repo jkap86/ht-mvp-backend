@@ -9,3 +9,4 @@ export { DraftOrderRepository } from './draft-order.repository';
 export { DraftPickRepository } from './draft-pick.repository';
 export { DraftQueueRepository, type QueueEntry } from './draft-queue.repository';
 export { MatchupDraftRepository, type MatchupPickMetadata, type MatchupPickResult } from './matchup-draft.repository';
+export { DraftChessClockRepository } from './draft-chess-clock.repository';

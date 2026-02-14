@@ -30,6 +30,7 @@ import {
   computeNextPickState as computeNextPickStateShared,
   NextPickState,
 } from './draft-pick-state.utils';
+import { DraftChessClockRepository } from './repositories/draft-chess-clock.repository';
 import { container, KEYS } from '../../container';
 import { runInDraftTransaction } from '../../shared/locks';
 import { runWithLock, LockDomain } from '../../shared/transaction-runner';
@@ -195,34 +196,83 @@ export class DraftStateService {
       draftOrder.find((o) => o.rosterId === firstPickerRosterId) ??
       draftOrder.find((o) => o.draftPosition === 1);
 
+    // Check chess clock mode
+    const settings = draft.settings as DraftSettings;
+    const isChessClock = !isAuction && settings?.timerMode === 'chess_clock';
+
     // Set initial pick deadline
     let pickDeadline: Date | null = null;
+    const now = new Date();
     if (isFastAuction) {
       // For fast auctions, set nomination deadline using nominationSeconds from settings
       const nominationSeconds = draft.settings?.nominationSeconds ?? 45;
-      pickDeadline = new Date();
+      pickDeadline = new Date(now);
       pickDeadline.setSeconds(pickDeadline.getSeconds() + nominationSeconds);
     } else if (!isSlowAuction) {
-      // For snake/linear drafts, use pickTimeSeconds
-      pickDeadline = new Date();
-      pickDeadline.setSeconds(pickDeadline.getSeconds() + draft.pickTimeSeconds);
+      if (isChessClock) {
+        // Chess clock mode: first pick deadline = total budget
+        const chessClockTotalSeconds = settings.chessClockTotalSeconds ?? 1800;
+        pickDeadline = new Date(now.getTime() + chessClockTotalSeconds * 1000);
+      } else {
+        // For snake/linear drafts, use pickTimeSeconds
+        pickDeadline = new Date(now);
+        pickDeadline.setSeconds(pickDeadline.getSeconds() + draft.pickTimeSeconds);
+      }
     }
     // For slow auctions, no pick deadline (nominations are open to all teams)
 
-    const updatedDraft = await this.draftRepo.updateWithLock(
-      draftId,
-      {
-        status: 'in_progress',
-        startedAt: new Date(),
-        currentPick: 1,
-        currentRound: 1,
-        currentRosterId: firstPickerRosterId,
-        pickDeadline,
-      },
-      'not_started'
-    );
+    let updatedDraft: Draft;
+    let chessClocks: Record<number, number> | undefined;
+
+    if (isChessClock) {
+      // Chess clock mode: use transaction to atomically initialize clocks + update draft
+      const chessClockRepo = this.getChessClockRepo();
+      const chessClockTotalSeconds = settings.chessClockTotalSeconds ?? 1800;
+      const rosterIds = draftOrder.map((o) => o.rosterId);
+
+      updatedDraft = await runInDraftTransaction(this.db, draftId, async (client) => {
+        // Initialize chess clock entries for all rosters
+        await chessClockRepo.initializeWithClient(client, draftId, rosterIds, chessClockTotalSeconds);
+
+        // Update draft state
+        return await this.draftRepo.updateWithClient(client, draftId, {
+          status: 'in_progress',
+          startedAt: now,
+          currentPick: 1,
+          currentRound: 1,
+          currentRosterId: firstPickerRosterId,
+          pickDeadline,
+          draftState: {
+            ...draft.draftState,
+            turnStartedAt: now.toISOString(),
+          },
+        });
+      });
+
+      // Build chess clocks map for event payload
+      chessClocks = {};
+      for (const rosterId of rosterIds) {
+        chessClocks[rosterId] = chessClockTotalSeconds;
+      }
+    } else {
+      updatedDraft = await this.draftRepo.updateWithLock(
+        draftId,
+        {
+          status: 'in_progress',
+          startedAt: now,
+          currentPick: 1,
+          currentRound: 1,
+          currentRosterId: firstPickerRosterId,
+          pickDeadline,
+        },
+        'not_started'
+      );
+    }
 
     const response = draftToResponse(updatedDraft);
+    if (chessClocks) {
+      response.chess_clocks = chessClocks;
+    }
 
     // Emit events
     const eventBus = tryGetEventBus();
@@ -239,6 +289,7 @@ export class DraftStateService {
         currentRosterId: firstPickerRosterId, // Use traded-pick-aware ID
         pickDeadline,
         status: 'in_progress',
+        ...(chessClocks ? { chessClocks } : {}),
       },
     });
 
@@ -350,6 +401,45 @@ export class DraftStateService {
 
     // Non-fast-auction path (snake, linear, slow auction)
     const now = new Date();
+    const isChessClock = this.isChessClockMode(draft);
+
+    if (isChessClock && draft.currentRosterId) {
+      // Chess clock pause: deduct elapsed time and use chess clock remaining for pause state
+      const chessClockRepo = this.getChessClockRepo();
+      const { response: pauseResponse } = await runWithLock(this.db, LockDomain.DRAFT, draftId, async (client) => {
+        const freshDraft = await this.draftRepo.findByIdWithClient(client, draftId);
+        if (!freshDraft || freshDraft.status !== 'in_progress') {
+          throw new ValidationException('Can only pause a draft that is in progress');
+        }
+
+        // Deduct elapsed time from current picker's budget
+        const { newRemaining } = await this.deductChessClockTime(client, chessClockRepo, freshDraft, now);
+
+        const updatedDraft = await this.draftRepo.updateWithClient(client, draftId, {
+          status: 'paused',
+          pickDeadline: null,
+          draftState: {
+            ...freshDraft.draftState,
+            pausedAt: now.toISOString(),
+            pausedBy: userId,
+            remainingSeconds: newRemaining,
+            turnStartedAt: null,
+          },
+        });
+
+        return { response: draftToResponse(updatedDraft) };
+      });
+
+      const eventBus = tryGetEventBus();
+      eventBus?.publish({
+        type: EventTypes.DRAFT_PAUSED,
+        payload: { draftId, draft: pauseResponse },
+      });
+
+      await this.saveIdempotencyResult(idempotencyKey, draftId, userId, 'pause', pauseResponse);
+      return pauseResponse;
+    }
+
     let remainingSeconds: number | null = null;
     if (!isSlowAuction) {
       remainingSeconds = draft.pickDeadline
@@ -487,6 +577,64 @@ export class DraftStateService {
     }
 
     // Non-fast-auction path (snake, linear, slow auction)
+    const isChessClock = this.isChessClockMode(draft);
+
+    if (isChessClock && draft.currentRosterId) {
+      // Chess clock resume: load remaining from chess clock table
+      const chessClockRepo = this.getChessClockRepo();
+      const { response: resumeResponse, chessClocks, pickDeadline: resumeDeadline } =
+        await runWithLock(this.db, LockDomain.DRAFT, draftId, async (client) => {
+          const remaining = await chessClockRepo.getRemainingWithClient(
+            client, draftId, draft.currentRosterId!
+          );
+          const settings = draft.settings as DraftSettings;
+          const minSeconds = settings.chessClockMinPickSeconds ?? 10;
+          const effectiveSeconds = remaining > 0 ? remaining : minSeconds;
+          const now = new Date();
+          const deadline = new Date(now.getTime() + effectiveSeconds * 1000);
+
+          const updatedDraft = await this.draftRepo.updateWithClient(client, draftId, {
+            status: 'in_progress',
+            pickDeadline: deadline,
+            draftState: {
+              ...draft.draftState,
+              pausedAt: null,
+              pausedBy: null,
+              remainingSeconds: null,
+              turnStartedAt: now.toISOString(),
+            },
+          });
+
+          const clocksMap = await chessClockRepo.getClockMapWithClient(client, draftId);
+          return {
+            response: draftToResponse(updatedDraft),
+            chessClocks: clocksMap,
+            pickDeadline: deadline,
+          };
+        });
+
+      const eventBus = tryGetEventBus();
+      eventBus?.publish({
+        type: EventTypes.DRAFT_RESUMED,
+        payload: { draftId, draft: resumeResponse },
+      });
+      eventBus?.publish({
+        type: EventTypes.DRAFT_NEXT_PICK,
+        payload: {
+          draftId,
+          currentPick: draft.currentPick,
+          currentRound: draft.currentRound,
+          currentRosterId: draft.currentRosterId,
+          pickDeadline: resumeDeadline,
+          status: 'in_progress',
+          chessClocks,
+        },
+      });
+
+      await this.saveIdempotencyResult(idempotencyKey, draftId, userId, 'resume', resumeResponse);
+      return resumeResponse;
+    }
+
     let pickDeadline: Date | null = null;
     if (!isSlowAuction) {
       const remainingSeconds = draft.draftState?.remainingSeconds ?? draft.pickTimeSeconds;
@@ -669,6 +817,7 @@ export class DraftStateService {
       prevPickerRosterId,
       pickDeadline,
       updatedDraftStatus,
+      chessClocks,
     } = await runInDraftTransaction(pool, draftId, async (client) => {
       // Read fresh draft state inside lock
       const draft = await this.draftRepo.findByIdWithClient(client, draftId);
@@ -733,10 +882,45 @@ export class DraftStateService {
         computedPrevPickerRosterId = prevPicker?.rosterId || null;
       }
 
+      // Chess clock: restore time for the undone pick
+      const isChessClock = this.isChessClockMode(draft);
+      let chessClocks: Record<number, number> | undefined;
+
       // Calculate new deadline only if draft was in progress (not paused)
       const shouldSetDeadline = draft.status === 'in_progress' || wasCompleted;
       let computedPickDeadline: Date | null = null;
-      if (shouldSetDeadline) {
+
+      if (isChessClock && shouldSetDeadline && computedPrevPickerRosterId) {
+        const chessClockRepo = this.getChessClockRepo();
+
+        // Read the undone pick's time_used_seconds to restore it
+        const lastPickResult = await client.query(
+          `SELECT time_used_seconds FROM draft_picks
+           WHERE draft_id = $1 AND pick_number = $2`,
+          [draftId, draft.status === 'completed' ? totalRosters * draft.rounds : draft.currentPick - 1]
+        );
+        const timeUsed = lastPickResult.rows[0]?.time_used_seconds
+          ? parseFloat(lastPickResult.rows[0].time_used_seconds)
+          : 0;
+
+        // Restore time to the picker's budget
+        if (timeUsed > 0) {
+          await chessClockRepo.restoreTimeWithClient(
+            client, draftId, computedPrevPickerRosterId, timeUsed
+          );
+        }
+
+        // Load updated remaining for deadline calculation
+        const remaining = await chessClockRepo.getRemainingWithClient(
+          client, draftId, computedPrevPickerRosterId
+        );
+        const minSeconds = settings.chessClockMinPickSeconds ?? 10;
+        const effectiveSeconds = remaining > 0 ? remaining : minSeconds;
+        computedPickDeadline = new Date(Date.now() + effectiveSeconds * 1000);
+
+        // Load all clocks for event
+        chessClocks = await chessClockRepo.getClockMapWithClient(client, draftId);
+      } else if (shouldSetDeadline) {
         computedPickDeadline = new Date();
         computedPickDeadline.setSeconds(computedPickDeadline.getSeconds() + draft.pickTimeSeconds);
       }
@@ -745,6 +929,11 @@ export class DraftStateService {
       const targetStatus = wasCompleted
         ? 'in_progress'
         : (draft.status as 'in_progress' | 'paused');
+
+      // Build draftState updates for chess clock
+      const draftStateUpdates = isChessClock && shouldSetDeadline
+        ? { ...draft.draftState, turnStartedAt: new Date().toISOString() }
+        : undefined;
 
       // Delete the most recent pick using the client that already holds the lock
       const {
@@ -768,6 +957,13 @@ export class DraftStateService {
         throw new ValidationException('No picks to undo');
       }
 
+      // Update draftState with turnStartedAt for chess clock
+      if (draftStateUpdates) {
+        await this.draftRepo.updateWithClient(client, draftId, {
+          draftState: draftStateUpdates,
+        });
+      }
+
       // Build the undone item for socket event
       const computedUndoneItem: UndoneItem = undonePick || {
         id: undoneSelection!.id,
@@ -785,6 +981,7 @@ export class DraftStateService {
         prevPickerRosterId: computedPrevPickerRosterId,
         pickDeadline: computedPickDeadline,
         updatedDraftStatus: updatedDraft.status,
+        chessClocks,
       };
     });
 
@@ -804,6 +1001,7 @@ export class DraftStateService {
           currentRosterId: prevPickerRosterId,
           pickDeadline,
           status: 'in_progress',
+          ...(chessClocks ? { chessClocks } : {}),
         },
       });
     }
@@ -824,7 +1022,7 @@ export class DraftStateService {
     const pool = container.resolve<Pool>(KEYS.POOL);
     const playerRepo = container.resolve<PlayerRepository>(KEYS.PLAYER_REPO);
 
-    const { pick, updatedDraft, nextPickState, player } = await runInDraftTransaction(
+    const { pick, updatedDraft, nextPickState, player, chessClocks } = await runInDraftTransaction(
       pool,
       draftId,
       async (client) => {
@@ -883,12 +1081,48 @@ export class DraftStateService {
         const totalRosters = draftOrder.length;
         const pickInRound = engine.getPickInRound(draft.currentPick, totalRosters);
 
+        // Chess clock: deduct time and compute next state with clock context
+        const isChessClock = this.isChessClockMode(draft);
+        let timeUsedSeconds: number | undefined;
+        let chessClockContext: { remainingSeconds: number } | undefined;
+        let clocksMap: Record<number, number> | undefined;
+
+        if (isChessClock) {
+          const chessClockRepo = this.getChessClockRepo();
+          const now = new Date();
+
+          // Deduct time from current picker
+          const { elapsed } = await this.deductChessClockTime(client, chessClockRepo, draft, now);
+          timeUsedSeconds = elapsed;
+
+          // Determine next picker's remaining seconds for deadline calculation
+          const nextPick = draft.currentPick + 1;
+          const totalPicks = totalRosters * draft.rounds;
+          if (nextPick <= totalPicks) {
+            const actualNextPicker = engine.getActualPickerForPickNumber?.(
+              draft, draftOrder, pickAssets, nextPick
+            );
+            const nextPickerRosterId = actualNextPicker?.rosterId ??
+              engine.getPickerForPickNumber(draft, draftOrder, nextPick)?.rosterId;
+            if (nextPickerRosterId) {
+              const nextRemaining = await chessClockRepo.getRemainingWithClient(
+                client, draftId, nextPickerRosterId
+              );
+              chessClockContext = { remainingSeconds: nextRemaining };
+            }
+          }
+
+          // Load all clocks for event payload
+          clocksMap = await chessClockRepo.getClockMapWithClient(client, draftId);
+        }
+
         // Compute next pick state with FRESH data inside the lock
         const computedNextPickState = this.computeNextPickState(
           draft,
           draftOrder,
           engine,
-          pickAssets
+          pickAssets,
+          chessClockContext
         );
 
         // Make the pick using the client that already holds the lock
@@ -902,7 +1136,18 @@ export class DraftStateService {
           nextPickState: computedNextPickState,
           idempotencyKey,
           isAutoPick,
+          timeUsedSeconds,
         });
+
+        // Update turnStartedAt for chess clock mode
+        if (isChessClock && computedNextPickState.status !== 'completed') {
+          await this.draftRepo.updateWithClient(client, draftId, {
+            draftState: {
+              ...draft.draftState,
+              turnStartedAt: new Date().toISOString(),
+            },
+          });
+        }
 
         // If draft completed, run unified finalization inside the transaction
         if (computedNextPickState.status === 'completed') {
@@ -927,12 +1172,13 @@ export class DraftStateService {
           updatedDraft: result.draft,
           nextPickState: computedNextPickState,
           player: playerData,
+          chessClocks: clocksMap,
         };
       }
     );
 
     // Emit events AFTER transaction commits
-    this.emitPickEvents(draftId, pick, updatedDraft, nextPickState, player, isAutoPick);
+    this.emitPickEvents(draftId, pick, updatedDraft, nextPickState, player, isAutoPick, chessClocks);
 
     return { pick, draft: updatedDraft, nextPickState, player };
   }
@@ -1001,12 +1247,43 @@ export class DraftStateService {
       const totalRosters = draftOrder.length;
       const pickInRound = engine.getPickInRound(draft.currentPick, totalRosters);
 
+      // Chess clock: deduct time and compute next state with clock context
+      const isChessClock = this.isChessClockMode(draft);
+      let timeUsedSeconds: number | undefined;
+      let chessClockContext: { remainingSeconds: number } | undefined;
+      let clocksMap: Record<number, number> | undefined;
+
+      if (isChessClock) {
+        const chessClockRepo = this.getChessClockRepo();
+        const now = new Date();
+        const { elapsed } = await this.deductChessClockTime(client, chessClockRepo, draft, now);
+        timeUsedSeconds = elapsed;
+
+        const nextPick = draft.currentPick + 1;
+        const totalPicks = totalRosters * draft.rounds;
+        if (nextPick <= totalPicks) {
+          const actualNextPicker = engine.getActualPickerForPickNumber?.(
+            draft, draftOrder, pickAssets, nextPick
+          );
+          const nextPickerRosterId = actualNextPicker?.rosterId ??
+            engine.getPickerForPickNumber(draft, draftOrder, nextPick)?.rosterId;
+          if (nextPickerRosterId) {
+            const nextRemaining = await chessClockRepo.getRemainingWithClient(
+              client, draftId, nextPickerRosterId
+            );
+            chessClockContext = { remainingSeconds: nextRemaining };
+          }
+        }
+        clocksMap = await chessClockRepo.getClockMapWithClient(client, draftId);
+      }
+
       // Compute next pick state with fresh data inside the lock
       const computedNextPickState = this.computeNextPickState(
         draft,
         draftOrder,
         engine,
-        pickAssets
+        pickAssets,
+        chessClockContext
       );
 
       const idempotencyKey = `autopick-${draftId}-${draft.currentPick}`;
@@ -1022,7 +1299,18 @@ export class DraftStateService {
         nextPickState: computedNextPickState,
         idempotencyKey,
         isAutoPick: true,
+        timeUsedSeconds,
       });
+
+      // Update turnStartedAt for chess clock mode
+      if (isChessClock && computedNextPickState.status !== 'completed') {
+        await this.draftRepo.updateWithClient(client, draftId, {
+          draftState: {
+            ...draft.draftState,
+            turnStartedAt: new Date().toISOString(),
+          },
+        });
+      }
 
       // If draft completed, run unified finalization inside the transaction
       if (computedNextPickState.status === 'completed') {
@@ -1048,6 +1336,7 @@ export class DraftStateService {
         updatedDraft: pickResult.draft,
         nextPickState: computedNextPickState,
         player,
+        chessClocks: clocksMap,
       };
     });
 
@@ -1062,7 +1351,8 @@ export class DraftStateService {
       result.updatedDraft,
       result.nextPickState,
       result.player,
-      true
+      true,
+      result.chessClocks
     );
 
     return {
@@ -1198,6 +1488,39 @@ export class DraftStateService {
 
   // ============ Private Helper Methods ============
 
+  /** Check if a draft uses chess clock timer mode */
+  private isChessClockMode(draft: Draft): boolean {
+    return (draft.settings as DraftSettings)?.timerMode === 'chess_clock';
+  }
+
+  /** Get the chess clock repository from the container */
+  private getChessClockRepo(): DraftChessClockRepository {
+    return container.resolve<DraftChessClockRepository>(KEYS.CHESS_CLOCK_REPO);
+  }
+
+  /**
+   * Deduct chess clock time for the current picker.
+   * Returns the elapsed seconds that were deducted.
+   */
+  private async deductChessClockTime(
+    client: PoolClient,
+    chessClockRepo: DraftChessClockRepository,
+    draft: Draft,
+    now: Date
+  ): Promise<{ elapsed: number; newRemaining: number }> {
+    const turnStartedAt = draft.draftState?.turnStartedAt
+      ? new Date(draft.draftState.turnStartedAt)
+      : (draft.startedAt ?? now);
+    const elapsed = Math.max(0, (now.getTime() - turnStartedAt.getTime()) / 1000);
+    const newRemaining = await chessClockRepo.deductTimeWithClient(
+      client,
+      draft.id,
+      draft.currentRosterId!,
+      elapsed
+    );
+    return { elapsed, newRemaining };
+  }
+
   /**
    * Compute the next pick state without making any DB changes.
    *
@@ -1207,9 +1530,10 @@ export class DraftStateService {
     draft: Draft,
     draftOrder: DraftOrderEntry[],
     engine: IDraftEngine,
-    pickAssets: DraftPickAsset[] = []
+    pickAssets: DraftPickAsset[] = [],
+    chessClockContext?: { remainingSeconds: number }
   ): NextPickState {
-    return computeNextPickStateShared(draft, draftOrder, engine, pickAssets);
+    return computeNextPickStateShared(draft, draftOrder, engine, pickAssets, chessClockContext);
   }
 
   /**
@@ -1319,7 +1643,8 @@ export class DraftStateService {
     updatedDraft: Draft,
     nextPickState: NextPickState,
     player: Player | null | undefined,
-    isAutoPick: boolean
+    isAutoPick: boolean,
+    chessClocks?: Record<number, number>
   ): void {
     const enrichedPick = {
       ...pick,
@@ -1351,6 +1676,7 @@ export class DraftStateService {
           originalRosterId: nextPickState.originalRosterId,
           isTraded: nextPickState.isTraded,
           pickDeadline: nextPickState.pickDeadline,
+          ...(chessClocks ? { chessClocks } : {}),
         },
       });
     } else {
