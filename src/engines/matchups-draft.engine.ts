@@ -1,9 +1,12 @@
 import { BaseDraftEngine } from './base-draft.engine';
+import type { NextPickDetails } from './draft-engine.interface';
 import type { Draft, DraftOrderEntry } from '../modules/drafts/drafts.model';
-import type { PoolClient } from 'pg';
+import { draftToResponse } from '../modules/drafts/drafts.model';
+import type { PoolClient, Pool } from 'pg';
 import { ValidationException } from '../utils/exceptions';
 import { container, KEYS } from '../container';
 import type { RosterRepository } from '../modules/leagues/leagues.repository';
+import { finalizeDraftCompletion } from '../modules/drafts/draft-completion.utils';
 import { logger } from '../config/logger.config';
 
 /**
@@ -110,12 +113,10 @@ export class MatchupsDraftEngine extends BaseDraftEngine {
       }
       filledWeeks.get(rosterId)!.add(metadata.week);
 
-      // Count opponent frequency (bidirectional)
+      // Count opponent frequency (single-direction per row; reciprocal rows provide the reverse)
       const opponentId = metadata.opponentRosterId;
-      const key1 = `${rosterId}-${opponentId}`;
-      const key2 = `${opponentId}-${rosterId}`;
-      opponentCounts.set(key1, (opponentCounts.get(key1) || 0) + 1);
-      opponentCounts.set(key2, (opponentCounts.get(key2) || 0) + 1);
+      const key = `${rosterId}-${opponentId}`;
+      opponentCounts.set(key, (opponentCounts.get(key) || 0) + 1);
     }
 
     // Get roster info for team names
@@ -210,6 +211,121 @@ export class MatchupsDraftEngine extends BaseDraftEngine {
   }
 
   /**
+   * Override autopick to handle matchup selection instead of player selection.
+   * When a timer expires or autodraft fires, picks the first available matchup
+   * (lowest week, first opponent).
+   */
+  protected async performAutoPickInternal(
+    client: PoolClient,
+    draft: Draft,
+    draftOrder: DraftOrderEntry[]
+  ): Promise<{ result: any; eventData: any }> {
+    if (!draft.currentRosterId) {
+      throw new Error('No current roster to pick for');
+    }
+
+    // Get available matchup options
+    const availableMatchups = await this.getAvailableMatchups(client, draft, draftOrder);
+
+    if (availableMatchups.length === 0) {
+      throw new Error(`No available matchups for auto-pick in draft ${draft.id}`);
+    }
+
+    // Simple strategy: pick first available (lowest week, first opponent)
+    const selectedMatchup = availableMatchups[0];
+
+    // Compute next pick state
+    const nextPickState = this.computeNextPickState(draft, draftOrder);
+
+    const totalRosters = draftOrder.length;
+    const pickInRound = this.getPickInRound(draft.currentPick, totalRosters);
+
+    // Resolve matchup draft repository
+    const { MatchupDraftRepository } = await import('../modules/drafts/repositories/matchup-draft.repository');
+    const pool = container.resolve<Pool>(KEYS.POOL);
+    const matchupDraftRepo = new MatchupDraftRepository(pool);
+
+    // Make the pick atomically (client already holds the DRAFT lock)
+    const { result } = await matchupDraftRepo.makeMatchupPickAndAdvanceTxWithClient(client, {
+      draftId: draft.id,
+      expectedPickNumber: draft.currentPick,
+      round: draft.currentRound,
+      pickInRound,
+      rosterId: draft.currentRosterId,
+      week: selectedMatchup.week,
+      opponentRosterId: selectedMatchup.opponentRosterId,
+      nextPickState,
+      idempotencyKey: `autopick-matchup-${draft.id}-${draft.currentPick}`,
+      isAutoPick: true,
+    });
+
+    // Handle draft completion
+    if (nextPickState.status === 'completed') {
+      await finalizeDraftCompletion(
+        {
+          draftRepo: this.draftRepo,
+          leagueRepo: this.leagueRepo,
+          rosterPlayersRepo: this.rosterPlayersRepo,
+        },
+        draft.id,
+        draft.leagueId,
+        client
+      );
+    }
+
+    // Build next pick info for socket emission
+    const nextPickInfo: NextPickDetails | null = nextPickState.status === 'completed' ? null : {
+      currentPick: nextPickState.currentPick!,
+      currentRound: nextPickState.currentRound!,
+      currentRosterId: nextPickState.currentRosterId,
+      pickDeadline: nextPickState.pickDeadline!,
+      status: 'in_progress',
+    };
+
+    // Build pick payload for event emission
+    const pickPayload = {
+      id: result.pickId,
+      draft_id: draft.id,
+      pick_number: draft.currentPick,
+      round: draft.currentRound,
+      pick_in_round: pickInRound,
+      roster_id: draft.currentRosterId,
+      player_id: null,
+      is_auto_pick: true,
+      auto_pick_reason: 'autodraft',
+      picked_at: result.pickedAt,
+      week: selectedMatchup.week,
+      opponent_roster_id: selectedMatchup.opponentRosterId,
+      opponent_team_name: selectedMatchup.opponentTeamName,
+      is_matchup: true,
+    };
+
+    // Collect completed draft data if draft completed
+    let completedDraftResponse: Record<string, any> | undefined;
+    if (nextPickState.status === 'completed') {
+      const completedDraft = await this.draftRepo.findByIdWithClient(client, draft.id);
+      if (completedDraft) {
+        completedDraftResponse = draftToResponse(completedDraft);
+      }
+    }
+
+    logger.info(
+      `Auto-pick made in matchups draft ${draft.id}: Week ${selectedMatchup.week}, Team ${draft.currentRosterId} vs Team ${selectedMatchup.opponentRosterId}`
+    );
+
+    return {
+      result,
+      eventData: {
+        type: 'matchup' as const,
+        draftId: draft.id,
+        pickPayload,
+        nextPickInfo,
+        completedDraftResponse,
+      },
+    };
+  }
+
+  /**
    * Override isDraftComplete to check if all rosters have complete schedules.
    * In matchups drafts, completion means every team has a matchup for every week.
    */
@@ -217,9 +333,10 @@ export class MatchupsDraftEngine extends BaseDraftEngine {
     const totalTeams = draft.draftState?.totalTeams || 0;
     const totalWeeks = draft.rounds;
 
-    // Total picks needed = totalTeams * totalWeeks (but each pick fills 2 slots reciprocally)
-    // So actual picks needed = (totalTeams * totalWeeks) / 2
-    const requiredPicks = (totalTeams * totalWeeks) / 2;
+    // Each pick fills 2 slots (reciprocal), so picks needed = matchupsPerWeek * totalWeeks
+    // For odd teams, one team has a bye each week: matchupsPerWeek = floor(totalTeams / 2)
+    const matchupsPerWeek = Math.floor(totalTeams / 2);
+    const requiredPicks = matchupsPerWeek * totalWeeks;
 
     return afterPickNumber >= requiredPicks;
   }

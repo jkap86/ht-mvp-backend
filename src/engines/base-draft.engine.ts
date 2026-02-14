@@ -30,7 +30,7 @@ import type { DraftChessClockRepository } from '../modules/drafts/repositories/d
  * Follows the pattern from DraftStateService.applyPick: collect data inside txn, emit after commit.
  */
 interface AutoPickEventData {
-  type: 'player' | 'asset';
+  type: 'player' | 'asset' | 'matchup';
   draftId: number;
   /** For player picks: the enriched pick payload */
   pickPayload?: Record<string, any>;
@@ -175,24 +175,31 @@ export abstract class BaseDraftEngine implements IDraftEngine {
   }
 
   /**
-   * Check if draft is complete
+   * Check if draft is complete after a given pick number.
+   * Default uses totalTeams from draft state; subclasses override for custom logic.
    */
-  isDraftComplete(_draft: Draft, _afterPickNumber: number): boolean {
-    // Need draft order to calculate total picks, but we can use rounds * rosters
-    // For now, we'll check in getNextPickDetails which has access to draftOrder
-    return false; // Handled in getNextPickDetails
+  isDraftComplete(draft: Draft, afterPickNumber: number): boolean {
+    const totalTeams = draft.draftState?.totalTeams;
+    if (!totalTeams) return false;
+    const totalPicks = totalTeams * draft.rounds;
+    return afterPickNumber >= totalPicks;
   }
 
   /**
    * Get next pick details after current pick
    */
   getNextPickDetails(draft: Draft, draftOrder: DraftOrderEntry[]): NextPickDetails | null {
+    // Engine-specific completion check (e.g., matchups drafts complete with fewer picks)
+    if (this.isDraftComplete(draft, draft.currentPick)) {
+      return null;
+    }
+
     const totalRosters = draftOrder.length;
     const totalPicks = totalRosters * draft.rounds;
     const nextPickNumber = draft.currentPick + 1;
 
     if (nextPickNumber > totalPicks) {
-      return null; // Draft complete
+      return null; // Draft complete (standard formula fallback)
     }
 
     const nextRound = this.getRound(nextPickNumber, totalRosters);
@@ -509,8 +516,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
       // Determine next picker's remaining seconds
       const totalRosters = draftOrder.length;
       const nextPick = draft.currentPick + 1;
-      const totalPicks = totalRosters * draft.rounds;
-      if (nextPick <= totalPicks) {
+      if (!this.isDraftComplete(draft, draft.currentPick) && nextPick <= totalRosters * draft.rounds) {
         const pickAssetRepo = container.resolve<DraftPickAssetRepository>(KEYS.PICK_ASSET_REPO);
         const pickAssets = await pickAssetRepo.findByDraftIdWithClient(client, draft.id);
         const actualNextPicker = this.getActualPickerForPickNumber(
@@ -918,10 +924,9 @@ export abstract class BaseDraftEngine implements IDraftEngine {
 
     return runInDraftTransaction(pool, draft.id, async (client) => {
       const totalRosters = draftOrder.length;
-      const totalPicks = totalRosters * draft.rounds;
       const nextPick = draft.currentPick + 1;
 
-      if (nextPick > totalPicks) {
+      if (this.isDraftComplete(draft, draft.currentPick) || nextPick > totalRosters * draft.rounds) {
         // Draft complete - run unified finalization (rosters, league status, schedule)
         await finalizeDraftCompletion(
           {
@@ -1010,10 +1015,9 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     draftOrder: DraftOrderEntry[]
   ): Promise<NextPickDetails | null> {
     const totalRosters = draftOrder.length;
-    const totalPicks = totalRosters * draft.rounds;
     const nextPick = draft.currentPick + 1;
 
-    if (nextPick > totalPicks) {
+    if (this.isDraftComplete(draft, draft.currentPick) || nextPick > totalRosters * draft.rounds) {
       // Draft complete - run unified finalization (rosters, league status, schedule)
       await finalizeDraftCompletion(
         {
@@ -1138,6 +1142,30 @@ export abstract class BaseDraftEngine implements IDraftEngine {
             draftId: eventData.draftId,
             ...eventData.nextPickInfo,
             ...(eventData.chessClocks ? { chessClocks: eventData.chessClocks } : {}),
+          },
+        });
+      } else if (eventData.completedDraftResponse) {
+        eventBus?.publish({
+          type: EventTypes.DRAFT_COMPLETED,
+          payload: {
+            draftId: eventData.draftId,
+            ...eventData.completedDraftResponse,
+          },
+        });
+      }
+    } else if (eventData.type === 'matchup') {
+      // Matchup pick events
+      eventBus?.publish({
+        type: EventTypes.DRAFT_PICK,
+        payload: eventData.pickPayload!,
+      });
+
+      if (eventData.nextPickInfo) {
+        eventBus?.publish({
+          type: EventTypes.DRAFT_NEXT_PICK,
+          payload: {
+            draftId: eventData.draftId,
+            ...eventData.nextPickInfo,
           },
         });
       } else if (eventData.completedDraftResponse) {

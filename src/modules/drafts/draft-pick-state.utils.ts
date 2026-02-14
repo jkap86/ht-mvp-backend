@@ -61,12 +61,26 @@ export function computeNextPickState(
   pickAssets: DraftPickAsset[] = [],
   chessClockContext?: ChessClockContext
 ): NextPickState {
+  // Engine-specific completion check (e.g., matchups drafts complete with fewer picks)
+  if (engine.isDraftComplete(draft, draft.currentPick)) {
+    return {
+      currentPick: null,
+      currentRound: null,
+      currentRosterId: null,
+      originalRosterId: null,
+      isTraded: false,
+      pickDeadline: null,
+      status: 'completed',
+      completedAt: new Date(),
+    };
+  }
+
   const totalRosters = draftOrder.length;
   const totalPicks = totalRosters * draft.rounds;
   const nextPick = draft.currentPick + 1;
 
   if (nextPick > totalPicks) {
-    // Draft complete
+    // Draft complete (standard formula fallback)
     return {
       currentPick: null,
       currentRound: null,
