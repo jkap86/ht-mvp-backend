@@ -31,7 +31,10 @@ describe('Submit Claim Idempotency', () => {
       } as any,
       rosterRepo: { findByLeagueAndUser: jest.fn() } as any,
       rosterPlayersRepo: { findOwner: jest.fn().mockResolvedValue(null) } as any,
-      priorityRepo: { getByRoster: jest.fn() } as any,
+      priorityRepo: {
+        getByRoster: jest.fn().mockResolvedValue({ priority: 1 }),
+        ensureRosterPriority: jest.fn(),
+      } as any,
       faabRepo: { getByRoster: jest.fn() } as any,
     };
 
@@ -39,7 +42,7 @@ describe('Submit Claim Idempotency', () => {
     (mockCtx.leagueRepo.findById as jest.Mock).mockResolvedValue({
       id: 1,
       season: '2024',
-      settings: { waiver_type: 'faab' },
+      settings: { waiver_type: 'faab', current_week: 1 },
     });
     (mockCtx.faabRepo.getByRoster as jest.Mock).mockResolvedValue({ remainingBudget: 100 });
   });

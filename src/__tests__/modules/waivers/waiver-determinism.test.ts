@@ -58,15 +58,19 @@ describe('Waiver Determinism & Atomicity', () => {
         getPlayerIdsByRoster: jest.fn().mockResolvedValue([]),
       } as any,
       priorityRepo: { getMaxPriority: jest.fn().mockResolvedValue(10) } as any,
-      faabRepo: { getByRoster: jest.fn() } as any,
+      faabRepo: {
+        getByRoster: jest.fn(),
+        deductBudget: jest.fn(),
+        getByLeague: jest.fn().mockResolvedValue([]),
+      } as any,
       transactionsRepo: { create: jest.fn() } as any,
-      waiverWireRepo: { removePlayer: jest.fn() } as any,
+      waiverWireRepo: { removePlayer: jest.fn(), addPlayer: jest.fn() } as any,
       processingRunsRepo: {
         tryCreate: jest.fn().mockResolvedValue({ id: 100 }),
         updateResults: jest.fn(),
         delete: jest.fn(),
       } as any,
-      rosterRepo: {} as any,
+      rosterRepo: { findById: jest.fn().mockResolvedValue(null) } as any,
       rosterMutationService: {
         addPlayerToRoster: jest.fn(),
         removePlayerFromRoster: jest.fn(),
@@ -77,7 +81,7 @@ describe('Waiver Determinism & Atomicity', () => {
     (mockCtx.leagueRepo.findById as jest.Mock).mockResolvedValue({
       id: 1,
       season: '2024',
-      settings: { waiver_type: 'faab' },
+      settings: { waiver_type: 'faab', current_week: 1 },
       activeLeagueSeasonId: 1,
     });
   });
