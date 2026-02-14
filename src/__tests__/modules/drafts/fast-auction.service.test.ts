@@ -1065,6 +1065,86 @@ describe('FastAuctionService', () => {
       );
     });
 
+    it('should accept first bid at minBid for no-open-bid lots (no leader to outbid)', async () => {
+      mockDraftRepo.findById.mockResolvedValue(mockFastDraft);
+      mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster2 as any);
+
+      const { runWithLock } = require('../../../shared/transaction-runner');
+
+      // Lot with no current leader (auto_nominate_no_open_bid scenario)
+      const noLeaderLotRow = {
+        id: 1,
+        draft_id: 1,
+        player_id: 100,
+        nominator_roster_id: 1,
+        current_bid: 1, // minBid
+        current_bidder_roster_id: null, // No leader
+        bid_count: 0,
+        bid_deadline: new Date(Date.now() + 30000),
+        status: 'active',
+        winning_roster_id: null,
+        winning_bid: null,
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+
+      const updatedLot: AuctionLot = {
+        id: 1,
+        draftId: 1,
+        playerId: 100,
+        nominatorRosterId: 1,
+        currentBid: 1,
+        currentBidderRosterId: 2,
+        bidCount: 1,
+        bidDeadline: new Date(Date.now() + 15000),
+        status: 'active',
+        winningRosterId: null,
+        winningBid: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        const mockClient = {
+          query: jest.fn().mockImplementation((sql: string) => {
+            if (sql.includes('FROM auction_lots WHERE id') && sql.includes('FOR UPDATE')) {
+              return { rows: [noLeaderLotRow] };
+            }
+            if (sql.includes('FROM rosters WHERE league_id')) {
+              return { rows: [{ id: 2 }] };
+            }
+            return { rows: [], rowCount: 1 };
+          }),
+        };
+
+        mockLeagueRepo.findById.mockResolvedValue(mockLeague);
+        mockLotRepo.getRosterBudgetDataWithClient.mockResolvedValue({
+          spent: 0,
+          wonCount: 0,
+          leadingCommitment: 0,
+        });
+
+        mockResolvePriceWithClient.mockResolvedValue({
+          updatedLot,
+          outbidNotifications: [],
+          leaderChanged: true,
+          priceChanged: false,
+        });
+
+        return fn(mockClient);
+      });
+
+      mockLotRepo.getProxyBid.mockResolvedValue({ ...mockProxyBid, maxBid: 1 });
+      mockRosterRepo.findByIds.mockResolvedValue([]);
+
+      // maxBid=1 equals minBid=1, with minIncrement=1. Without fix this would throw
+      // "Bid must be at least $2" because minRequired = 1 + 1 = 2
+      const result = await service.setMaxBid(1, 'user-2', 1, 1);
+
+      expect(result.lot.currentBidderRosterId).toBe(2);
+      expect(result.message).toContain('$1');
+    });
+
     it('should reject bid when draft is paused (bidDeadline null)', async () => {
       mockDraftRepo.findById.mockResolvedValue(mockFastDraft);
       mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster2 as any);
@@ -1494,6 +1574,7 @@ describe('FastAuctionService', () => {
         status: 'in_progress',
         settings: { auctionMode: 'fast', nominationSeconds: 60, minBid: 1 },
         current_pick: 1,
+        current_roster_id: 1,
       };
 
       let completionQueryCalled = false;
@@ -1537,7 +1618,18 @@ describe('FastAuctionService', () => {
         if (callCount === 1) {
           // autoNominate transaction
           const mockClient = {
-            query: jest.fn().mockResolvedValue({ rows: [] }),
+            query: jest.fn().mockImplementation((sql: string) => {
+              if (sql.includes('FROM drafts WHERE') && sql.includes('FOR UPDATE')) {
+                return {
+                  rows: [{
+                    status: 'in_progress',
+                    settings: { auctionMode: 'fast', nominationSeconds: 60, minBid: 1 },
+                    current_roster_id: 1,
+                  }],
+                };
+              }
+              return { rows: [] };
+            }),
           };
 
           mockLotRepo.hasActiveLotWithClient.mockResolvedValue(false);
@@ -1631,7 +1723,18 @@ describe('FastAuctionService', () => {
 
       runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
         const mockClient = {
-          query: jest.fn().mockResolvedValue({ rows: [], rowCount: 1 }),
+          query: jest.fn().mockImplementation((sql: string) => {
+            if (sql.includes('FROM drafts WHERE') && sql.includes('FOR UPDATE')) {
+              return {
+                rows: [{
+                  status: 'in_progress',
+                  settings: { auctionMode: 'fast', nominationSeconds: 60, minBid: 1 },
+                  current_roster_id: 1,
+                }],
+              };
+            }
+            return { rows: [], rowCount: 1 };
+          }),
         };
 
         mockLotRepo.hasActiveLotWithClient.mockResolvedValue(false);
@@ -1667,6 +1770,69 @@ describe('FastAuctionService', () => {
             isAutoNomination: true,
           }),
         })
+      );
+    });
+
+    it('should use locked draft state (not stale preflight) for currentRosterId', async () => {
+      // Preflight read returns currentRosterId: 10 (stale)
+      const staleDraft = {
+        ...mockFastDraft,
+        currentRosterId: 10,
+      };
+      mockDraftRepo.findById.mockResolvedValue(staleDraft);
+
+      const { runWithLock } = require('../../../shared/transaction-runner');
+
+      const createdLot: AuctionLot = {
+        ...mockLot,
+        currentBidderRosterId: 20,
+        currentBid: 1,
+      };
+
+      runWithLock.mockImplementationOnce(async (_pool: any, _domain: any, _id: any, fn: any) => {
+        const mockClient = {
+          query: jest.fn().mockImplementation((sql: string) => {
+            // FOR UPDATE re-read returns current_roster_id: 20 (fresh)
+            if (sql.includes('FROM drafts WHERE') && sql.includes('FOR UPDATE')) {
+              return {
+                rows: [{
+                  status: 'in_progress',
+                  settings: { auctionMode: 'fast', nominationSeconds: 60, minBid: 1 },
+                  current_roster_id: 20,
+                }],
+              };
+            }
+            return { rows: [], rowCount: 1 };
+          }),
+        };
+
+        mockLotRepo.hasActiveLotWithClient.mockResolvedValue(false);
+        mockPlayerRepo.findRandomEligiblePlayerForAuction.mockResolvedValue(mockPlayer as any);
+        mockLotRepo.getRosterBudgetDataWithClient.mockResolvedValue({
+          spent: 0,
+          wonCount: 0,
+          leadingCommitment: 0,
+        });
+        mockLeagueRepo.findById.mockResolvedValue(mockLeague);
+        mockLotRepo.createLotWithClient.mockResolvedValue(createdLot);
+
+        return fn(mockClient);
+      });
+
+      const result = await service.autoNominate(1);
+
+      expect(result).not.toBeNull();
+      // Verify createLotWithClient was called with the locked rosterId (20), not stale (10)
+      expect(mockLotRepo.createLotWithClient).toHaveBeenCalledWith(
+        expect.anything(), // client
+        1,                 // draftId
+        100,               // playerId
+        20,                // rosterId from locked state, NOT 10
+        expect.any(Date),  // bidDeadline
+        1,                 // minBid
+        undefined,
+        undefined,
+        1                  // activeLeagueSeasonId
       );
     });
   });
@@ -2363,7 +2529,18 @@ describe('FastAuctionService', () => {
         if (callCount === 1) {
           // autoNominate transaction: should return timeout_skip immediately
           const mockClient = {
-            query: jest.fn().mockResolvedValue({ rows: [] }),
+            query: jest.fn().mockImplementation((sql: string) => {
+              if (sql.includes('FROM drafts WHERE') && sql.includes('FOR UPDATE')) {
+                return {
+                  rows: [{
+                    status: 'in_progress',
+                    settings: { auctionMode: 'fast', nominationSeconds: 60, minBid: 1, fastAuctionTimeoutAction: 'auto_skip_nominator' },
+                    current_roster_id: 1,
+                  }],
+                };
+              }
+              return { rows: [] };
+            }),
           };
           mockLotRepo.hasActiveLotWithClient.mockResolvedValue(false);
           return fn(mockClient);
@@ -2461,6 +2638,15 @@ describe('FastAuctionService', () => {
         const mockClient = {
           query: jest.fn().mockImplementation((sql: string) => {
             capturedQueries.push(sql);
+            if (sql.includes('FROM drafts WHERE') && sql.includes('FOR UPDATE')) {
+              return {
+                rows: [{
+                  status: 'in_progress',
+                  settings: { auctionMode: 'fast', nominationSeconds: 60, minBid: 1, fastAuctionTimeoutAction: 'auto_nominate_no_open_bid' },
+                  current_roster_id: 1,
+                }],
+              };
+            }
             return { rows: [], rowCount: 1 };
           }),
         };
@@ -2519,6 +2705,15 @@ describe('FastAuctionService', () => {
         const mockClient = {
           query: jest.fn().mockImplementation((sql: string) => {
             capturedQueries.push(sql);
+            if (sql.includes('FROM drafts WHERE') && sql.includes('FOR UPDATE')) {
+              return {
+                rows: [{
+                  status: 'in_progress',
+                  settings: { auctionMode: 'fast', nominationSeconds: 60, minBid: 1 },
+                  current_roster_id: 1,
+                }],
+              };
+            }
             return { rows: [], rowCount: 1 };
           }),
         };

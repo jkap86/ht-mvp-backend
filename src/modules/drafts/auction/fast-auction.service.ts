@@ -434,7 +434,10 @@ export class FastAuctionService {
         }
 
         // Validate bid meets minimum
-        const minRequired = lot.currentBid + settings.minIncrement;
+        // No increment needed when there's no leader to outbid (e.g., auto_nominate_no_open_bid)
+        const minRequired = lot.currentBidderRosterId === null
+          ? lot.currentBid
+          : lot.currentBid + settings.minIncrement;
         if (maxBid < minRequired && lot.currentBidderRosterId !== roster.id) {
           throw new ValidationException(`Bid must be at least $${minRequired}`);
         }
@@ -806,9 +809,30 @@ export class FastAuctionService {
           return null; // Already has an active lot, nothing to do
         }
 
+        // Re-read draft state inside lock (prevents TOCTOU race with advanceNominator)
+        const draftCheck = await client.query(
+          'SELECT status, settings, current_roster_id FROM drafts WHERE id = $1 FOR UPDATE',
+          [draftId]
+        );
+        if (draftCheck.rows.length === 0) {
+          return null;
+        }
+        const lockedDraft = draftCheck.rows[0];
+        if (lockedDraft.status !== 'in_progress') {
+          return null;
+        }
+        if (lockedDraft.settings?.auctionMode !== 'fast') {
+          return null;
+        }
+        const lockedCurrentRosterId: number | null = lockedDraft.current_roster_id;
+        if (!lockedCurrentRosterId) {
+          logger.warn('No current nominator for auto-nomination (inside lock)', { draftId });
+          return null;
+        }
+
         // auto_skip_nominator: skip lot creation entirely, just advance
         if (timeoutAction === 'auto_skip_nominator') {
-          return { skipReason: 'timeout_skip' as const, skippedRosterId: draft.currentRosterId! };
+          return { skipReason: 'timeout_skip' as const, skippedRosterId: lockedCurrentRosterId };
         }
 
         // Find a random available player using SQL-level filtering
@@ -821,7 +845,7 @@ export class FastAuctionService {
         }
 
         // Validate budget for auto-nomination
-        const budgetInfo = await this.lotRepo.getRosterBudgetDataWithClient(client, draftId, draft.currentRosterId!);
+        const budgetInfo = await this.lotRepo.getRosterBudgetDataWithClient(client, draftId, lockedCurrentRosterId);
         const league = await this.leagueRepo.findById(draft.leagueId, client);
         if (!league) {
           throw new NotFoundException('League not found');
@@ -834,7 +858,7 @@ export class FastAuctionService {
         if (budgetInfo.wonCount >= rosterSlots) {
           logger.warn('Auto-nomination skipped: nominator roster is full', {
             draftId,
-            nominatorRosterId: draft.currentRosterId,
+            nominatorRosterId: lockedCurrentRosterId,
             wonCount: budgetInfo.wonCount,
             rosterSlots,
           });
@@ -848,7 +872,7 @@ export class FastAuctionService {
           );
           logger.warn('Auto-nomination skipped: nominator cannot afford starting bid', {
             draftId,
-            nominatorRosterId: draft.currentRosterId,
+            nominatorRosterId: lockedCurrentRosterId,
             maxAffordable,
             minBid: settings.minBid,
           });
@@ -869,7 +893,7 @@ export class FastAuctionService {
           client,
           draftId,
           randomPlayer.id,
-          draft.currentRosterId!,
+          lockedCurrentRosterId,
           bidDeadline,
           settings.minBid,
           undefined,
@@ -881,8 +905,8 @@ export class FastAuctionService {
         // Lot starts with currentBidderRosterId = NULL, settles as passed if nobody bids
         if (timeoutAction !== 'auto_nominate_no_open_bid') {
           // auto_nominate_and_open_bid (default): Nominator becomes the leader at startingBid
-          await this.setNominatorAsOpeningBidder(client, lot, draft.currentRosterId!, settings.minBid);
-          lot.currentBidderRosterId = draft.currentRosterId!;
+          await this.setNominatorAsOpeningBidder(client, lot, lockedCurrentRosterId, settings.minBid);
+          lot.currentBidderRosterId = lockedCurrentRosterId;
         }
 
         return { lot, playerName: randomPlayer.fullName, playerId: randomPlayer.id };
