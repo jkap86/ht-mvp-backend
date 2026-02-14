@@ -7,6 +7,7 @@
 import { Pool } from 'pg';
 import { container, KEYS } from '../container';
 import { TrendingService } from '../modules/players/trending.service';
+import { IStatsProvider } from '../integrations/shared/stats-provider.interface';
 import { logger } from '../config/logger.config';
 import { getLockId, LockDomain } from '../shared/locks';
 
@@ -43,7 +44,8 @@ export async function runTrendingUpdate(): Promise<void> {
       const tickStart = Date.now();
       logger.info('Starting trending players update...');
 
-      const trendingService = new TrendingService(pool);
+      const statsProvider = container.resolve<IStatsProvider>(KEYS.STATS_PROVIDER);
+      const trendingService = new TrendingService(pool, statsProvider);
       const result = await trendingService.updateTrendingPlayers();
 
       logger.info(`Trending players update complete: ${result.updated} players updated`, {

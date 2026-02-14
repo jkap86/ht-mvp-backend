@@ -91,6 +91,71 @@ export class ChatRepository {
     return result.rows;
   }
 
+  /**
+   * Mark league chat as read for a user (upsert last-read cursor to latest message)
+   */
+  async markAsRead(leagueId: number, userId: string): Promise<{ changed: boolean }> {
+    const result = await this.pool.query(
+      `INSERT INTO league_chat_read_state (league_id, user_id, last_read_message_id, updated_at)
+       SELECT $1, $2, MAX(id), NOW()
+       FROM league_chat_messages
+       WHERE league_id = $1
+       ON CONFLICT (league_id, user_id) DO UPDATE SET
+         last_read_message_id = GREATEST(
+           league_chat_read_state.last_read_message_id,
+           EXCLUDED.last_read_message_id
+         ),
+         updated_at = NOW()
+       WHERE league_chat_read_state.last_read_message_id IS DISTINCT FROM
+         GREATEST(league_chat_read_state.last_read_message_id, EXCLUDED.last_read_message_id)`,
+      [leagueId, userId]
+    );
+    return { changed: (result.rowCount ?? 0) > 0 };
+  }
+
+  /**
+   * Get unread message count for a user in a league
+   */
+  async getUnreadCount(leagueId: number, userId: string): Promise<number> {
+    const result = await this.pool.query(
+      `SELECT COUNT(*) as count
+       FROM league_chat_messages m
+       WHERE m.league_id = $1
+         AND m.id > COALESCE(
+           (SELECT last_read_message_id FROM league_chat_read_state
+            WHERE league_id = $1 AND user_id = $2),
+           0
+         )
+         AND (m.user_id IS NULL OR m.user_id != $2)`,
+      [leagueId, userId]
+    );
+    return parseInt(result.rows[0].count, 10);
+  }
+
+  /**
+   * Get unread counts for all leagues a user belongs to
+   */
+  async getUnreadCountsForUser(userId: string): Promise<Array<{ leagueId: number; unreadCount: number }>> {
+    const result = await this.pool.query(
+      `SELECT r.league_id as "leagueId",
+              COUNT(m.id) as "unreadCount"
+       FROM rosters r
+       LEFT JOIN league_chat_read_state lcrs
+         ON lcrs.league_id = r.league_id AND lcrs.user_id = $1
+       LEFT JOIN league_chat_messages m
+         ON m.league_id = r.league_id
+         AND m.id > COALESCE(lcrs.last_read_message_id, 0)
+         AND (m.user_id IS NULL OR m.user_id != $1)
+       WHERE r.user_id = $1
+       GROUP BY r.league_id`,
+      [userId]
+    );
+    return result.rows.map((row) => ({
+      leagueId: row.leagueId,
+      unreadCount: parseInt(row.unreadCount, 10),
+    }));
+  }
+
   async deleteByLeagueId(leagueId: number): Promise<void> {
     await this.pool.query('DELETE FROM league_chat_messages WHERE league_id = $1', [leagueId]);
   }

@@ -30,7 +30,7 @@ export function idempotencyMiddleware(pool: Pool) {
 
     // Reject oversized keys
     if (idempotencyKey.length > 256) {
-      res.status(400).json({ error: 'Idempotency key must be 256 characters or fewer' });
+      res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Idempotency key must be 256 characters or fewer' } });
       return;
     }
 
@@ -86,7 +86,7 @@ export function idempotencyMiddleware(pool: Pool) {
             return;
           }
           // Still in-flight (response_status = 0) - return 409
-          res.status(409).json({ error: 'Request is already being processed' });
+          res.status(409).json({ error: { code: 'IDEMPOTENCY_CONFLICT', message: 'Request is already being processed' } });
           return;
         }
 
@@ -109,7 +109,7 @@ export function idempotencyMiddleware(pool: Pool) {
 
         if (reclaimResult.rows.length === 0) {
           // Another request raced us
-          res.status(409).json({ error: 'Request is already being processed' });
+          res.status(409).json({ error: { code: 'IDEMPOTENCY_CONFLICT', message: 'Request is already being processed' } });
           return;
         }
       }

@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { AuthRequest } from '../../middleware/auth.middleware';
 import { ChatService } from './chat.service';
+import { ChatRepository } from './chat.repository';
 import { ChatReactionRepository, groupReactions } from './chat-reaction.repository';
 import { LeagueRepository } from '../leagues/leagues.repository';
 import { requireUserId, requireLeagueId } from '../../utils/controller-helpers';
@@ -11,7 +12,8 @@ export class ChatController {
   constructor(
     private readonly chatService: ChatService,
     private readonly chatReactionRepo: ChatReactionRepository,
-    private readonly leagueRepo: LeagueRepository
+    private readonly leagueRepo: LeagueRepository,
+    private readonly chatRepo?: ChatRepository
   ) {}
 
   getMessages = async (req: AuthRequest, res: Response) => {
@@ -152,5 +154,34 @@ export class ChatController {
     });
 
     res.status(200).json({ messageId, userId, emoji });
+  };
+
+  markAsRead = async (req: AuthRequest, res: Response) => {
+    const userId = requireUserId(req);
+    const leagueId = requireLeagueId(req);
+
+    if (!this.chatRepo) {
+      throw new Error('Chat repository not configured');
+    }
+
+    // Verify user is a member of this league
+    const isMember = await this.leagueRepo.isUserMember(leagueId, userId);
+    if (!isMember) {
+      throw new ForbiddenException('You are not a member of this league');
+    }
+
+    const result = await this.chatRepo.markAsRead(leagueId, userId);
+    res.status(200).json({ success: true, changed: result.changed });
+  };
+
+  getUnreadCounts = async (req: AuthRequest, res: Response) => {
+    const userId = requireUserId(req);
+
+    if (!this.chatRepo) {
+      throw new Error('Chat repository not configured');
+    }
+
+    const counts = await this.chatRepo.getUnreadCountsForUser(userId);
+    res.status(200).json(counts);
   };
 }

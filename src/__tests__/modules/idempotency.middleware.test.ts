@@ -176,7 +176,7 @@ describe('IdempotencyMiddleware', () => {
       // Should return 409
       expect(mockRes.status).toHaveBeenCalledWith(409);
       expect(mockRes.json).toHaveBeenCalledWith(
-        expect.objectContaining({ error: expect.stringContaining('already being processed') })
+        expect.objectContaining({ error: expect.objectContaining({ message: expect.stringContaining('already being processed') }) })
       );
     });
 

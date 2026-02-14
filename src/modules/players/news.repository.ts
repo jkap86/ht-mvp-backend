@@ -29,7 +29,10 @@ export class NewsRepository {
   constructor(private readonly db: Pool) {}
 
   /**
-   * Create news item with automatic deduplication
+   * Create news item with automatic deduplication.
+   * Uses an atomic CTE to prevent race conditions where two concurrent
+   * inserts with the same hash could both pass the existence check.
+   *
    * @returns The created news item, or existing if duplicate detected
    */
   async createNews(data: CreateNewsData, client?: PoolClient): Promise<PlayerNews> {
@@ -38,27 +41,30 @@ export class NewsRepository {
     // Create content hash for deduplication
     const contentHash = createNewsHash(data.title, data.publishedAt, data.source);
 
-    // Check if this news already exists
-    const existing = await db.query(
-      `SELECT pn.*
-       FROM player_news pn
-       JOIN player_news_cache pnc ON pnc.news_id = pn.id
-       WHERE pnc.content_hash = $1`,
-      [contentHash]
-    );
-
-    if (existing.rows.length > 0) {
-      return playerNewsFromDatabase(existing.rows[0]);
-    }
-
-    // Insert new news item
+    // Atomic: check existing, insert news + cache in a single CTE
     const result = await db.query(
-      `INSERT INTO player_news (
-        player_id, title, summary, content, source, source_url,
-        published_at, news_type, impact_level
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-      RETURNING *`,
+      `WITH existing AS (
+        SELECT pn.* FROM player_news pn
+        JOIN player_news_cache pnc ON pnc.news_id = pn.id
+        WHERE pnc.content_hash = $1
+      ), inserted AS (
+        INSERT INTO player_news (
+          player_id, title, summary, content, source, source_url,
+          published_at, news_type, impact_level
+        )
+        SELECT $2, $3, $4, $5, $6, $7, $8, $9, $10
+        WHERE NOT EXISTS (SELECT 1 FROM existing)
+        RETURNING *
+      ), cache_entry AS (
+        INSERT INTO player_news_cache (content_hash, player_id, news_id)
+        SELECT $1, $2, i.id FROM inserted i
+        ON CONFLICT (content_hash) DO NOTHING
+      )
+      SELECT * FROM existing
+      UNION ALL
+      SELECT * FROM inserted`,
       [
+        contentHash,
         data.playerId,
         data.title,
         data.summary || null,
@@ -71,16 +77,7 @@ export class NewsRepository {
       ]
     );
 
-    const news = playerNewsFromDatabase(result.rows[0]);
-
-    // Insert cache entry
-    await db.query(
-      `INSERT INTO player_news_cache (content_hash, player_id, news_id)
-       VALUES ($1, $2, $3)`,
-      [contentHash, data.playerId, news.id]
-    );
-
-    return news;
+    return playerNewsFromDatabase(result.rows[0]);
   }
 
   /**

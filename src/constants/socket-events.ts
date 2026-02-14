@@ -132,6 +132,11 @@ export const SOCKET_EVENTS = {
     CANCELLED: 'invitation:cancelled',
   },
 
+  // Player events
+  PLAYER: {
+    NEWS: 'player:news',
+  },
+
   // Playoff events
   PLAYOFF: {
     BRACKET_GENERATED: 'playoff:bracket_generated',

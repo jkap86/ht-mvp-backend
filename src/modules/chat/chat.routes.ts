@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { ChatController } from './chat.controller';
 import { ChatService } from './chat.service';
+import { ChatRepository } from './chat.repository';
 import { ChatReactionRepository } from './chat-reaction.repository';
 import { LeagueRepository } from '../leagues/leagues.repository';
 import { authMiddleware } from '../../middleware/auth.middleware';
@@ -15,8 +16,9 @@ import { Pool } from 'pg';
 // Resolve dependencies from container
 const chatService = container.resolve<ChatService>(KEYS.CHAT_SERVICE);
 const chatReactionRepo = container.resolve<ChatReactionRepository>(KEYS.CHAT_REACTION_REPO);
+const chatRepo = container.resolve<ChatRepository>(KEYS.CHAT_REPO);
 const leagueRepo = container.resolve<LeagueRepository>(KEYS.LEAGUE_REPO);
-const chatController = new ChatController(chatService, chatReactionRepo, leagueRepo);
+const chatController = new ChatController(chatService, chatReactionRepo, leagueRepo, chatRepo);
 
 const router = Router({ mergeParams: true }); // mergeParams to access :leagueId
 
@@ -38,5 +40,16 @@ router.post('/:messageId/reactions', dmMessageLimiter, validateRequest(reactionS
 
 // DELETE /api/leagues/:leagueId/chat/:messageId/reactions
 router.delete('/:messageId/reactions', dmMessageLimiter, validateRequest(reactionSchema), asyncHandler(chatController.removeReaction));
+
+// POST /api/leagues/:leagueId/chat/read - Mark chat as read
+router.post('/read', dmReadLimiter, asyncHandler(chatController.markAsRead));
+
+// GET /api/leagues/:leagueId/chat/unread - Get unread count for this league
+router.get('/unread', dmReadLimiter, asyncHandler(async (req: any, res: any) => {
+  const userId = req.userId;
+  const leagueId = parseInt(req.params.leagueId, 10);
+  const count = await chatRepo.getUnreadCount(leagueId, userId);
+  res.status(200).json({ unreadCount: count });
+}));
 
 export default router;

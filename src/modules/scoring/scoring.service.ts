@@ -269,6 +269,7 @@ export class ScoringService {
     // Try-lock per league+week to skip if another process is already scoring this combination.
     // Prevents stale overwrites from overlapping runs on multi-dyno or restart overlap.
     const compositeId = makeCompositeLockId(leagueId, week);
+    const scoringStart = Date.now();
     const result = await runWithTryLock(
       this.db,
       LockDomain.LIVE_SCORING_ACTUAL,
@@ -330,14 +331,18 @@ export class ScoringService {
         // Batch update all lineups
         await this.lineupsRepo.batchUpdateLivePoints(updates, client);
 
-        logger.info(
-          `Updated live actual totals for ${updates.length} lineups in league ${leagueId}`
-        );
+        logger.info('scoring:actual:updated', {
+          leagueId,
+          season,
+          week,
+          lineupsUpdated: updates.length,
+          durationMs: Date.now() - scoringStart,
+        });
       }
     );
 
     if (result === null) {
-      logger.debug(`Skipped live actual scoring: league=${leagueId} week=${week} (lock held)`);
+      logger.debug('scoring:actual:skipped', { leagueId, week, reason: 'lock_held' });
     }
   }
 

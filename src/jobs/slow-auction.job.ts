@@ -83,6 +83,7 @@ async function processExpiredLots(): Promise<void> {
             draftId: result.lot.draftId,
             lotId: result.lot.id,
             playerId: result.lot.playerId,
+            resolution_reason: 'no_bids',
           },
         });
       } else {
@@ -95,6 +96,7 @@ async function processExpiredLots(): Promise<void> {
             playerId: result.lot.playerId,
             winnerRosterId: result.winner!.rosterId,
             price: result.winner!.amount,
+            resolution_reason: 'highest_bid',
           },
         });
       }

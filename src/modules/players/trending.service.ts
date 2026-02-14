@@ -6,6 +6,7 @@
 import { Pool, PoolClient } from 'pg';
 import { logger } from '../../config/logger.config';
 import { runInTransaction } from '../../shared/transaction-runner';
+import { IStatsProvider } from '../../integrations/shared/stats-provider.interface';
 
 export interface TrendingPlayer {
   playerId: number;
@@ -24,13 +25,30 @@ export interface TrendingPlayer {
 }
 
 export class TrendingService {
-  constructor(private readonly db: Pool) {}
+  constructor(
+    private readonly db: Pool,
+    private readonly statsProvider?: IStatsProvider
+  ) {}
 
   /**
    * Calculate and update trending players
    * Run this as a background job (daily or hourly)
    */
   async updateTrendingPlayers(): Promise<{ updated: number }> {
+    // Fetch current season dynamically from NFL state
+    let currentSeason: string;
+    if (this.statsProvider) {
+      const nflState = await this.statsProvider.fetchNflState();
+      currentSeason = nflState.season.toString();
+    } else {
+      // Fallback: query from player_stats most recent season
+      const seasonResult = await this.db.query(
+        `SELECT MAX(season) as season FROM player_stats`
+      );
+      currentSeason = seasonResult.rows[0]?.season?.toString() || new Date().getFullYear().toString();
+      logger.warn('TrendingService: No stats provider configured, falling back to DB season lookup');
+    }
+
     return await runInTransaction(this.db, async (client) => {
       // Get transaction counts for last 24h and last week
       const transactions = await this.getRecentTransactions(client);
@@ -39,7 +57,7 @@ export class TrendingService {
       const ownership = await this.calculateOwnership(client);
 
       // Get recent performance data
-      const performance = await this.getRecentPerformance(client);
+      const performance = await this.getRecentPerformance(client, currentSeason);
 
       let updated = 0;
 
@@ -227,9 +245,9 @@ export class TrendingService {
    * Get recent performance data
    */
   private async getRecentPerformance(
-    client: PoolClient
+    client: PoolClient,
+    currentSeason: string
   ): Promise<Map<number, { recentAvg: number; nextProjection: number | null }>> {
-    const currentSeason = '2024'; // TODO: Get from NFL state
 
     // Get last 3 games average
     const statsResult = await client.query(

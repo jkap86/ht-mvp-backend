@@ -284,7 +284,13 @@ export class PlayoffService {
     // Emit event AFTER transaction
     this.emitBracketGenerated(leagueId, bracketId);
 
-    logger.info(`Generated ${config.playoffTeams}-team playoff bracket for league ${leagueId}`);
+    logger.info('playoff:bracket:generated', {
+      leagueId,
+      bracketId,
+      playoffTeams: config.playoffTeams,
+      startWeek: config.startWeek,
+      season,
+    });
 
     // Return full bracket view
     const bracketView = await this.buildBracketView(bracketId);

@@ -283,6 +283,18 @@ export async function processLeagueClaims(
               successfulCount++;
               processedCount++;
 
+              logger.info('waiver:claim:successful', {
+                leagueId,
+                claimId: claim.id,
+                rosterId: claim.rosterId,
+                playerId: claim.playerId,
+                dropPlayerId: claim.dropPlayerId,
+                claimOrder: claim.claimOrder,
+                bidAmount: claim.bidAmount,
+                priorityType: settings.waiverType,
+                round: roundNumber,
+              });
+
               // Update global ownership tracking
               ownedPlayerIds.add(claim.playerId);
               if (claim.dropPlayerId) {

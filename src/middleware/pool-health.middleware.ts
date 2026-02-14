@@ -18,8 +18,10 @@ export function poolHealthMiddleware(req: Request, res: Response, next: NextFunc
       method: req.method,
     });
     res.status(503).json({
-      error: 'Service temporarily unavailable',
-      message: 'Server is under heavy load. Please try again shortly.',
+      error: {
+        code: 'SERVICE_UNAVAILABLE',
+        message: 'Server is under heavy load. Please try again shortly.',
+      },
     });
     return;
   }

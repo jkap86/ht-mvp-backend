@@ -152,6 +152,46 @@ export class NotificationService {
   }
 
   /**
+   * Send push notification for breaking player news to owners of the player.
+   * Respects user preferences for playerNews/breakingNews.
+   */
+  async sendPlayerNewsNotification(
+    ownerUserIds: string[],
+    news: { title: string; impactLevel: string; id?: number },
+    player: { fullName?: string; full_name?: string; position?: string; team?: string; id?: number }
+  ): Promise<{ successCount: number; failureCount: number }> {
+    if (ownerUserIds.length === 0) {
+      return { successCount: 0, failureCount: 0 };
+    }
+
+    const playerName = player.fullName || player.full_name || 'Unknown Player';
+    const isCritical = news.impactLevel === 'critical';
+    const prefKey = isCritical ? 'breakingNews' : 'playerNews';
+
+    // Filter users based on their notification preferences
+    const prefsMap = await this.getNotificationPreferencesForUsers(ownerUserIds);
+    const eligibleUserIds = ownerUserIds.filter((userId) => {
+      const prefs = prefsMap.get(userId);
+      return prefs?.enabledPush && prefs[prefKey];
+    });
+
+    if (eligibleUserIds.length === 0) {
+      return { successCount: 0, failureCount: 0 };
+    }
+
+    return this.sendBatchNotifications(eligibleUserIds, {
+      title: isCritical ? `Breaking: ${playerName}` : `Player News: ${playerName}`,
+      body: news.title,
+      data: {
+        type: 'player_news',
+        playerId: String(player.id || ''),
+        newsId: String(news.id || ''),
+        impactLevel: news.impactLevel,
+      },
+    });
+  }
+
+  /**
    * Send notification to a topic (for league-wide broadcasts)
    */
   async sendToTopic(

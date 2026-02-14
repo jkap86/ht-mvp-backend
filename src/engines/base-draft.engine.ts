@@ -48,6 +48,10 @@ interface AutoPickEventData {
   completedDraftResponse?: Record<string, any>;
   /** Chess clock data for event payload (only in chess clock mode) */
   chessClocks?: Record<number, number>;
+  /** Reason for autopick: 'timeout' | 'autodraft' | 'empty_roster' */
+  autoPickReason?: string;
+  /** Autodraft force-enable data (emitted post-commit instead of inside txn) */
+  autodraftForceEnabled?: { draftId: number; rosterId: number };
 }
 
 /**
@@ -380,12 +384,22 @@ export abstract class BaseDraftEngine implements IDraftEngine {
         // Event data is collected inside and returned for post-commit emission
         const autoPickResult = await this.performAutoPickInternal(client, draft, draftOrder);
 
+        // Attach the actual autopick reason to the event data for socket emission
+        const eventData = autoPickResult.eventData;
+        eventData.autoPickReason = reason;
+        if (eventData.pickPayload) {
+          eventData.pickPayload.auto_pick_reason = reason;
+        }
+        if (eventData.assetResponse) {
+          eventData.assetResponse.auto_pick_reason = reason;
+        }
+
         return {
           actionTaken: true,
           reason,
           pick: autoPickResult.result,
           advanced: false,
-          autoPickEventData: autoPickResult.eventData,
+          autoPickEventData: eventData,
         };
       }
     );
@@ -442,8 +456,13 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     // between our queue read and the pick write.
     const pool = container.resolve<Pool>(KEYS.POOL);
     const { result, eventData } = await runInDraftTransaction(pool, draft.id, async (client) => {
-      const draftOrder = await this.draftRepo.getDraftOrderWithClient(client, draft.id);
-      return this.performAutoPickInternal(client, draft, draftOrder);
+      // Re-read draft inside the lock to get fresh state (especially turnStartedAt for chess clock)
+      const freshDraft = await this.draftRepo.findByIdWithClient(client, draft.id);
+      if (!freshDraft) {
+        throw new Error(`Draft not found: ${draft.id}`);
+      }
+      const draftOrder = await this.draftRepo.getDraftOrderWithClient(client, freshDraft.id);
+      return this.performAutoPickInternal(client, freshDraft, draftOrder);
     });
 
     // Emit events AFTER transaction commits
@@ -669,7 +688,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     }
 
     // Check if user had autodraft disabled - if so, force-enable it
-    await this.handleAutodraftForceEnable(draft, draftOrder, client);
+    const autodraftForceEnabled = await this.handleAutodraftForceEnable(draft, draftOrder, client);
 
     // Build next pick info for socket emission
     // When status is 'in_progress', pickDeadline is always set by computeNextPickState
@@ -699,9 +718,11 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     }
 
     // Build the enriched pick payload for the event (collected inside txn)
+    // auto_pick_reason is set later by tick() when the reason is known
     const pickPayload = {
       ...pick,
       is_auto_pick: true,
+      auto_pick_reason: 'autodraft', // default; overridden by tick() with actual reason
       player_name: player?.fullName,
       player_position: player?.position,
       player_team: player?.team,
@@ -720,6 +741,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
         playerId,
         nextPickInfo,
         completedDraftResponse,
+        autodraftForceEnabled,
       },
     };
   }
@@ -760,6 +782,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
       nextPickState,
       idempotencyKey: `autopick-asset-${draft.id}-${draft.currentPick}`,
       isAutoPick: true,
+      timeUsedSeconds,
     };
     // Use WithClient variant if a client is provided (caller already holds the lock),
     // otherwise fall back to the standalone transaction variant
@@ -782,7 +805,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
     }
 
     // Check if user had autodraft disabled - if so, force-enable it
-    await this.handleAutodraftForceEnable(draft, draftOrder, client);
+    const autodraftForceEnabled = await this.handleAutodraftForceEnable(draft, draftOrder, client);
 
     // Get pick asset details from the already-loaded pickAssets array (read with client)
     // instead of making a separate pool read via findByIdWithDetails
@@ -798,6 +821,7 @@ export abstract class BaseDraftEngine implements IDraftEngine {
       roster_id: draft.currentRosterId,
       player_id: null,
       is_auto_pick: true,
+      auto_pick_reason: 'autodraft', // default; overridden by tick() with actual reason
       picked_at: result.selectedAt,
       // Pick asset specific fields
       draft_pick_asset_id: pickAssetId,
@@ -831,18 +855,20 @@ export abstract class BaseDraftEngine implements IDraftEngine {
         pickAssetId: pickAssetId,
         nextPickState,
         completedDraftResponse,
+        autodraftForceEnabled,
       },
     };
   }
 
   /**
    * Force-enable autodraft if user timed out with it disabled.
+   * Returns event data for post-commit emission instead of publishing inside the transaction.
    */
   protected async handleAutodraftForceEnable(
     draft: Draft,
     draftOrder: DraftOrderEntry[],
     client?: PoolClient
-  ): Promise<void> {
+  ): Promise<{ draftId: number; rosterId: number } | undefined> {
     const currentPicker = draftOrder.find((o) => o.rosterId === draft.currentRosterId);
     if (currentPicker && !currentPicker.isAutodraftEnabled) {
       // Force-enable autodraft since they timed out
@@ -852,22 +878,14 @@ export abstract class BaseDraftEngine implements IDraftEngine {
         await this.draftRepo.setAutodraftEnabled(draft.id, draft.currentRosterId!, true);
       }
 
-      // Publish domain event to notify the user (and others) that autodraft was force-enabled
-      const eventBus = tryGetEventBus();
-      eventBus?.publish({
-        type: EventTypes.DRAFT_AUTODRAFT_TOGGLED,
-        payload: {
-          draftId: draft.id,
-          rosterId: draft.currentRosterId!,
-          enabled: true,
-          forced: true,
-        },
-      });
-
       logger.info(
         `Autodraft force-enabled for roster ${draft.currentRosterId} in draft ${draft.id} due to timeout`
       );
+
+      // Return data for post-commit event emission
+      return { draftId: draft.id, rosterId: draft.currentRosterId! };
     }
+    return undefined;
   }
 
   /**
@@ -1082,6 +1100,19 @@ export abstract class BaseDraftEngine implements IDraftEngine {
    */
   protected emitAutoPickEvents(eventData: AutoPickEventData): void {
     const eventBus = tryGetEventBus();
+
+    // Emit autodraft force-enable event (collected inside txn, emitted post-commit)
+    if (eventData.autodraftForceEnabled) {
+      eventBus?.publish({
+        type: EventTypes.DRAFT_AUTODRAFT_TOGGLED,
+        payload: {
+          draftId: eventData.autodraftForceEnabled.draftId,
+          rosterId: eventData.autodraftForceEnabled.rosterId,
+          enabled: true,
+          forced: true,
+        },
+      });
+    }
 
     if (eventData.type === 'player') {
       // Player pick events

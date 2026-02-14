@@ -595,6 +595,13 @@ export class SocketService {
     this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.ROSTER.PLAYER_DROPPED, payload);
   }
 
+  // Emit player news to specific users who own the player
+  emitPlayerNews(userIds: string[], data: { news: any; player: any }): void {
+    for (const userId of userIds) {
+      this.emitToUser(userId, SOCKET_EVENTS.PLAYER.NEWS, data);
+    }
+  }
+
   // Emit chat message to all users in league room
   emitChatMessage(leagueId: number, message: any): void {
     this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.CHAT.MESSAGE, message);

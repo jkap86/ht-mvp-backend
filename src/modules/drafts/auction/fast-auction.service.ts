@@ -308,6 +308,15 @@ export class FastAuctionService {
       }
     );
 
+    logger.info('auction:nomination:created', {
+      draftId,
+      lotId: lot.id,
+      playerId,
+      playerName,
+      nominatorRosterId: roster.id,
+      openingBid,
+    });
+
     // Post-commit: Publish domain event for socket emission
     // Include serverTime for client clock synchronization
     const eventBus = tryGetEventBus();
@@ -437,6 +446,11 @@ export class FastAuctionService {
         const rosterSlots = league.leagueSettings?.rosterSlots ?? 15;
         const budgetInfo = await this.lotRepo.getRosterBudgetDataWithClient(client, draftId, roster.id);
 
+        // Guard: reject if roster is already full
+        if (budgetInfo.wonCount >= rosterSlots) {
+          throw new ValidationException('Cannot bid: your roster is already full');
+        }
+
         // Calculate max affordable bid
         const isLeadingThisLot = lot.currentBidderRosterId === roster.id;
         const maxAffordable = calculateMaxAffordableBid(
@@ -505,6 +519,15 @@ export class FastAuctionService {
         return { finalLot, outbidNotifications: result.outbidNotifications, playerId: lot.playerId };
       }
     );
+
+    logger.info('auction:bid:placed', {
+      draftId,
+      lotId,
+      rosterId: roster.id,
+      maxBid,
+      currentBid: finalLot.currentBid,
+      currentBidder: finalLot.currentBidderRosterId,
+    });
 
     // Post-commit: Publish domain event for socket emission
     // Include serverTime for client clock synchronization

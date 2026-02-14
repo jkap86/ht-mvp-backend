@@ -12,6 +12,8 @@ import { getLockId, LockDomain } from '../shared/locks';
 import { SleeperApiClient } from '../integrations/sleeper/sleeper-api-client';
 import { NewsRepository } from '../modules/players/news.repository';
 import { PlayerRepository } from '../modules/players/players.repository';
+import { NotificationService } from '../modules/notifications/notification.service';
+import { tryGetSocketService } from '../socket/socket.service';
 import { ImpactLevel, NewsType } from '../modules/players/news.model';
 
 let intervalId: NodeJS.Timeout | null = null;
@@ -150,13 +152,24 @@ export async function runPlayerNewsSync(): Promise<void> {
               if (news.impactLevel === 'critical' || news.impactLevel === 'high') {
                 breakingNewsCount++;
 
-                // Emit socket.io event for real-time updates
-                // TODO: Integrate with socket.io service
-                // io.emit('player:news', { news, player });
+                // Get owners of this player for targeted notifications
+                const ownerUserIds = await newsRepo.getUsersOwningPlayer(player.id);
 
-                // TODO: Send push notifications to users who own this player
-                // const owners = await newsRepo.getUsersOwningPlayer(player.id);
-                // await notificationService.sendBreakingNews(owners, news, player);
+                // Emit socket.io event for real-time updates to player owners
+                const socketService = tryGetSocketService();
+                if (socketService && ownerUserIds.length > 0) {
+                  socketService.emitPlayerNews(ownerUserIds, { news, player });
+                }
+
+                // Send push notifications to users who own this player
+                if (ownerUserIds.length > 0) {
+                  try {
+                    const notificationService = new NotificationService(pool);
+                    await notificationService.sendPlayerNewsNotification(ownerUserIds, news, player);
+                  } catch (notifError) {
+                    logger.error(`Failed to send player news notifications: ${notifError}`);
+                  }
+                }
               }
             } catch (error) {
               logger.error(`Failed to process news for player ${newsItem.player_id}: ${error}`);
