@@ -98,7 +98,7 @@ export async function proposeTradeStandalone(
   }
 
   // Execute in transaction with lock
-  const tradeWithDetails = await runWithLock(
+  const { tradeWithDetails, isNew } = await runWithLock(
     ctx.db,
     LockDomain.TRADE,
     leagueId,
@@ -107,28 +107,31 @@ export async function proposeTradeStandalone(
     }
   );
 
-  // Emit domain event AFTER transaction commits
-  const eventBus = tryGetEventBus();
-  eventBus?.publish({
-    type: EventTypes.TRADE_PROPOSED,
-    leagueId,
-    payload: tradeWithDetailsToResponse(tradeWithDetails),
-  });
+  // Only emit events for genuinely new trades (not idempotent replays)
+  if (isNew) {
+    // Emit domain event AFTER transaction commits
+    const eventBus = tryGetEventBus();
+    eventBus?.publish({
+      type: EventTypes.TRADE_PROPOSED,
+      leagueId,
+      payload: tradeWithDetailsToResponse(tradeWithDetails),
+    });
 
-  // Emit system message to league chat and DM
-  if (ctx.eventListenerService) {
-    ctx.eventListenerService
-      .handleTradeProposed(leagueId, tradeWithDetails.id, {
-        notifyLeagueChat: tradeWithDetails.notifyLeagueChat,
-        leagueChatMode: tradeWithDetails.leagueChatMode,
-        notifyDm: tradeWithDetails.notifyDm,
-      })
-      .catch((err) => logger.warn('Failed to emit system message', {
-        type: 'trade_proposed',
-        leagueId,
-        tradeId: tradeWithDetails.id,
-        error: err.message
-      }));
+    // Emit system message to league chat and DM
+    if (ctx.eventListenerService) {
+      ctx.eventListenerService
+        .handleTradeProposed(leagueId, tradeWithDetails.id, {
+          notifyLeagueChat: tradeWithDetails.notifyLeagueChat,
+          leagueChatMode: tradeWithDetails.leagueChatMode,
+          notifyDm: tradeWithDetails.notifyDm,
+        })
+        .catch((err) => logger.warn('Failed to emit system message', {
+          type: 'trade_proposed',
+          leagueId,
+          tradeId: tradeWithDetails.id,
+          error: err.message
+        }));
+    }
   }
 
   return tradeWithDetails;
@@ -146,7 +149,7 @@ export async function proposeTrade(
   userId: string,
   request: ProposeTradeRequest,
   manageTransaction: boolean
-): Promise<TradeWithDetails> {
+): Promise<{ tradeWithDetails: TradeWithDetails; isNew: boolean }> {
   // Note: manageTransaction is now ignored - always uses caller's transaction
   // Kept for backward compatibility with counter-trade.use-case.ts
 
@@ -203,7 +206,7 @@ async function proposeTradeCore(
   proposerRoster: Roster,
   recipientRoster: Roster,
   league: League
-): Promise<TradeWithDetails> {
+): Promise<{ tradeWithDetails: TradeWithDetails; isNew: boolean }> {
   // Validate offering players belong to proposer
   await validateOfferingPlayers(ctx, client, proposerRoster, request.offeringPlayerIds, leagueId);
 
@@ -273,7 +276,7 @@ async function proposeTradeCore(
   );
   const effectiveNotifyLeagueChat = effectiveLeagueChatMode !== 'none';
 
-  const trade = await ctx.tradesRepo.create(
+  const { trade, isNew } = await ctx.tradesRepo.create(
     leagueId,
     proposerRoster.id,
     recipientRoster.id,
@@ -286,8 +289,16 @@ async function proposeTradeCore(
     effectiveNotifyLeagueChat,
     request.notifyDm,
     effectiveLeagueChatMode,
-    league.activeLeagueSeasonId
+    league.activeLeagueSeasonId,
+    request.idempotencyKey
   );
+
+  if (!isNew) {
+    // Idempotent replay - fetch existing trade details, skip item creation
+    const existing = await ctx.tradesRepo.findByIdWithDetails(trade.id, proposerRoster.id);
+    if (!existing) throw new Error('Failed to fetch existing trade');
+    return { tradeWithDetails: existing, isNew: false };
+  }
 
   // Create trade items for players
   const playerItems = await buildPlayerTradeItems(
@@ -328,7 +339,7 @@ async function proposeTradeCore(
   const tradeWithDetails = await ctx.tradesRepo.findByIdWithDetails(trade.id, proposerRoster.id);
   if (!tradeWithDetails) throw new Error('Failed to create trade');
 
-  return tradeWithDetails;
+  return { tradeWithDetails, isNew: true };
 }
 
 async function validateOfferingPlayers(

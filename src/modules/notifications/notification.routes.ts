@@ -17,6 +17,7 @@ import {
   updatePreferencesSchema,
 } from './notification.schemas';
 import { asyncHandler } from '../../shared/async-handler';
+import { idempotencyMiddleware } from '../../middleware/idempotency.middleware';
 
 const pool = container.resolve<Pool>(KEYS.POOL);
 const notificationService = new NotificationService(pool);
@@ -26,6 +27,7 @@ const router = Router();
 
 // All notification routes require authentication
 router.use(authMiddleware);
+router.use(idempotencyMiddleware(pool));
 
 // GET /api/notifications/preferences - Get user preferences
 router.get('/preferences', apiReadLimiter, asyncHandler(notificationController.getPreferences));

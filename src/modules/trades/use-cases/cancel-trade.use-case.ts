@@ -40,10 +40,18 @@ export async function cancelTrade(
     throw new ForbiddenException('Only the proposer can cancel this trade');
   }
 
+  // Allow idempotent retry — if already cancelled, return current state without side effects
+  if (trade.status === 'cancelled') {
+    const details = await ctx.tradesRepo.findByIdWithDetails(tradeId, roster.id);
+    if (!details) throw new Error('Failed to get trade details');
+    return details;
+  }
   // Initial status check (will be re-verified inside transaction)
   if (trade.status !== 'pending') {
     throw new ValidationException(`Cannot cancel trade with status: ${trade.status}`);
   }
+
+  let stateChanged = false;
 
   await runWithLock(ctx.db, LockDomain.TRADE, trade.leagueId, async (client) => {
     // Re-verify status after acquiring lock (another transaction may have changed it)
@@ -63,29 +71,31 @@ export async function cancelTrade(
     }
 
     await ctx.tradesRepo.updateStatus(tradeId, 'cancelled', client);
+    stateChanged = true;
   });
 
   const tradeWithDetails = await ctx.tradesRepo.findByIdWithDetails(tradeId, roster.id);
   if (!tradeWithDetails) throw new Error('Failed to get trade details');
 
-  // Emit domain event AFTER commit
-  const eventBus = tryGetEventBus();
-  eventBus?.publish({
-    type: EventTypes.TRADE_CANCELLED,
-    leagueId: trade.leagueId,
-    payload: { tradeId: trade.id },
-  });
+  // Only emit events if we actually changed state (skip on idempotent retry)
+  if (stateChanged) {
+    const eventBus = tryGetEventBus();
+    eventBus?.publish({
+      type: EventTypes.TRADE_CANCELLED,
+      leagueId: trade.leagueId,
+      payload: { tradeId: trade.id },
+    });
 
-  // Emit system message to league chat
-  if (ctx.eventListenerService) {
-    ctx.eventListenerService
-      .handleTradeCancelled(trade.leagueId, trade.id, trade.notifyLeagueChat)
-      .catch((err) => logger.warn('Failed to emit system message', {
-        type: 'trade_cancelled',
-        leagueId: trade.leagueId,
-        tradeId: trade.id,
-        error: err.message
-      }));
+    if (ctx.eventListenerService) {
+      ctx.eventListenerService
+        .handleTradeCancelled(trade.leagueId, trade.id, trade.notifyLeagueChat)
+        .catch((err) => logger.warn('Failed to emit system message', {
+          type: 'trade_cancelled',
+          leagueId: trade.leagueId,
+          tradeId: trade.id,
+          error: err.message
+        }));
+    }
   }
 
   return tradeWithDetails;

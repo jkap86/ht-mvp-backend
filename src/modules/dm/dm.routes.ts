@@ -9,6 +9,8 @@ import { dmMessageLimiter, dmReadLimiter } from '../../middleware/rate-limit.mid
 import { container, KEYS } from '../../container';
 import { sendDmSchema, getDmMessagesQuerySchema, dmReactionSchema, searchDmMessagesQuerySchema } from './dm.schemas';
 import { asyncHandler } from '../../shared/async-handler';
+import { idempotencyMiddleware } from '../../middleware/idempotency.middleware';
+import { Pool } from 'pg';
 
 // Resolve dependencies from container
 const dmService = container.resolve<DmService>(KEYS.DM_SERVICE);
@@ -20,6 +22,7 @@ const router = Router();
 
 // All DM routes require authentication
 router.use(authMiddleware);
+router.use(idempotencyMiddleware(container.resolve<Pool>(KEYS.POOL)));
 
 // GET /api/dm - List all conversations (rate limited)
 router.get('/', dmReadLimiter, asyncHandler(dmController.getConversations));

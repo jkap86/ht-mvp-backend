@@ -5,6 +5,8 @@ import { container, KEYS } from '../../container';
 import { asyncHandler } from '../../shared/async-handler';
 import { resolveSeasonContext } from '../../middleware/season-context.middleware';
 import { seasonWriteGuard } from '../../middleware/season-write-guard.middleware';
+import { idempotencyMiddleware } from '../../middleware/idempotency.middleware';
+import { Pool } from 'pg';
 
 /**
  * Creates commissioner tools routes mounted under /api/leagues/:leagueId/commissioner-tools
@@ -14,6 +16,7 @@ export function createCommissionerToolsRoutes(): Router {
   const controller = new CommissionerToolsController(service);
 
   const router = Router({ mergeParams: true });
+  router.use(idempotencyMiddleware(container.resolve<Pool>(KEYS.POOL)));
 
   const writeGuards = [resolveSeasonContext, seasonWriteGuard];
 

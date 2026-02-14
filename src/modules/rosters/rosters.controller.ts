@@ -67,8 +67,12 @@ export class RostersController {
 
     if (isNaN(playerId)) throw new ValidationException('Invalid player ID');
 
-    await this.rosterService.dropPlayer(leagueId, rosterId, playerId, userId);
-    res.status(204).send();
+    const idempotencyKey = req.headers['x-idempotency-key'] as string | undefined;
+    const result = await this.rosterService.dropPlayer(leagueId, rosterId, playerId, userId, idempotencyKey);
+    res.status(200).json({
+      success: true,
+      transaction_id: result.transactionId,
+    });
   }
 
   // POST /api/leagues/:leagueId/rosters/:rosterId/players/add-drop

@@ -7,6 +7,8 @@ import { apiReadLimiter, tradeLimiter } from '../../middleware/rate-limit.middle
 import { addToTradeBlockSchema } from './trade-block.schemas';
 import { asyncHandler } from '../../shared/async-handler';
 import { container, KEYS } from '../../container';
+import { idempotencyMiddleware } from '../../middleware/idempotency.middleware';
+import { Pool } from 'pg';
 
 export function createTradeBlockRoutes(): Router {
   const tradeBlockService = container.resolve<TradeBlockService>(KEYS.TRADE_BLOCK_SERVICE);
@@ -15,6 +17,7 @@ export function createTradeBlockRoutes(): Router {
   const router = Router({ mergeParams: true });
 
   router.use(authMiddleware);
+  router.use(idempotencyMiddleware(container.resolve<Pool>(KEYS.POOL)));
 
   // GET /api/leagues/:leagueId/trade-block
   router.get('/', apiReadLimiter, asyncHandler(controller.getTradeBlock));

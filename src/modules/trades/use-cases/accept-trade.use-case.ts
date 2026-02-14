@@ -61,6 +61,12 @@ export async function acceptTrade(
     throw new ForbiddenException('Only the recipient can accept this trade');
   }
 
+  // Allow idempotent retry — if already accepted, return current state without side effects
+  if (trade.status === 'accepted' || trade.status === 'completed' || trade.status === 'in_review') {
+    const details = await ctx.tradesRepo.findByIdWithDetails(tradeId, roster.id);
+    if (!details) throw new NotFoundException('Failed to get trade details');
+    return details;
+  }
   // Initial status check (will be re-verified inside transaction)
   if (trade.status !== 'pending') {
     throw new ValidationException(`Cannot accept trade with status: ${trade.status}`);

@@ -466,7 +466,7 @@ describe('TradesService', () => {
       // No players in pending trades
       mockTradesRepo.findPendingPlayerIds = jest.fn().mockResolvedValue(new Set());
       mockRosterPlayersRepo.getPlayerCount.mockResolvedValue(10);
-      mockTradesRepo.create.mockResolvedValue(mockTrade);
+      mockTradesRepo.create.mockResolvedValue({ trade: mockTrade, isNew: true });
       mockTradesRepo.findByIdWithDetails.mockResolvedValue(mockTradeWithDetails);
       // Mock player repository to return player details
       mockPlayerRepo.findByIdsWithDetails.mockResolvedValue(
@@ -502,13 +502,35 @@ describe('TradesService', () => {
       );
     });
 
-    it('should throw ValidationException when trade not pending', async () => {
-      const completedTrade = { ...mockTrade, status: 'completed' as const };
-      mockTradesRepo.findById.mockResolvedValue(completedTrade);
+    it('should throw ValidationException when trade is rejected', async () => {
+      const rejectedTrade = { ...mockTrade, status: 'rejected' as const };
+      mockTradesRepo.findById.mockResolvedValue(rejectedTrade);
       mockRosterRepo.findById.mockResolvedValue(mockRoster2);
 
       await expect(tradesService.acceptTrade(1, 'user-456')).rejects.toThrow(ValidationException);
       await expect(tradesService.acceptTrade(1, 'user-456')).rejects.toThrow('Cannot accept trade');
+    });
+
+    it('should return idempotent success when trade already accepted/completed', async () => {
+      const completedTrade = { ...mockTrade, status: 'completed' as const };
+      mockTradesRepo.findById.mockResolvedValue(completedTrade);
+      mockRosterRepo.findById.mockResolvedValue(mockRoster2);
+      mockTradesRepo.findByIdWithDetails.mockResolvedValue({
+        ...completedTrade,
+        items: [],
+        proposerTeamName: 'Team 1',
+        recipientTeamName: 'Team 2',
+        proposerUsername: 'user1',
+        recipientUsername: 'user2',
+        votes: [],
+        canRespond: false,
+        canCancel: false,
+        canVote: false,
+      });
+
+      const result = await tradesService.acceptTrade(1, 'user-456');
+      expect(result).toBeDefined();
+      expect(result.status).toBe('completed');
     });
 
     it('should execute trade immediately when no review period', async () => {
@@ -717,18 +739,28 @@ describe('TradesService', () => {
       );
     });
 
-    it('should throw ConflictException when already voted', async () => {
+    it('should return success idempotently when already voted', async () => {
       mockTradesRepo.findById.mockResolvedValue(inReviewTrade);
       mockRosterRepo.findByLeagueAndUser.mockResolvedValue(thirdRoster);
       mockLeagueRepo.findById.mockResolvedValue(mockLeague);
       mockTradeVotesRepo.create.mockResolvedValue(null);
+      mockTradeVotesRepo.countVotes.mockResolvedValue({ approve: 1, veto: 0 });
+      mockTradesRepo.findByIdWithDetails.mockResolvedValue({
+        ...inReviewTrade,
+        items: [],
+        proposerTeamName: 'Team 1',
+        recipientTeamName: 'Team 2',
+        proposerUsername: 'user1',
+        recipientUsername: 'user2',
+        votes: [],
+        canRespond: false,
+        canCancel: false,
+        canVote: false,
+      });
 
-      await expect(tradesService.voteTrade(1, 'user-789', 'approve')).rejects.toThrow(
-        ConflictException
-      );
-      await expect(tradesService.voteTrade(1, 'user-789', 'approve')).rejects.toThrow(
-        'already voted'
-      );
+      const result = await tradesService.voteTrade(1, 'user-789', 'approve');
+      expect(result).toBeDefined();
+      expect(result.voteCount).toEqual({ approve: 1, veto: 0 });
     });
 
     it('should record vote successfully', async () => {

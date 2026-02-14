@@ -34,6 +34,8 @@ import { AuctionActionHandler } from './action-handlers/auction.handler';
 import { asyncHandler } from '../../shared/async-handler';
 import { resolveSeasonContext } from '../../middleware/season-context.middleware';
 import { seasonWriteGuard } from '../../middleware/season-write-guard.middleware';
+import { idempotencyMiddleware } from '../../middleware/idempotency.middleware';
+import { Pool } from 'pg';
 
 // Resolve dependencies from container
 const draftService = container.resolve<DraftService>(KEYS.DRAFT_SERVICE);
@@ -74,6 +76,7 @@ const router = Router({ mergeParams: true }); // mergeParams to access :leagueId
 router.use(authMiddleware);
 router.use(resolveSeasonContext);
 router.use(seasonWriteGuard);
+router.use(idempotencyMiddleware(container.resolve<Pool>(KEYS.POOL)));
 
 // GET /api/leagues/:leagueId/drafts
 router.get('/', apiReadLimiter, asyncHandler(draftController.getLeagueDrafts));

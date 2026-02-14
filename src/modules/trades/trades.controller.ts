@@ -90,6 +90,8 @@ export class TradesController {
       throw new ValidationException('requesting_pick_asset_ids must be an array');
     }
 
+    const idempotencyKey = req.headers['x-idempotency-key'] as string | undefined;
+
     const trade = await this.tradesService.proposeTrade(leagueId, userId, {
       recipientRosterId: recipient_roster_id,
       offeringPlayerIds: offering_player_ids,
@@ -101,6 +103,7 @@ export class TradesController {
       notifyDm: notify_dm,
       leagueChatMode: league_chat_mode,
       leagueSeasonId,
+      idempotencyKey,
     });
 
     res.status(201).json(tradeWithDetailsToResponse(trade));
@@ -192,6 +195,8 @@ export class TradesController {
       throw new ValidationException('requesting_pick_asset_ids must be an array');
     }
 
+    const idempotencyKey = req.headers['x-idempotency-key'] as string | undefined;
+
     const trade = await this.tradesService.counterTrade(tradeId, userId, {
       offeringPlayerIds: offering_player_ids,
       requestingPlayerIds: requesting_player_ids,
@@ -201,6 +206,7 @@ export class TradesController {
       notifyDm: notify_dm,
       leagueChatMode: league_chat_mode,
       leagueSeasonId,
+      idempotencyKey,
     });
 
     res.status(201).json(tradeWithDetailsToResponse(trade));

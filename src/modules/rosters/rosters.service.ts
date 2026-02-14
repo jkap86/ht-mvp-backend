@@ -258,8 +258,9 @@ export class RosterService {
     leagueId: number,
     rosterId: number,
     playerId: number,
-    userId: string
-  ): Promise<void> {
+    userId: string,
+    idempotencyKey?: string
+  ): Promise<{ transactionId: number; cached: boolean }> {
     // Validate user owns this roster - use findByLeagueAndRosterId since URL contains per-league roster_id
     const roster = await this.rosterRepo.findByLeagueAndRosterId(leagueId, rosterId);
     if (!roster) {
@@ -273,13 +274,21 @@ export class RosterService {
     // Use the global id for all subsequent operations
     const globalRosterId = roster.id;
 
+    // Fast-path idempotency check (before lock)
+    if (idempotencyKey) {
+      const existing = await this.transactionsRepo.findByIdempotencyKey(leagueId, globalRosterId, idempotencyKey);
+      if (existing) {
+        return { transactionId: existing.id, cached: true };
+      }
+    }
+
     const league = await this.leagueRepo.findById(leagueId);
     if (!league) {
       throw new NotFoundException('League not found');
     }
 
     // Use runWithLock with league lock to prevent race with waiver claims
-    await runWithLock(this.db, LockDomain.LEAGUE, leagueId, async (client) => {
+    const transactionId = await runWithLock(this.db, LockDomain.LEAGUE, leagueId, async (client) => {
       // Use mutation service for validation and remove
       await this.rosterMutationService.removePlayerFromRoster(
         { rosterId: globalRosterId, playerId },
@@ -287,7 +296,7 @@ export class RosterService {
       );
 
       // Record transaction
-      await this.transactionsRepo.create(
+      const tx = await this.transactionsRepo.create(
         leagueId,
         globalRosterId,
         playerId,
@@ -296,7 +305,8 @@ export class RosterService {
         league.currentWeek,
         undefined,
         client,
-        league.activeLeagueSeasonId
+        league.activeLeagueSeasonId,
+        idempotencyKey
       );
 
       // Auto-remove from trade block
@@ -307,10 +317,14 @@ export class RosterService {
 
       // Add to waiver wire if league has waivers enabled
       await this.addToWaiverWireIfEnabled(league, playerId, globalRosterId, client);
+
+      return tx.id;
     });
 
     // Emit events AFTER transaction commits
     this.emitFaEvents(leagueId, roster, 'drop', undefined, playerId);
+
+    return { transactionId, cached: false };
   }
 
   /**

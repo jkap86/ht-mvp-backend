@@ -5,6 +5,8 @@ import { container, KEYS } from '../../container';
 import { asyncHandler } from '../../shared/async-handler';
 import { resolveSeasonContext } from '../../middleware/season-context.middleware';
 import { seasonWriteGuard } from '../../middleware/season-write-guard.middleware';
+import { idempotencyMiddleware } from '../../middleware/idempotency.middleware';
+import { Pool } from 'pg';
 
 /**
  * Creates dues routes that are mounted under /api/leagues/:leagueId/dues
@@ -20,6 +22,7 @@ export function createDuesRoutes(): Router {
   // Resolve season context and guard writes to completed seasons
   router.use(resolveSeasonContext);
   router.use(seasonWriteGuard);
+  router.use(idempotencyMiddleware(container.resolve<Pool>(KEYS.POOL)));
 
   // GET /api/leagues/:leagueId/dues - Get dues overview
   router.get('/', asyncHandler(duesController.getDuesOverview));

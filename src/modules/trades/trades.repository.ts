@@ -58,15 +58,20 @@ export class TradesRepository {
     notifyLeagueChat?: boolean,
     notifyDm?: boolean,
     leagueChatMode?: LeagueChatMode,
-    leagueSeasonId?: number
-  ): Promise<Trade> {
+    leagueSeasonId?: number,
+    idempotencyKey?: string
+  ): Promise<{ trade: Trade; isNew: boolean }> {
     const conn = client || this.db;
     const result = await conn.query(
       `INSERT INTO trades (
         league_id, proposer_roster_id, recipient_roster_id,
         expires_at, season, week, message, parent_trade_id,
-        notify_league_chat, notify_dm, league_chat_mode, league_season_id
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        notify_league_chat, notify_dm, league_chat_mode, league_season_id,
+        idempotency_key
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      ON CONFLICT (league_id, proposer_roster_id, idempotency_key)
+        WHERE idempotency_key IS NOT NULL
+        DO NOTHING
       RETURNING *`,
       [
         leagueId,
@@ -81,9 +86,21 @@ export class TradesRepository {
         notifyDm ?? true,
         leagueChatMode ?? 'summary',
         leagueSeasonId || null,
+        idempotencyKey || null,
       ]
     );
-    return tradeFromDatabase(result.rows[0]);
+
+    if (result.rows.length > 0) {
+      return { trade: tradeFromDatabase(result.rows[0]), isNew: true };
+    }
+
+    // Conflict — re-select the existing trade
+    const existing = await conn.query(
+      `SELECT * FROM trades
+       WHERE league_id = $1 AND proposer_roster_id = $2 AND idempotency_key = $3`,
+      [leagueId, proposerRosterId, idempotencyKey]
+    );
+    return { trade: tradeFromDatabase(existing.rows[0]), isNew: false };
   }
 
   /**

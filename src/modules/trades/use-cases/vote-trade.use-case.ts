@@ -7,7 +7,6 @@ import {
   NotFoundException,
   ForbiddenException,
   ValidationException,
-  ConflictException,
 } from '../../../utils/exceptions';
 import { runWithLock, LockDomain } from '../../../shared/transaction-runner';
 import type { EventListenerService } from '../../chat/event-listener.service';
@@ -64,6 +63,7 @@ export async function voteTrade(
   const vetoThreshold = league?.settings?.trade_veto_count || DEFAULT_VETO_COUNT;
 
   // Use transaction with advisory lock to prevent race conditions
+  let isNewVote = false;
   const voteCount = await runWithLock(
     ctx.db,
     LockDomain.TRADE,
@@ -87,8 +87,12 @@ export async function voteTrade(
       // Create vote (ON CONFLICT returns null if duplicate)
       const voteResult = await ctx.tradeVotesRepo.create(tradeId, roster.id, vote, client);
       if (!voteResult) {
-        throw new ConflictException('You have already voted on this trade');
+        // Idempotent retry — vote already exists, return current counts as success
+        const counts = await ctx.tradeVotesRepo.countVotes(tradeId, client);
+        return counts;
       }
+
+      isNewVote = true;
 
       // Count votes atomically within the same transaction
       const counts = await ctx.tradeVotesRepo.countVotes(tradeId, client);
@@ -105,31 +109,32 @@ export async function voteTrade(
     }
   );
 
-  // Emit domain events after transaction commits (outside transaction for reliability)
-  const eventBus = tryGetEventBus();
-  if (voteCount.veto >= vetoThreshold) {
-    eventBus?.publish({
-      type: EventTypes.TRADE_VETOED,
-      leagueId: trade.leagueId,
-      payload: { tradeId: trade.id },
-    });
-    // Emit system message for veto
-    if (ctx.eventListenerService) {
-      ctx.eventListenerService
-        .handleTradeVetoed(trade.leagueId, trade.id)
-        .catch((err) => logger.warn('Failed to emit system message', {
-          type: 'trade_vetoed',
-          leagueId: trade.leagueId,
-          tradeId: trade.id,
-          error: err.message
-        }));
+  // Only emit events for genuinely new votes (skip on idempotent retry)
+  if (isNewVote) {
+    const eventBus = tryGetEventBus();
+    if (voteCount.veto >= vetoThreshold) {
+      eventBus?.publish({
+        type: EventTypes.TRADE_VETOED,
+        leagueId: trade.leagueId,
+        payload: { tradeId: trade.id },
+      });
+      if (ctx.eventListenerService) {
+        ctx.eventListenerService
+          .handleTradeVetoed(trade.leagueId, trade.id)
+          .catch((err) => logger.warn('Failed to emit system message', {
+            type: 'trade_vetoed',
+            leagueId: trade.leagueId,
+            tradeId: trade.id,
+            error: err.message
+          }));
+      }
+    } else {
+      eventBus?.publish({
+        type: EventTypes.TRADE_VOTE_CAST,
+        leagueId: trade.leagueId,
+        payload: { tradeId: trade.id, votes: voteCount },
+      });
     }
-  } else {
-    eventBus?.publish({
-      type: EventTypes.TRADE_VOTE_CAST,
-      leagueId: trade.leagueId,
-      payload: { tradeId: trade.id, votes: voteCount },
-    });
   }
 
   const tradeWithDetails = await ctx.tradesRepo.findByIdWithDetails(tradeId, roster.id);

@@ -5,6 +5,8 @@ import { container, KEYS } from '../../container';
 import { InvitationsService } from './invitations.service';
 import { apiReadLimiter, tradeLimiter, searchLimiter } from '../../middleware/rate-limit.middleware';
 import { asyncHandler } from '../../shared/async-handler';
+import { idempotencyMiddleware } from '../../middleware/idempotency.middleware';
+import { Pool } from 'pg';
 
 // Resolve dependencies from container
 const invitationsService = container.resolve<InvitationsService>(KEYS.INVITATIONS_SERVICE);
@@ -14,6 +16,7 @@ const router = Router();
 
 // All invitation routes require authentication
 router.use(authMiddleware);
+router.use(idempotencyMiddleware(container.resolve<Pool>(KEYS.POOL)));
 
 // GET /api/invitations/pending - Get my pending invitations
 router.get('/pending', apiReadLimiter, asyncHandler(invitationsController.getMyInvitations));

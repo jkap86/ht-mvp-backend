@@ -5,6 +5,8 @@ import { LineupService } from '../lineups/lineups.service';
 import { apiReadLimiter, rosterModifyLimiter } from '../../middleware/rate-limit.middleware';
 import { container, KEYS } from '../../container';
 import { asyncHandler } from '../../shared/async-handler';
+import { idempotencyMiddleware } from '../../middleware/idempotency.middleware';
+import { Pool } from 'pg';
 
 // Resolve dependencies from container
 const rosterService = container.resolve<RosterService>(KEYS.ROSTER_PLAYER_SERVICE);
@@ -13,7 +15,8 @@ const rostersController = new RostersController(rosterService, lineupService);
 
 const router = Router({ mergeParams: true });
 
-// All routes require authentication (handled by parent router)
+// Idempotency middleware (auth handled by parent router)
+router.use(idempotencyMiddleware(container.resolve<Pool>(KEYS.POOL)));
 
 // GET /api/leagues/:leagueId/rosters/:rosterId/players
 router.get('/:rosterId/players', apiReadLimiter, asyncHandler(rostersController.getRosterPlayers));

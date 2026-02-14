@@ -23,6 +23,8 @@ import { createDuesRoutes } from '../dues/dues.routes';
 import { createCommissionerToolsRoutes } from '../commissioner-tools/commissioner-tools.routes';
 import { createTradeBlockRoutes } from '../trade-block/trade-block.routes';
 import { asyncHandler } from '../../shared/async-handler';
+import { idempotencyMiddleware } from '../../middleware/idempotency.middleware';
+import { Pool } from 'pg';
 import { WaiversController } from '../waivers/waivers.controller';
 import { WaiversService } from '../waivers/waivers.service';
 import { AuthorizationService } from '../auth/authorization.service';
@@ -70,6 +72,7 @@ const router = Router();
 
 // All league routes require authentication
 router.use(authMiddleware);
+router.use(idempotencyMiddleware(container.resolve<Pool>(KEYS.POOL)));
 
 // GET /api/leagues/draft-structures - Get available draft structure options
 router.get('/draft-structures', apiReadLimiter, (req, res) => {
