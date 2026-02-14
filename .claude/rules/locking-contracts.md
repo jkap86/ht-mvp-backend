@@ -58,8 +58,9 @@ Located in `src/shared/locks.ts`:
 
 | Operation | Lock Type | Lock ID | Implementation |
 |-----------|-----------|---------|----------------|
-| Add player | ROSTER | rosterId | Via roster mutation service |
-| Drop player | ROSTER | rosterId | Via roster mutation service |
+| Add player (FA) | LEAGUE | leagueId | `RosterService.addPlayer()` via `runWithLock` |
+| Drop player | LEAGUE | leagueId | `RosterService.dropPlayer()` via `runWithLock` |
+| Add/drop player (FA) | LEAGUE | leagueId | `RosterService.addDropPlayer()` via `runWithLock` |
 | Set lineup | LINEUP | rosterId | `LineupService.setLineup()` |
 
 ### Job Coordination

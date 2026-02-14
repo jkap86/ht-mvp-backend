@@ -158,7 +158,7 @@ export class NotificationService {
   async sendPlayerNewsNotification(
     ownerUserIds: string[],
     news: { title: string; impactLevel: string; id?: number },
-    player: { fullName?: string; full_name?: string; position?: string; team?: string; id?: number }
+    player: { fullName?: string; full_name?: string; position?: string | null; team?: string | null; id?: number }
   ): Promise<{ successCount: number; failureCount: number }> {
     if (ownerUserIds.length === 0) {
       return { successCount: 0, failureCount: 0 };

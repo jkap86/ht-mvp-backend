@@ -444,7 +444,7 @@ export class RosterTransactionsRepository {
         return rosterTransactionFromDatabase(result.rows[0]);
       }
       // Conflict: re-select existing transaction by idempotency key
-      const existing = await this.findByIdempotencyKey(leagueId, rosterId, idempotencyKey!, db as PoolClient);
+      const existing = await this.findByIdempotencyKey(leagueId, rosterId, idempotencyKey!, client);
       return existing!;
     }
     const result = await db.query(
@@ -460,7 +460,7 @@ export class RosterTransactionsRepository {
       return rosterTransactionFromDatabase(result.rows[0]);
     }
     // Conflict: re-select existing transaction by idempotency key
-    const existing = await this.findByIdempotencyKey(leagueId, rosterId, idempotencyKey!, db as PoolClient);
+    const existing = await this.findByIdempotencyKey(leagueId, rosterId, idempotencyKey!, client);
     return existing!;
   }
 }

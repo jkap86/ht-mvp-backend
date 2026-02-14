@@ -356,49 +356,49 @@ export class RosterService {
     targetRosterId: number,
     userId: string
   ): Promise<{ message: string; teamName: string }> {
-    // Check if user is commissioner
+    // Auth check outside lock (read-only)
     const isCommissioner = await this.leagueRepo.isCommissioner(leagueId, userId);
     if (!isCommissioner) {
       throw new ForbiddenException('Only the commissioner can reinstate members');
     }
 
-    // Get target roster
-    const targetRoster = await this.rosterRepo.findById(targetRosterId);
-    if (!targetRoster) {
-      throw new NotFoundException('Roster not found');
-    }
-
-    // Verify roster belongs to this league
-    if (targetRoster.leagueId !== leagueId) {
-      throw new ValidationException('Roster does not belong to this league');
-    }
-
-    // Verify roster is actually benched
-    if (!targetRoster.isBenched) {
-      throw new ValidationException('This member is not benched');
-    }
-
-    // Get league to check capacity
-    const league = await this.leagueRepo.findById(leagueId);
-    if (!league) {
-      throw new NotFoundException('League not found');
-    }
-
-    // Check if there's room (active count < total_rosters)
-    const activeCount = await this.rosterRepo.getRosterCount(leagueId);
-    if (activeCount >= league.totalRosters) {
-      throw new ValidationException(
-        'Cannot reinstate member: league is full. Increase team count or kick an active member first.'
-      );
-    }
-
-    // Get team name
+    // Get team name before lock (display-only, doesn't accept client)
     const teamName = (await this.rosterRepo.getTeamName(targetRosterId)) || 'Unknown Team';
 
-    // Reinstate the member
-    await this.rosterRepo.reinstateMember(targetRosterId);
+    // Acquire LEAGUE lock for the capacity check-then-act
+    const targetRoster = await runWithLock(this.db, LockDomain.LEAGUE, leagueId, async (client) => {
+      // Re-fetch roster inside lock for fresh data
+      const roster = await this.rosterRepo.findByIdWithClient(client, targetRosterId);
+      if (!roster) {
+        throw new NotFoundException('Roster not found');
+      }
 
-    // Emit domain event (reuse member joined event as the UI effect is similar)
+      if (roster.leagueId !== leagueId) {
+        throw new ValidationException('Roster does not belong to this league');
+      }
+
+      if (!roster.isBenched) {
+        throw new ValidationException('This member is not benched');
+      }
+
+      const league = await this.leagueRepo.findById(leagueId, client);
+      if (!league) {
+        throw new NotFoundException('League not found');
+      }
+
+      const activeCount = await this.rosterRepo.getRosterCount(leagueId, client);
+      if (activeCount >= league.totalRosters) {
+        throw new ValidationException(
+          'Cannot reinstate member: league is full. Increase team count or kick an active member first.'
+        );
+      }
+
+      await this.rosterRepo.reinstateMember(targetRosterId, client);
+
+      return roster;
+    });
+
+    // Emit domain event AFTER transaction commits
     if (targetRoster.userId) {
       const eventBus = tryGetEventBus();
       eventBus?.publish({
@@ -429,67 +429,77 @@ async devBulkAddUsers(
       throw new NotFoundException('League not found');
     }
 
-    const results: Array<{ username: string; success: boolean; error?: string }> = [];
+    // Acquire LEAGUE lock to prevent concurrent roster slot claims
+    const { results, events } = await runWithLock(this.db, LockDomain.LEAGUE, leagueId, async (client) => {
+      const innerResults: Array<{ username: string; success: boolean; error?: string }> = [];
+      const innerEvents: Array<{ rosterDbId: number; rosterSlotId: number; teamName: string; userId: string }> = [];
 
-    for (const username of usernames) {
-      try {
-        // Look up user by username
-        const user = await this.userRepo.findByUsername(username);
-        if (!user) {
-          results.push({ username, success: false, error: 'User not found' });
-          continue;
-        }
-
-        // Check if already a member
-        const existingRoster = await this.rosterRepo.findByLeagueAndUser(leagueId, user.userId);
-        if (existingRoster) {
-          results.push({ username, success: false, error: 'Already a member' });
-          continue;
-        }
-
-        // Try to claim an empty roster first (preserves draft position)
-        const emptyRoster = await this.rosterRepo.findEmptyRoster(leagueId);
-        let rosterId: number;
-
-        if (emptyRoster) {
-          await this.rosterRepo.assignUserToRoster(emptyRoster.id, user.userId);
-          rosterId = emptyRoster.rosterId;
-        } else {
-          // Check if league is full
-          const rosterCount = await this.rosterRepo.getRosterCount(leagueId);
-          if (rosterCount >= league.totalRosters) {
-            results.push({ username, success: false, error: 'League is full' });
+      for (const username of usernames) {
+        try {
+          // Look up user by username (pool-level read, no client needed)
+          const user = await this.userRepo!.findByUsername(username);
+          if (!user) {
+            innerResults.push({ username, success: false, error: 'User not found' });
             continue;
           }
-          // Create new roster only if no empty slots
-          rosterId = await this.rosterRepo.getNextRosterId(leagueId);
-          const created = await this.rosterRepo.create(leagueId, user.userId, rosterId);
-          if (!created) {
-            results.push({ username, success: false, error: 'Already a member' });
+
+          // Check if already a member
+          const existingRoster = await this.rosterRepo.findByLeagueAndUser(leagueId, user.userId, client);
+          if (existingRoster) {
+            innerResults.push({ username, success: false, error: 'Already a member' });
             continue;
           }
-        }
 
-        // Emit domain event for real-time UI update
-        // For devBulkAddUsers, we need to get the roster DB id
-        const addedRoster = await this.rosterRepo.findByLeagueAndUser(leagueId, user.userId);
-        const eventBus = tryGetEventBus();
-        eventBus?.publish({
-          type: EventTypes.MEMBER_JOINED,
-          leagueId,
-          payload: {
+          // Try to claim an empty roster first (preserves draft position)
+          const emptyRoster = await this.rosterRepo.findEmptyRoster(leagueId, client);
+          let rosterId: number;
+
+          if (emptyRoster) {
+            await this.rosterRepo.assignUserToRoster(emptyRoster.id, user.userId, client);
+            rosterId = emptyRoster.rosterId;
+          } else {
+            // Check if league is full
+            const rosterCount = await this.rosterRepo.getRosterCount(leagueId, client);
+            if (rosterCount >= league.totalRosters) {
+              innerResults.push({ username, success: false, error: 'League is full' });
+              continue;
+            }
+            // Create new roster only if no empty slots
+            rosterId = await this.rosterRepo.getNextRosterId(leagueId, client);
+            const created = await this.rosterRepo.create(leagueId, user.userId, rosterId, client);
+            if (!created) {
+              innerResults.push({ username, success: false, error: 'Already a member' });
+              continue;
+            }
+          }
+
+          // Collect event data for post-commit emission
+          const addedRoster = await this.rosterRepo.findByLeagueAndUser(leagueId, user.userId, client);
+          innerEvents.push({
             rosterDbId: addedRoster?.id ?? 0,
             rosterSlotId: rosterId,
             teamName: username,
             userId: user.userId,
-          },
-        });
+          });
 
-        results.push({ username, success: true });
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : 'Unknown error';
-        results.push({ username, success: false, error: message });
+          innerResults.push({ username, success: true });
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : 'Unknown error';
+          innerResults.push({ username, success: false, error: message });
+        }
       }
+
+      return { results: innerResults, events: innerEvents };
+    });
+
+    // Emit domain events AFTER transaction commits
+    const eventBus = tryGetEventBus();
+    for (const event of events) {
+      eventBus?.publish({
+        type: EventTypes.MEMBER_JOINED,
+        leagueId,
+        payload: event,
+      });
     }
 
     return results;

@@ -200,7 +200,16 @@ export class RosterService {
     }
 
     // Use runWithLock with league lock to prevent concurrent free agent claims
-    const rosterPlayer = await runWithLock(this.db, LockDomain.LEAGUE, leagueId, async (client) => {
+    const result = await runWithLock(this.db, LockDomain.LEAGUE, leagueId, async (client) => {
+      // Re-check idempotency inside lock to handle concurrent duplicates
+      if (idempotencyKey) {
+        const existing = await this.transactionsRepo.findByIdempotencyKey(leagueId, globalRosterId, idempotencyKey, client);
+        if (existing) {
+          const rp = await this.rosterPlayersRepo.findByRosterAndPlayer(globalRosterId, playerId);
+          if (rp) return { rosterPlayer: rp, cached: true };
+        }
+      }
+
       // Get league for transaction recording
       const league = await this.leagueRepo.findById(leagueId);
       if (!league) {
@@ -242,13 +251,15 @@ export class RosterService {
         idempotencyKey
       );
 
-      return rp;
+      return { rosterPlayer: rp, cached: false };
     });
 
-    // Emit events AFTER transaction commits
-    this.emitFaEvents(leagueId, roster, 'add', playerId);
+    // Emit events AFTER transaction commits (skip for cached results)
+    if (!result.cached) {
+      this.emitFaEvents(leagueId, roster, 'add', playerId);
+    }
 
-    return { rosterPlayer, cached: false };
+    return result;
   }
 
   /**
@@ -288,7 +299,15 @@ export class RosterService {
     }
 
     // Use runWithLock with league lock to prevent race with waiver claims
-    const transactionId = await runWithLock(this.db, LockDomain.LEAGUE, leagueId, async (client) => {
+    const result = await runWithLock(this.db, LockDomain.LEAGUE, leagueId, async (client) => {
+      // Re-check idempotency inside lock to handle concurrent duplicates
+      if (idempotencyKey) {
+        const existing = await this.transactionsRepo.findByIdempotencyKey(leagueId, globalRosterId, idempotencyKey, client);
+        if (existing) {
+          return { transactionId: existing.id, cached: true };
+        }
+      }
+
       // Use mutation service for validation and remove
       await this.rosterMutationService.removePlayerFromRoster(
         { rosterId: globalRosterId, playerId },
@@ -318,13 +337,15 @@ export class RosterService {
       // Add to waiver wire if league has waivers enabled
       await this.addToWaiverWireIfEnabled(league, playerId, globalRosterId, client);
 
-      return tx.id;
+      return { transactionId: tx.id, cached: false };
     });
 
-    // Emit events AFTER transaction commits
-    this.emitFaEvents(leagueId, roster, 'drop', undefined, playerId);
+    // Emit events AFTER transaction commits (skip for cached results)
+    if (!result.cached) {
+      this.emitFaEvents(leagueId, roster, 'drop', undefined, playerId);
+    }
 
-    return { transactionId, cached: false };
+    return result;
   }
 
   /**
@@ -361,7 +382,16 @@ export class RosterService {
     }
 
     // Use runWithLock with league lock to prevent concurrent free agent claims
-    const rosterPlayer = await runWithLock(this.db, LockDomain.LEAGUE, leagueId, async (client) => {
+    const result = await runWithLock(this.db, LockDomain.LEAGUE, leagueId, async (client) => {
+      // Re-check idempotency inside lock to handle concurrent duplicates
+      if (idempotencyKey) {
+        const existing = await this.transactionsRepo.findByIdempotencyKey(leagueId, globalRosterId, idempotencyKey, client);
+        if (existing) {
+          const rp = await this.rosterPlayersRepo.findByRosterAndPlayer(globalRosterId, addPlayerId);
+          if (rp) return { rosterPlayer: rp, cached: true };
+        }
+      }
+
       const league = await this.leagueRepo.findById(leagueId);
       if (!league) {
         throw new NotFoundException('League not found');
@@ -423,13 +453,15 @@ export class RosterService {
       // Add dropped player to waiver wire if league has waivers enabled
       await this.addToWaiverWireIfEnabled(league, dropPlayerId, globalRosterId, client);
 
-      return rp;
+      return { rosterPlayer: rp, cached: false };
     });
 
-    // Emit events AFTER transaction commits
-    this.emitFaEvents(leagueId, roster, 'add_drop', addPlayerId, dropPlayerId);
+    // Emit events AFTER transaction commits (skip for cached results)
+    if (!result.cached) {
+      this.emitFaEvents(leagueId, roster, 'add_drop', addPlayerId, dropPlayerId);
+    }
 
-    return { rosterPlayer, cached: false };
+    return result;
   }
 
   /**
