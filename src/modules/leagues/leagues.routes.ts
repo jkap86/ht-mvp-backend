@@ -20,6 +20,7 @@ import {
   createUserSearchRoutes,
 } from '../invitations/invitations.routes';
 import { createDuesRoutes } from '../dues/dues.routes';
+import { createCommissionerToolsRoutes } from '../commissioner-tools/commissioner-tools.routes';
 import { createTradeBlockRoutes } from '../trade-block/trade-block.routes';
 import { asyncHandler } from '../../shared/async-handler';
 import { WaiversController } from '../waivers/waivers.controller';
@@ -156,6 +157,9 @@ router.use('/:leagueId/trade-block', createTradeBlockRoutes());
 
 // Mount dues routes - /api/leagues/:leagueId/dues/*
 router.use('/:leagueId/dues', createDuesRoutes());
+
+// Mount commissioner tools routes - /api/leagues/:leagueId/commissioner-tools/*
+router.use('/:leagueId/commissioner-tools', createCommissionerToolsRoutes());
 
 // Free agents - GET /api/leagues/:leagueId/free-agents
 router.get('/:leagueId/free-agents', apiReadLimiter, asyncHandler(rostersController.getFreeAgents));

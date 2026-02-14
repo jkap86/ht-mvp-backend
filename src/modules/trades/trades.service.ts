@@ -10,6 +10,7 @@ import type { PlayerRepository } from '../players/players.repository';
 import type { DraftPickAssetRepository } from '../drafts/draft-pick-asset.repository';
 import { TradeWithDetails, ProposeTradeRequest, CounterTradeRequest } from './trades.model';
 import type { EventListenerService } from '../chat/event-listener.service';
+import { ValidationException } from '../../utils/exceptions';
 
 // Import use-cases
 import {
@@ -49,6 +50,16 @@ export class TradesService {
   ) {}
 
   /**
+   * Check if trading is locked for a league.
+   */
+  private async checkTradingLocked(leagueId: number): Promise<void> {
+    const league = await this.leagueRepo.findById(leagueId);
+    if (league?.leagueSettings?.trading_locked) {
+      throw new ValidationException('Trading is currently locked by the commissioner');
+    }
+  }
+
+  /**
    * Propose a new trade
    */
   async proposeTrade(
@@ -56,6 +67,7 @@ export class TradesService {
     userId: string,
     request: ProposeTradeRequest
   ): Promise<TradeWithDetails> {
+    await this.checkTradingLocked(leagueId);
     return await proposeTradeUseCase(
       {
         db: this.db,
@@ -78,6 +90,11 @@ export class TradesService {
    * Accept a trade
    */
   async acceptTrade(tradeId: number, userId: string): Promise<TradeWithDetails> {
+    // Look up the trade to get the leagueId for the lock check
+    const trade = await this.tradesRepo.findById(tradeId);
+    if (trade) {
+      await this.checkTradingLocked(trade.leagueId);
+    }
     return acceptTradeUseCase(
       {
         db: this.db,

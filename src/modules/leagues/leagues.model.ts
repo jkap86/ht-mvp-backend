@@ -21,6 +21,8 @@ export interface LeagueSettings {
   faabBudget?: number;
   // Invitation settings
   allowMemberInvites?: boolean; // When false, only commissioner can send invitations. Defaults to true.
+  // Trading settings
+  trading_locked?: boolean; // When true, no new trades can be proposed or accepted
 }
 
 export class League {

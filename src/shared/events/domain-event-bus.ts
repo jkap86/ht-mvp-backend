@@ -218,6 +218,7 @@ export const EventTypes = {
   DRAFT_QUEUE_UPDATED: 'draft:queue_updated',
   DRAFT_OVERNIGHT_PAUSE_STARTED: 'draft:overnight_pause_started',
   DRAFT_OVERNIGHT_PAUSE_ENDED: 'draft:overnight_pause_ended',
+  DRAFT_CHESS_CLOCK_UPDATED: 'draft:chess_clock_updated',
 
   // Auction events
   AUCTION_BID: 'auction:bid',

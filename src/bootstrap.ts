@@ -84,6 +84,7 @@ import { DuesService } from './modules/dues/dues.service';
 import { BestballService } from './modules/bestball/bestball.service';
 import { TradeBlockRepository } from './modules/trade-block/trade-block.repository';
 import { TradeBlockService } from './modules/trade-block/trade-block.service';
+import { CommissionerToolsService } from './modules/commissioner-tools/commissioner-tools.service';
 
 // Engines
 import { DraftEngineFactory } from './engines';
@@ -660,6 +661,26 @@ function bootstrap(): void {
         container.resolve(KEYS.LEAGUE_REPO),
         container.resolve(KEYS.ROSTER_REPO),
         container.resolve(KEYS.SYSTEM_MESSAGE_SERVICE)
+      )
+  );
+
+  // Commissioner Tools
+  container.register(
+    KEYS.COMMISSIONER_TOOLS_SERVICE,
+    () =>
+      new CommissionerToolsService(
+        container.resolve(KEYS.POOL),
+        container.resolve(KEYS.AUTHORIZATION_SERVICE),
+        container.resolve(KEYS.DRAFT_REPO),
+        container.resolve(KEYS.CHESS_CLOCK_REPO),
+        container.resolve(KEYS.DRAFT_STATE_SERVICE),
+        container.resolve(KEYS.WAIVER_PRIORITY_REPO),
+        container.resolve(KEYS.FAAB_BUDGET_REPO),
+        container.resolve(KEYS.TRADES_REPO),
+        container.resolve(KEYS.LEAGUE_REPO),
+        container.resolve(KEYS.ROSTER_REPO),
+        container.resolve(KEYS.DUES_SERVICE),
+        container.resolve(KEYS.EVENT_LISTENER_SERVICE)
       )
   );
 

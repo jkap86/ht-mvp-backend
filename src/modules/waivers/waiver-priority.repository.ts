@@ -130,6 +130,45 @@ export class WaiverPriorityRepository {
   }
 
   /**
+   * Set a specific roster's priority, re-ordering others to fill the gap.
+   * If the roster moves from priority 5 → 2, rosters at 2-4 shift to 3-5.
+   */
+  async setPriority(
+    leagueId: number,
+    season: number,
+    rosterId: number,
+    newPriority: number,
+    client?: PoolClient
+  ): Promise<void> {
+    const conn = client || this.db;
+
+    // Atomic CTE: shift others and set new priority in one statement
+    await conn.query(
+      `WITH current_info AS (
+        SELECT priority as old_priority
+        FROM waiver_priority
+        WHERE league_id = $1 AND season = $2 AND roster_id = $3
+      )
+      UPDATE waiver_priority wp
+      SET priority = CASE
+        WHEN wp.roster_id = $3 THEN $4
+        WHEN (SELECT old_priority FROM current_info) > $4
+          AND wp.priority >= $4
+          AND wp.priority < (SELECT old_priority FROM current_info)
+          THEN wp.priority + 1
+        WHEN (SELECT old_priority FROM current_info) < $4
+          AND wp.priority > (SELECT old_priority FROM current_info)
+          AND wp.priority <= $4
+          THEN wp.priority - 1
+        ELSE wp.priority
+      END
+      FROM current_info
+      WHERE wp.league_id = $1 AND wp.season = $2`,
+      [leagueId, season, rosterId, newPriority]
+    );
+  }
+
+  /**
    * Ensure a roster has a priority row (for late-joining rosters)
    * Assigns last place priority. Idempotent - safe to call multiple times.
    */

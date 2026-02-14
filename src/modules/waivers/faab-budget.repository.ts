@@ -101,6 +101,31 @@ export class FaabBudgetRepository {
   }
 
   /**
+   * Set remaining budget to a specific value (commissioner override).
+   */
+  async setBudget(
+    rosterId: number,
+    season: number,
+    amount: number,
+    client?: PoolClient
+  ): Promise<FaabBudget> {
+    const conn = client || this.db;
+    const result = await conn.query(
+      `UPDATE faab_budgets
+       SET remaining_budget = $3
+       WHERE roster_id = $1 AND season = $2
+       RETURNING *`,
+      [rosterId, season, amount]
+    );
+
+    if (result.rows.length === 0) {
+      throw new NotFoundException(`FAAB budget not found for roster ${rosterId} season ${season}`);
+    }
+
+    return faabBudgetFromDatabase(result.rows[0]);
+  }
+
+  /**
    * Ensure a roster has a FAAB budget row (for late-joining rosters)
    * Idempotent - safe to call multiple times.
    */

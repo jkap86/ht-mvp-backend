@@ -171,4 +171,7 @@ export const KEYS = {
 
   // Validation Services
   ROSTER_RULES_SERVICE: 'rosterRulesService',
+
+  // Commissioner Tools
+  COMMISSIONER_TOOLS_SERVICE: 'commissionerToolsService',
 };

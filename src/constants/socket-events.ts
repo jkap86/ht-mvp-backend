@@ -36,6 +36,7 @@ export const SOCKET_EVENTS = {
     QUEUE_UPDATED: 'draft:queue_updated',
     AUTODRAFT_TOGGLED: 'draft:autodraft_toggled',
     SETTINGS_UPDATED: 'draft:settings_updated',
+    CHESS_CLOCK_UPDATED: 'draft:chess_clock_updated',
   },
 
   // Chat events
