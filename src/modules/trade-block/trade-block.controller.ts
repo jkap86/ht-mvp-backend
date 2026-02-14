@@ -8,9 +8,10 @@ export class TradeBlockController {
   constructor(private readonly tradeBlockService: TradeBlockService) {}
 
   getTradeBlock = async (req: AuthRequest, res: Response) => {
+    const userId = requireUserId(req);
     const leagueId = requireLeagueId(req);
 
-    const items = await this.tradeBlockService.getByLeague(leagueId);
+    const items = await this.tradeBlockService.getByLeague(leagueId, userId);
     res.status(200).json({ items: items.map(tradeBlockItemToResponse) });
   };
 

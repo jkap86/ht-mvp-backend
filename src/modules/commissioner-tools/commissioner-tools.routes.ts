@@ -15,24 +15,23 @@ export function createCommissionerToolsRoutes(): Router {
 
   const router = Router({ mergeParams: true });
 
-  router.use(resolveSeasonContext);
-  router.use(seasonWriteGuard);
+  const writeGuards = [resolveSeasonContext, seasonWriteGuard];
 
   // Draft admin
-  router.patch('/drafts/:draftId/chess-clocks/:rosterId', asyncHandler(controller.adjustChessClock));
-  router.post('/drafts/:draftId/force-autopick', asyncHandler(controller.forceAutopick));
-  router.post('/drafts/:draftId/undo-last-pick', asyncHandler(controller.undoLastPick));
+  router.patch('/drafts/:draftId/chess-clocks/:rosterId', ...writeGuards, asyncHandler(controller.adjustChessClock));
+  router.post('/drafts/:draftId/force-autopick', ...writeGuards, asyncHandler(controller.forceAutopick));
+  router.post('/drafts/:draftId/undo-last-pick', ...writeGuards, asyncHandler(controller.undoLastPick));
 
   // Waivers admin
-  router.post('/waivers/reset-priority', asyncHandler(controller.resetWaiverPriority));
-  router.patch('/waivers/priority/:rosterId', asyncHandler(controller.setWaiverPriority));
-  router.patch('/waivers/faab/:rosterId', asyncHandler(controller.setFaabBudget));
+  router.post('/waivers/reset-priority', ...writeGuards, asyncHandler(controller.resetWaiverPriority));
+  router.patch('/waivers/priority/:rosterId', ...writeGuards, asyncHandler(controller.setWaiverPriority));
+  router.patch('/waivers/faab/:rosterId', ...writeGuards, asyncHandler(controller.setFaabBudget));
 
   // Trades admin
-  router.post('/trades/:tradeId/cancel', asyncHandler(controller.adminCancelTrade));
-  router.patch('/settings', asyncHandler(controller.updateSettings));
+  router.post('/trades/:tradeId/cancel', ...writeGuards, asyncHandler(controller.adminCancelTrade));
+  router.patch('/settings', ...writeGuards, asyncHandler(controller.updateSettings));
 
-  // Dues admin
+  // Dues admin (GET — no write guard needed)
   router.get('/dues/export.csv', asyncHandler(controller.exportDuesCsv));
 
   return router;

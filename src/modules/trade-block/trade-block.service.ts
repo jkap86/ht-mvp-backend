@@ -16,7 +16,11 @@ export class TradeBlockService {
     private readonly rosterPlayersRepo: RosterPlayersRepository
   ) {}
 
-  async getByLeague(leagueId: number): Promise<TradeBlockItemWithDetails[]> {
+  async getByLeague(leagueId: number, userId: string): Promise<TradeBlockItemWithDetails[]> {
+    const roster = await this.rosterRepo.findByLeagueAndUser(leagueId, userId);
+    if (!roster) {
+      throw new ForbiddenException('You are not a member of this league');
+    }
     return this.tradeBlockRepo.getByLeague(leagueId);
   }
 
