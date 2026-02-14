@@ -318,10 +318,18 @@ async function finalizeDraftCompletionWithClient(
   leagueId: number,
   client: PoolClient
 ): Promise<DraftCompletionResult> {
-  // 1. Mark roster population as pending (enables retry detection on startup)
-  await ctx.draftRepo.updateWithClient(client, draftId, {
-    rosterPopulationStatus: 'pending',
-  });
+  // 1. CAS guard: only set roster_population_status to 'pending' if currently NULL.
+  // This prevents duplicate completion if two concurrent calls race past the lock.
+  const statusResult = await client.query(
+    `UPDATE drafts SET roster_population_status = 'pending', updated_at = CURRENT_TIMESTAMP
+     WHERE id = $1 AND roster_population_status IS NULL
+     RETURNING id`,
+    [draftId]
+  );
+  if (statusResult.rows.length === 0) {
+    logger.info(`Draft ${draftId} roster population already in progress or complete, skipping`);
+    return { success: true, scheduleGenerationFailed: false };
+  }
 
   try {
     // 2. Populate rosters atomically within this transaction

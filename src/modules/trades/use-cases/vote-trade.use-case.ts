@@ -84,14 +84,11 @@ export async function voteTrade(
         throw new ValidationException('Trade is no longer in review period');
       }
 
-      // Check if already voted (within transaction)
-      const hasVoted = await ctx.tradeVotesRepo.hasVoted(tradeId, roster.id, client);
-      if (hasVoted) {
+      // Create vote (ON CONFLICT returns null if duplicate)
+      const voteResult = await ctx.tradeVotesRepo.create(tradeId, roster.id, vote, client);
+      if (!voteResult) {
         throw new ConflictException('You have already voted on this trade');
       }
-
-      // Create vote
-      await ctx.tradeVotesRepo.create(tradeId, roster.id, vote, client);
 
       // Count votes atomically within the same transaction
       const counts = await ctx.tradeVotesRepo.countVotes(tradeId, client);

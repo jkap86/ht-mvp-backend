@@ -1065,24 +1065,25 @@ export class DraftService {
         isAutoPick: false,
       });
 
+      // Handle draft completion inside the transaction (while DRAFT lock is held)
+      if (result.draft.status === 'completed') {
+        const rosterPlayersRepo = container.resolve<RosterPlayersRepository>(
+          KEYS.ROSTER_PLAYERS_REPO
+        );
+        await finalizeDraftCompletion(
+          {
+            draftRepo: this.draftRepo,
+            leagueRepo: this.leagueRepo,
+            rosterPlayersRepo,
+          },
+          draftId,
+          leagueId,
+          client
+        );
+      }
+
       return result;
     });
-
-    // Handle draft completion if needed
-    if (pickResult.draft.status === 'completed') {
-      const rosterPlayersRepo = container.resolve<RosterPlayersRepository>(
-        KEYS.ROSTER_PLAYERS_REPO
-      );
-      await finalizeDraftCompletion(
-        {
-          draftRepo: this.draftRepo,
-          leagueRepo: this.leagueRepo,
-          rosterPlayersRepo,
-        },
-        draftId,
-        leagueId
-      );
-    }
 
     // Emit socket events
     const eventBus = tryGetEventBus();

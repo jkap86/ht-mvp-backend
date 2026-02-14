@@ -11,9 +11,11 @@ export class LineupsRepository {
   async findByRosterAndWeek(
     rosterId: number,
     season: number,
-    week: number
+    week: number,
+    client?: PoolClient
   ): Promise<RosterLineup | null> {
-    const result = await this.db.query(
+    const db = client || this.db;
+    const result = await db.query(
       `SELECT * FROM roster_lineups
        WHERE roster_id = $1 AND season = $2 AND week = $3`,
       [rosterId, season, week]
@@ -154,9 +156,11 @@ export class LineupsRepository {
   async getByLeagueAndWeek(
     leagueId: number,
     season: number,
-    week: number
+    week: number,
+    client?: PoolClient
   ): Promise<RosterLineup[]> {
-    const result = await this.db.query(
+    const db = client || this.db;
+    const result = await db.query(
       `SELECT rl.*
        FROM roster_lineups rl
        JOIN rosters r ON rl.roster_id = r.id

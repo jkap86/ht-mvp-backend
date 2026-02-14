@@ -720,7 +720,8 @@ describe('TradesService', () => {
     it('should throw ConflictException when already voted', async () => {
       mockTradesRepo.findById.mockResolvedValue(inReviewTrade);
       mockRosterRepo.findByLeagueAndUser.mockResolvedValue(thirdRoster);
-      mockTradeVotesRepo.hasVoted.mockResolvedValue(true);
+      mockLeagueRepo.findById.mockResolvedValue(mockLeague);
+      mockTradeVotesRepo.create.mockResolvedValue(null);
 
       await expect(tradesService.voteTrade(1, 'user-789', 'approve')).rejects.toThrow(
         ConflictException
@@ -733,7 +734,7 @@ describe('TradesService', () => {
     it('should record vote successfully', async () => {
       mockTradesRepo.findById.mockResolvedValue(inReviewTrade);
       mockRosterRepo.findByLeagueAndUser.mockResolvedValue(thirdRoster);
-      mockTradeVotesRepo.hasVoted.mockResolvedValue(false);
+      mockTradeVotesRepo.create.mockResolvedValue({ id: 1, tradeId: 1, rosterId: 3, vote: 'approve', createdAt: new Date() } as any);
       mockTradeVotesRepo.countVotes.mockResolvedValue({ approve: 1, veto: 0 });
       mockLeagueRepo.findById.mockResolvedValue(mockLeague);
       mockTradesRepo.findByIdWithDetails.mockResolvedValue({
@@ -750,7 +751,7 @@ describe('TradesService', () => {
     it('should veto trade when threshold reached', async () => {
       mockTradesRepo.findById.mockResolvedValue(inReviewTrade);
       mockRosterRepo.findByLeagueAndUser.mockResolvedValue(thirdRoster);
-      mockTradeVotesRepo.hasVoted.mockResolvedValue(false);
+      mockTradeVotesRepo.create.mockResolvedValue({ id: 1, tradeId: 1, rosterId: 3, vote: 'veto', createdAt: new Date() } as any);
       mockTradeVotesRepo.countVotes.mockResolvedValue({ approve: 0, veto: 4 });
       mockLeagueRepo.findById.mockResolvedValue(mockLeague);
       mockTradesRepo.updateStatus.mockResolvedValue({ ...inReviewTrade, status: 'vetoed' });

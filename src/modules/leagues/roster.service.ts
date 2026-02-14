@@ -99,6 +99,9 @@ export class RosterService {
    */
   async createInitialRoster(leagueId: number, userId: string): Promise<{ rosterId: number }> {
     const roster = await this.rosterRepo.create(leagueId, userId, 1);
+    if (!roster) {
+      throw new ConflictException('You are already a member of this league');
+    }
     await this.leagueRepo.updateCommissionerRosterId(leagueId, roster.rosterId);
     return { rosterId: roster.rosterId };
   }
@@ -112,6 +115,9 @@ export class RosterService {
     userId: string
   ): Promise<{ rosterId: number }> {
     const roster = await this.rosterRepo.create(leagueId, userId, 1, client);
+    if (!roster) {
+      throw new ConflictException('You are already a member of this league');
+    }
     await this.leagueRepo.updateCommissionerRosterIdWithClient(client, leagueId, roster.rosterId);
     return { rosterId: roster.rosterId };
   }
@@ -250,6 +256,9 @@ export class RosterService {
           // Create as benched roster - user can participate once someone pays or leaves
           const nextRosterId = await this.rosterRepo.getNextRosterId(leagueId, client);
           roster = await this.rosterRepo.create(leagueId, userId, nextRosterId, client);
+          if (!roster) {
+            throw new ConflictException('You are already a member of this league');
+          }
           await this.rosterRepo.benchMember(roster.id, client);
           joinedAsBench = true;
         } else {
@@ -259,6 +268,9 @@ export class RosterService {
         // Create new roster (league doesn't have pre-created empty rosters)
         const nextRosterId = await this.rosterRepo.getNextRosterId(leagueId, client);
         roster = await this.rosterRepo.create(leagueId, userId, nextRosterId, client);
+        if (!roster) {
+          throw new ConflictException('You are already a member of this league');
+        }
       }
     }
 
@@ -451,7 +463,11 @@ async devBulkAddUsers(
           }
           // Create new roster only if no empty slots
           rosterId = await this.rosterRepo.getNextRosterId(leagueId);
-          await this.rosterRepo.create(leagueId, user.userId, rosterId);
+          const created = await this.rosterRepo.create(leagueId, user.userId, rosterId);
+          if (!created) {
+            results.push({ username, success: false, error: 'Already a member' });
+            continue;
+          }
         }
 
         // Emit domain event for real-time UI update

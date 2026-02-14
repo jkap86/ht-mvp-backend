@@ -17,6 +17,7 @@ import type { LineupSlots, PositionSlot } from '../lineups/lineups.model';
 import { DEFAULT_ROSTER_CONFIG } from '../lineups/lineups.model';
 import { optimizeBestballLineup, OptimizeInput } from './bestball-optimizer';
 import { logger } from '../../config/logger.config';
+import { runWithLock, LockDomain } from '../../shared/transaction-runner';
 
 export type BestballMode = 'live_projected' | 'live_actual' | 'final';
 
@@ -66,72 +67,75 @@ export class BestballService {
       return null;
     }
 
-    // Get roster players
-    const rosterPlayers = await this.rosterPlayersRepo.getByRosterId(rosterId);
-    if (rosterPlayers.length === 0) {
-      logger.warn(`Bestball: No players on roster ${rosterId}`);
-      return null;
-    }
+    // Wrap in LEAGUE lock to prevent TOCTOU race with concurrent roster/lineup changes
+    return await runWithLock(this.db, LockDomain.LEAGUE, leagueId, async (client) => {
+      // Get roster players
+      const rosterPlayers = await this.rosterPlayersRepo.getByRosterIdWithClient(client, rosterId);
+      if (rosterPlayers.length === 0) {
+        logger.warn(`Bestball: No players on roster ${rosterId}`);
+        return null;
+      }
 
-    // Get current lineup to preserve IR/TAXI assignments
-    const existingLineup = await this.lineupsRepo.findByRosterAndWeek(rosterId, season, week);
-    const irPlayerIds = existingLineup?.lineup?.IR || [];
-    const taxiPlayerIds = existingLineup?.lineup?.TAXI || [];
-    const reservePlayerIds = new Set([...irPlayerIds, ...taxiPlayerIds]);
+      // Get current lineup to preserve IR/TAXI assignments
+      const existingLineup = await this.lineupsRepo.findByRosterAndWeek(rosterId, season, week, client);
+      const irPlayerIds = existingLineup?.lineup?.IR || [];
+      const taxiPlayerIds = existingLineup?.lineup?.TAXI || [];
+      const reservePlayerIds = new Set([...irPlayerIds, ...taxiPlayerIds]);
 
-    // Filter to eligible players (not on IR/TAXI)
-    const eligiblePlayers = rosterPlayers
-      .filter((p) => !reservePlayerIds.has(p.playerId))
-      .map((p) => ({ id: p.playerId, position: p.position || '' }));
+      // Filter to eligible players (not on IR/TAXI)
+      const eligiblePlayers = rosterPlayers
+        .filter((p) => !reservePlayerIds.has(p.playerId))
+        .map((p) => ({ id: p.playerId, position: p.position || '' }));
 
-    // Get slot counts from league config or defaults
-    const rosterConfig = league.settings?.roster_config || {};
-    const slotCounts: Partial<Record<PositionSlot, number>> = {
-      QB: rosterConfig.QB ?? DEFAULT_ROSTER_CONFIG.QB,
-      RB: rosterConfig.RB ?? DEFAULT_ROSTER_CONFIG.RB,
-      WR: rosterConfig.WR ?? DEFAULT_ROSTER_CONFIG.WR,
-      TE: rosterConfig.TE ?? DEFAULT_ROSTER_CONFIG.TE,
-      FLEX: rosterConfig.FLEX ?? DEFAULT_ROSTER_CONFIG.FLEX,
-      SUPER_FLEX: rosterConfig.SUPER_FLEX ?? DEFAULT_ROSTER_CONFIG.SUPER_FLEX,
-      REC_FLEX: rosterConfig.REC_FLEX ?? DEFAULT_ROSTER_CONFIG.REC_FLEX,
-      K: rosterConfig.K ?? DEFAULT_ROSTER_CONFIG.K,
-      DEF: rosterConfig.DEF ?? DEFAULT_ROSTER_CONFIG.DEF,
-      DL: rosterConfig.DL ?? DEFAULT_ROSTER_CONFIG.DL,
-      LB: rosterConfig.LB ?? DEFAULT_ROSTER_CONFIG.LB,
-      DB: rosterConfig.DB ?? DEFAULT_ROSTER_CONFIG.DB,
-      IDP_FLEX: rosterConfig.IDP_FLEX ?? DEFAULT_ROSTER_CONFIG.IDP_FLEX,
-    };
+      // Get slot counts from league config or defaults
+      const rosterConfig = league.settings?.roster_config || {};
+      const slotCounts: Partial<Record<PositionSlot, number>> = {
+        QB: rosterConfig.QB ?? DEFAULT_ROSTER_CONFIG.QB,
+        RB: rosterConfig.RB ?? DEFAULT_ROSTER_CONFIG.RB,
+        WR: rosterConfig.WR ?? DEFAULT_ROSTER_CONFIG.WR,
+        TE: rosterConfig.TE ?? DEFAULT_ROSTER_CONFIG.TE,
+        FLEX: rosterConfig.FLEX ?? DEFAULT_ROSTER_CONFIG.FLEX,
+        SUPER_FLEX: rosterConfig.SUPER_FLEX ?? DEFAULT_ROSTER_CONFIG.SUPER_FLEX,
+        REC_FLEX: rosterConfig.REC_FLEX ?? DEFAULT_ROSTER_CONFIG.REC_FLEX,
+        K: rosterConfig.K ?? DEFAULT_ROSTER_CONFIG.K,
+        DEF: rosterConfig.DEF ?? DEFAULT_ROSTER_CONFIG.DEF,
+        DL: rosterConfig.DL ?? DEFAULT_ROSTER_CONFIG.DL,
+        LB: rosterConfig.LB ?? DEFAULT_ROSTER_CONFIG.LB,
+        DB: rosterConfig.DB ?? DEFAULT_ROSTER_CONFIG.DB,
+        IDP_FLEX: rosterConfig.IDP_FLEX ?? DEFAULT_ROSTER_CONFIG.IDP_FLEX,
+      };
 
-    // Build points map based on mode
-    const pointsByPlayerId = await this.buildPointsMap(
-      eligiblePlayers.map((p) => p.id),
-      season,
-      week,
-      mode,
-      leagueId
-    );
+      // Build points map based on mode (reads stats via pool - fine, immutable)
+      const pointsByPlayerId = await this.buildPointsMap(
+        eligiblePlayers.map((p) => p.id),
+        season,
+        week,
+        mode,
+        leagueId
+      );
 
-    // Run optimizer
-    const input: OptimizeInput = {
-      slotCounts,
-      players: eligiblePlayers,
-      pointsByPlayerId,
-    };
+      // Run optimizer
+      const input: OptimizeInput = {
+        slotCounts,
+        players: eligiblePlayers,
+        pointsByPlayerId,
+      };
 
-    const result = optimizeBestballLineup(input);
+      const result = optimizeBestballLineup(input);
 
-    // Preserve IR/TAXI from existing lineup
-    result.lineupSlots.IR = irPlayerIds;
-    result.lineupSlots.TAXI = taxiPlayerIds;
+      // Preserve IR/TAXI from existing lineup
+      result.lineupSlots.IR = irPlayerIds;
+      result.lineupSlots.TAXI = taxiPlayerIds;
 
-    // Persist the optimized lineup
-    await this.lineupsRepo.upsertBestball(rosterId, season, week, result.lineupSlots);
+      // Persist the optimized lineup
+      await this.lineupsRepo.upsertBestball(rosterId, season, week, result.lineupSlots, client);
 
-    logger.debug(
-      `Bestball: Generated lineup for roster ${rosterId} week ${week} (${result.starterPlayerIds.length} starters)`
-    );
+      logger.debug(
+        `Bestball: Generated lineup for roster ${rosterId} week ${week} (${result.starterPlayerIds.length} starters)`
+      );
 
-    return result.lineupSlots;
+      return result.lineupSlots;
+    });
   }
 
   /**
@@ -154,104 +158,106 @@ export class BestballService {
       return;
     }
 
-    // Get all rosters in the league
-    const rosters = await this.rosterRepo.findByLeagueId(leagueId);
-    if (rosters.length === 0) {
-      logger.warn(`Bestball: No rosters in league ${leagueId}`);
-      return;
-    }
-
-    // Pre-fetch all roster players and stats for efficiency
-    const allRosterIds = rosters.map((r) => r.id);
-    const allPlayerIds: number[] = [];
-
-    // Collect all player IDs across rosters
-    for (const roster of rosters) {
-      const players = await this.rosterPlayersRepo.getByRosterId(roster.id);
-      for (const p of players) {
-        allPlayerIds.push(p.playerId);
-      }
-    }
-
-    // Batch fetch points for all players
-    const uniquePlayerIds = [...new Set(allPlayerIds)];
-    const allPointsByPlayerId = await this.buildPointsMap(
-      uniquePlayerIds,
-      season,
-      week,
-      mode,
-      leagueId
-    );
-
-    // Get slot counts from league config
-    const rosterConfig = league.settings?.roster_config || {};
-    const slotCounts: Partial<Record<PositionSlot, number>> = {
-      QB: rosterConfig.QB ?? DEFAULT_ROSTER_CONFIG.QB,
-      RB: rosterConfig.RB ?? DEFAULT_ROSTER_CONFIG.RB,
-      WR: rosterConfig.WR ?? DEFAULT_ROSTER_CONFIG.WR,
-      TE: rosterConfig.TE ?? DEFAULT_ROSTER_CONFIG.TE,
-      FLEX: rosterConfig.FLEX ?? DEFAULT_ROSTER_CONFIG.FLEX,
-      SUPER_FLEX: rosterConfig.SUPER_FLEX ?? DEFAULT_ROSTER_CONFIG.SUPER_FLEX,
-      REC_FLEX: rosterConfig.REC_FLEX ?? DEFAULT_ROSTER_CONFIG.REC_FLEX,
-      K: rosterConfig.K ?? DEFAULT_ROSTER_CONFIG.K,
-      DEF: rosterConfig.DEF ?? DEFAULT_ROSTER_CONFIG.DEF,
-      DL: rosterConfig.DL ?? DEFAULT_ROSTER_CONFIG.DL,
-      LB: rosterConfig.LB ?? DEFAULT_ROSTER_CONFIG.LB,
-      DB: rosterConfig.DB ?? DEFAULT_ROSTER_CONFIG.DB,
-      IDP_FLEX: rosterConfig.IDP_FLEX ?? DEFAULT_ROSTER_CONFIG.IDP_FLEX,
-    };
-
-    // Get existing lineups to preserve IR/TAXI
-    const existingLineups = await this.lineupsRepo.getByLeagueAndWeek(leagueId, season, week);
-    const lineupsByRosterId = new Map(existingLineups.map((l) => [l.rosterId, l]));
-
-    // Generate lineup for each roster
-    const updates: Array<{ rosterId: number; lineup: LineupSlots }> = [];
-
-    for (const roster of rosters) {
-      const rosterPlayers = await this.rosterPlayersRepo.getByRosterId(roster.id);
-      if (rosterPlayers.length === 0) continue;
-
-      // Get existing IR/TAXI
-      const existingLineup = lineupsByRosterId.get(roster.id);
-      const irPlayerIds = existingLineup?.lineup?.IR || [];
-      const taxiPlayerIds = existingLineup?.lineup?.TAXI || [];
-      const reservePlayerIds = new Set([...irPlayerIds, ...taxiPlayerIds]);
-
-      // Filter to eligible players
-      const eligiblePlayers = rosterPlayers
-        .filter((p) => !reservePlayerIds.has(p.playerId))
-        .map((p) => ({ id: p.playerId, position: p.position || '' }));
-
-      // Filter points map to this roster's players
-      const rosterPointsMap = new Map<number, number>();
-      for (const p of eligiblePlayers) {
-        rosterPointsMap.set(p.id, allPointsByPlayerId.get(p.id) || 0);
+    // Wrap in LEAGUE lock to prevent TOCTOU race with concurrent roster/lineup changes
+    await runWithLock(this.db, LockDomain.LEAGUE, leagueId, async (client) => {
+      // Get all rosters in the league
+      const rosters = await this.rosterRepo.findByLeagueIdWithClient(client, leagueId);
+      if (rosters.length === 0) {
+        logger.warn(`Bestball: No rosters in league ${leagueId}`);
+        return;
       }
 
-      // Run optimizer
-      const input: OptimizeInput = {
-        slotCounts,
-        players: eligiblePlayers,
-        pointsByPlayerId: rosterPointsMap,
+      // Pre-fetch all roster players and stats for efficiency
+      const allPlayerIds: number[] = [];
+
+      // Collect all player IDs across rosters
+      for (const roster of rosters) {
+        const players = await this.rosterPlayersRepo.getByRosterIdWithClient(client, roster.id);
+        for (const p of players) {
+          allPlayerIds.push(p.playerId);
+        }
+      }
+
+      // Batch fetch points for all players (reads stats via pool - fine, immutable)
+      const uniquePlayerIds = [...new Set(allPlayerIds)];
+      const allPointsByPlayerId = await this.buildPointsMap(
+        uniquePlayerIds,
+        season,
+        week,
+        mode,
+        leagueId
+      );
+
+      // Get slot counts from league config
+      const rosterConfig = league.settings?.roster_config || {};
+      const slotCounts: Partial<Record<PositionSlot, number>> = {
+        QB: rosterConfig.QB ?? DEFAULT_ROSTER_CONFIG.QB,
+        RB: rosterConfig.RB ?? DEFAULT_ROSTER_CONFIG.RB,
+        WR: rosterConfig.WR ?? DEFAULT_ROSTER_CONFIG.WR,
+        TE: rosterConfig.TE ?? DEFAULT_ROSTER_CONFIG.TE,
+        FLEX: rosterConfig.FLEX ?? DEFAULT_ROSTER_CONFIG.FLEX,
+        SUPER_FLEX: rosterConfig.SUPER_FLEX ?? DEFAULT_ROSTER_CONFIG.SUPER_FLEX,
+        REC_FLEX: rosterConfig.REC_FLEX ?? DEFAULT_ROSTER_CONFIG.REC_FLEX,
+        K: rosterConfig.K ?? DEFAULT_ROSTER_CONFIG.K,
+        DEF: rosterConfig.DEF ?? DEFAULT_ROSTER_CONFIG.DEF,
+        DL: rosterConfig.DL ?? DEFAULT_ROSTER_CONFIG.DL,
+        LB: rosterConfig.LB ?? DEFAULT_ROSTER_CONFIG.LB,
+        DB: rosterConfig.DB ?? DEFAULT_ROSTER_CONFIG.DB,
+        IDP_FLEX: rosterConfig.IDP_FLEX ?? DEFAULT_ROSTER_CONFIG.IDP_FLEX,
       };
 
-      const result = optimizeBestballLineup(input);
+      // Get existing lineups to preserve IR/TAXI
+      const existingLineups = await this.lineupsRepo.getByLeagueAndWeek(leagueId, season, week, client);
+      const lineupsByRosterId = new Map(existingLineups.map((l) => [l.rosterId, l]));
 
-      // Preserve IR/TAXI
-      result.lineupSlots.IR = irPlayerIds;
-      result.lineupSlots.TAXI = taxiPlayerIds;
+      // Generate lineup for each roster
+      const updates: Array<{ rosterId: number; lineup: LineupSlots }> = [];
 
-      updates.push({ rosterId: roster.id, lineup: result.lineupSlots });
-    }
+      for (const roster of rosters) {
+        const rosterPlayers = await this.rosterPlayersRepo.getByRosterIdWithClient(client, roster.id);
+        if (rosterPlayers.length === 0) continue;
 
-    // Batch update lineups
-    if (updates.length > 0) {
-      await this.lineupsRepo.batchUpsertBestball(updates, season, week);
-      logger.info(
-        `Bestball: Generated ${updates.length} lineups for league ${leagueId} week ${week} (mode: ${mode})`
-      );
-    }
+        // Get existing IR/TAXI
+        const existingLineup = lineupsByRosterId.get(roster.id);
+        const irPlayerIds = existingLineup?.lineup?.IR || [];
+        const taxiPlayerIds = existingLineup?.lineup?.TAXI || [];
+        const reservePlayerIds = new Set([...irPlayerIds, ...taxiPlayerIds]);
+
+        // Filter to eligible players
+        const eligiblePlayers = rosterPlayers
+          .filter((p) => !reservePlayerIds.has(p.playerId))
+          .map((p) => ({ id: p.playerId, position: p.position || '' }));
+
+        // Filter points map to this roster's players
+        const rosterPointsMap = new Map<number, number>();
+        for (const p of eligiblePlayers) {
+          rosterPointsMap.set(p.id, allPointsByPlayerId.get(p.id) || 0);
+        }
+
+        // Run optimizer
+        const input: OptimizeInput = {
+          slotCounts,
+          players: eligiblePlayers,
+          pointsByPlayerId: rosterPointsMap,
+        };
+
+        const result = optimizeBestballLineup(input);
+
+        // Preserve IR/TAXI
+        result.lineupSlots.IR = irPlayerIds;
+        result.lineupSlots.TAXI = taxiPlayerIds;
+
+        updates.push({ rosterId: roster.id, lineup: result.lineupSlots });
+      }
+
+      // Batch update lineups
+      if (updates.length > 0) {
+        await this.lineupsRepo.batchUpsertBestball(updates, season, week, client);
+        logger.info(
+          `Bestball: Generated ${updates.length} lineups for league ${leagueId} week ${week} (mode: ${mode})`
+        );
+      }
+    });
   }
 
   /**

@@ -17,7 +17,7 @@ import {
   getDefensePointsAllowedScore,
 } from './scoring-calculator';
 import { logger } from '../../config/logger.config';
-import { runInTransaction } from '../../shared/transaction-runner';
+import { runInTransaction, runWithLock, LockDomain } from '../../shared/transaction-runner';
 
 export class ScoringService {
   private projectionsRepo?: PlayerProjectionsRepository;
@@ -152,16 +152,18 @@ export class ScoringService {
     const season = parseInt(league.season, 10);
     const { rules } = normalizeLeagueScoringSettings(league.scoringSettings);
 
-    // Get all lineups for the week
-    const lineups = await this.lineupsRepo.getByLeagueAndWeek(leagueId, season, week);
+    // Wrap read + calculate + write in LEAGUE lock to prevent TOCTOU race
+    // with concurrent lineup edits (commissioner-triggered, runs once per week)
+    await runWithLock(this.db, LockDomain.LEAGUE, leagueId, async (client) => {
+      const lineups = await this.lineupsRepo.getByLeagueAndWeek(leagueId, season, week, client);
 
-    // Calculate all lineup points in parallel for performance
-    const calculations = await Promise.all(
-      lineups.map((lineup) => this.calculateLineupPoints(lineup.lineup, season, week, rules))
-    );
+      // Calculate all lineup points in parallel for performance
+      // (calculateLineupPoints reads stats via pool - fine since stats are immutable once written)
+      const calculations = await Promise.all(
+        lineups.map((lineup) => this.calculateLineupPoints(lineup.lineup, season, week, rules))
+      );
 
-    // Store points for each lineup (sequential within transaction)
-    await runInTransaction(this.db, async (client) => {
+      // Store points for each lineup
       for (let i = 0; i < lineups.length; i++) {
         const { total } = calculations[i];
         await this.lineupsRepo.updatePoints(lineups[i].rosterId, season, week, total, client);
@@ -263,65 +265,69 @@ export class ScoringService {
     season: number,
     week: number
   ): Promise<void> {
-    const lineups = await this.lineupsRepo.getByLeagueAndWeek(leagueId, season, week);
-    if (lineups.length === 0) return;
+    // Wrap in transaction to ensure atomic read+write on same connection.
+    // Runs every ~30s from stats-sync job (already singleton); eventual consistency acceptable.
+    await runInTransaction(this.db, async (client) => {
+      const lineups = await this.lineupsRepo.getByLeagueAndWeek(leagueId, season, week, client);
+      if (lineups.length === 0) return;
 
-    const rules = await this.getScoringRulesInternal(leagueId);
+      const rules = await this.getScoringRulesInternal(leagueId);
 
-    // Collect all starter IDs across all lineups
-    const allStarterIds = new Set<number>();
-    for (const lineup of lineups) {
-      for (const playerId of this.getStarterIds(lineup.lineup)) {
-        allStarterIds.add(playerId);
-      }
-    }
-
-    const starterIdArray = Array.from(allStarterIds);
-
-    // Batch fetch stats and player data
-    const [stats, players] = await Promise.all([
-      this.statsRepo.findByPlayersAndWeek(starterIdArray, season, week),
-      this.playerRepo ? this.playerRepo.findByIds(starterIdArray) : Promise.resolve([]),
-    ]);
-    const statsMap = new Map(stats.map((s) => [s.playerId, s]));
-    const positionMap = new Map(players.map((p) => [p.id, p.position]));
-
-    // Calculate live totals for each lineup
-    const updates: Array<{
-      rosterId: number;
-      season: number;
-      week: number;
-      liveActual: number;
-      liveProjected: number;
-    }> = [];
-
-    for (const lineup of lineups) {
-      const starterIds = this.getStarterIds(lineup.lineup);
-      let total = 0;
-
-      for (const playerId of starterIds) {
-        const playerStats = statsMap.get(playerId);
-        if (playerStats) {
-          const position = positionMap.get(playerId);
-          total += this.calculatePlayerPoints(playerStats, rules, position);
+      // Collect all starter IDs across all lineups
+      const allStarterIds = new Set<number>();
+      for (const lineup of lineups) {
+        for (const playerId of this.getStarterIds(lineup.lineup)) {
+          allStarterIds.add(playerId);
         }
       }
 
-      updates.push({
-        rosterId: lineup.rosterId,
-        season,
-        week,
-        liveActual: Math.round(total * 100) / 100,
-        liveProjected: lineup.totalPointsProjectedLive ?? 0, // Keep existing projected
-      });
-    }
+      const starterIdArray = Array.from(allStarterIds);
 
-    // Batch update all lineups
-    await this.lineupsRepo.batchUpdateLivePoints(updates);
+      // Batch fetch stats and player data (via pool - immutable data, no lock needed)
+      const [stats, players] = await Promise.all([
+        this.statsRepo.findByPlayersAndWeek(starterIdArray, season, week),
+        this.playerRepo ? this.playerRepo.findByIds(starterIdArray) : Promise.resolve([]),
+      ]);
+      const statsMap = new Map(stats.map((s) => [s.playerId, s]));
+      const positionMap = new Map(players.map((p) => [p.id, p.position]));
 
-    logger.info(
-      `Updated live actual totals for ${updates.length} lineups in league ${leagueId}`
-    );
+      // Calculate live totals for each lineup
+      const updates: Array<{
+        rosterId: number;
+        season: number;
+        week: number;
+        liveActual: number;
+        liveProjected: number;
+      }> = [];
+
+      for (const lineup of lineups) {
+        const starterIds = this.getStarterIds(lineup.lineup);
+        let total = 0;
+
+        for (const playerId of starterIds) {
+          const playerStats = statsMap.get(playerId);
+          if (playerStats) {
+            const position = positionMap.get(playerId);
+            total += this.calculatePlayerPoints(playerStats, rules, position);
+          }
+        }
+
+        updates.push({
+          rosterId: lineup.rosterId,
+          season,
+          week,
+          liveActual: Math.round(total * 100) / 100,
+          liveProjected: lineup.totalPointsProjectedLive ?? 0, // Keep existing projected
+        });
+      }
+
+      // Batch update all lineups
+      await this.lineupsRepo.batchUpdateLivePoints(updates, client);
+
+      logger.info(
+        `Updated live actual totals for ${updates.length} lineups in league ${leagueId}`
+      );
+    });
   }
 
   /**
@@ -341,130 +347,134 @@ export class ScoringService {
       return;
     }
 
-    const lineups = await this.lineupsRepo.getByLeagueAndWeek(leagueId, season, week);
-    if (lineups.length === 0) return;
+    // Wrap in transaction to ensure atomic read+write on same connection.
+    // Runs every ~30s from stats-sync job (already singleton); eventual consistency acceptable.
+    await runInTransaction(this.db, async (client) => {
+      const lineups = await this.lineupsRepo.getByLeagueAndWeek(leagueId, season, week, client);
+      if (lineups.length === 0) return;
 
-    const rules = await this.getScoringRulesInternal(leagueId);
+      const rules = await this.getScoringRulesInternal(leagueId);
 
-    // Collect all starter IDs across all lineups
-    const allStarterIds = new Set<number>();
-    for (const lineup of lineups) {
-      for (const playerId of this.getStarterIds(lineup.lineup)) {
-        allStarterIds.add(playerId);
-      }
-    }
-
-    const starterIdArray = Array.from(allStarterIds);
-
-    // Batch fetch all data in parallel
-    const [stats, projections, players, gameStatusMap] = await Promise.all([
-      this.statsRepo.findByPlayersAndWeek(starterIdArray, season, week),
-      this.projectionsRepo.findByPlayersAndWeek(starterIdArray, season, week),
-      this.playerRepo.findByIds(starterIdArray),
-      this.gameProgressService.getWeekGameStatus(season, week),
-    ]);
-
-    // Create lookup maps
-    const statsMap = new Map(stats.map((s) => [s.playerId, s]));
-    const projectionsMap = new Map(projections.map((p) => [p.playerId, p]));
-    const playerTeamMap = new Map(players.map((p) => [p.id, p.team]));
-    const positionMap = new Map(players.map((p) => [p.id, p.position]));
-
-    // Calculate live projected totals for each lineup
-    const updates: Array<{
-      rosterId: number;
-      season: number;
-      week: number;
-      liveActual: number;
-      liveProjected: number;
-    }> = [];
-
-    for (const lineup of lineups) {
-      const starterIds = this.getStarterIds(lineup.lineup);
-      let actualTotal = 0;
-      let projectedTotal = 0;
-
-      for (const playerId of starterIds) {
-        const actualStats = statsMap.get(playerId);
-        const projStats = projectionsMap.get(playerId);
-        const team = playerTeamMap.get(playerId);
-        const position = positionMap.get(playerId);
-        const gameStatus = team ? gameStatusMap.get(team) : undefined;
-
-        // Calculate actual points
-        const actualPoints = actualStats
-          ? this.calculatePlayerPoints(actualStats, rules, position)
-          : 0;
-        actualTotal += actualPoints;
-
-        // Determine projected final based on game state
-        if (!gameStatus || (!gameStatus.isInProgress && !gameStatus.isComplete)) {
-          // No game status info - check if we have actual stats (including DEF/K)
-          if (actualStats && this.hasAnyStats(actualStats)) {
-            // Have stats but no game status - treat as complete to avoid snap-back
-            projectedTotal += actualPoints;
-          } else {
-            // Game not started: use full projection
-            projectedTotal += projStats
-              ? this.calculatePlayerPoints(projStats, rules, position)
-              : actualPoints;
-          }
-        } else if (gameStatus.isComplete) {
-          // Game complete: projected = actual
-          projectedTotal += actualPoints;
-        } else {
-          // Game in progress: actual + scaled(remaining stats) + projected bonuses
-          if (actualStats && projStats) {
-            const pctRemaining = this.gameProgressService!.getPercentRemaining(gameStatus);
-
-            const remainingStats = calculateRemainingStats(actualStats, projStats);
-            const remainingPoints = this.calculatePlayerPoints(remainingStats, rules, position);
-
-            // Scale remaining points by time left in game
-            const scaledRemaining = remainingPoints * pctRemaining;
-
-            // DEF points-allowed is bucketed/nonlinear - handle with estimated final PA
-            let defPointsAllowedDelta = 0;
-            if (position === 'DEF') {
-              const actualPA = actualStats.defPointsAllowed ?? 0;
-              const projPA = projStats.defPointsAllowed ?? actualPA;
-
-              // Estimate final PA by interpolating based on time remaining
-              const estFinalPA = actualPA + Math.max(0, projPA - actualPA) * pctRemaining;
-
-              const actualPAPoints = getDefensePointsAllowedScore(actualPA, rules);
-              const estFinalPAPoints = getDefensePointsAllowedScore(estFinalPA, rules);
-
-              // Can be negative (more PA later lowers DEF points)
-              defPointsAllowedDelta = estFinalPAPoints - actualPAPoints;
-            }
-
-            const projectedBonuses = calculateProjectedBonuses(actualStats, projStats, rules);
-            const scaledBonuses = projectedBonuses * pctRemaining;
-            projectedTotal += actualPoints + scaledRemaining + scaledBonuses + defPointsAllowedDelta;
-          } else if (projStats) {
-            // Have projection but no actual stats yet - use full projection
-            projectedTotal += this.calculatePlayerPoints(projStats, rules, position);
-          } else {
-            projectedTotal += actualPoints;
-          }
+      // Collect all starter IDs across all lineups
+      const allStarterIds = new Set<number>();
+      for (const lineup of lineups) {
+        for (const playerId of this.getStarterIds(lineup.lineup)) {
+          allStarterIds.add(playerId);
         }
       }
 
-      updates.push({
-        rosterId: lineup.rosterId,
-        season,
-        week,
-        liveActual: Math.round(actualTotal * 100) / 100,
-        liveProjected: Math.round(projectedTotal * 100) / 100,
-      });
-    }
+      const starterIdArray = Array.from(allStarterIds);
 
-    // Batch update all lineups
-    await this.lineupsRepo.batchUpdateLivePoints(updates);
+      // Batch fetch all data in parallel (via pool - immutable data, no lock needed)
+      const [stats, projections, players, gameStatusMap] = await Promise.all([
+        this.statsRepo.findByPlayersAndWeek(starterIdArray, season, week),
+        this.projectionsRepo!.findByPlayersAndWeek(starterIdArray, season, week),
+        this.playerRepo!.findByIds(starterIdArray),
+        this.gameProgressService!.getWeekGameStatus(season, week),
+      ]);
 
-    logger.info(
-      `Updated live projected totals for ${updates.length} lineups in league ${leagueId}`
-    );
+      // Create lookup maps
+      const statsMap = new Map(stats.map((s) => [s.playerId, s]));
+      const projectionsMap = new Map(projections.map((p) => [p.playerId, p]));
+      const playerTeamMap = new Map(players.map((p) => [p.id, p.team]));
+      const positionMap = new Map(players.map((p) => [p.id, p.position]));
+
+      // Calculate live projected totals for each lineup
+      const updates: Array<{
+        rosterId: number;
+        season: number;
+        week: number;
+        liveActual: number;
+        liveProjected: number;
+      }> = [];
+
+      for (const lineup of lineups) {
+        const starterIds = this.getStarterIds(lineup.lineup);
+        let actualTotal = 0;
+        let projectedTotal = 0;
+
+        for (const playerId of starterIds) {
+          const actualStats = statsMap.get(playerId);
+          const projStats = projectionsMap.get(playerId);
+          const team = playerTeamMap.get(playerId);
+          const position = positionMap.get(playerId);
+          const gameStatus = team ? gameStatusMap.get(team) : undefined;
+
+          // Calculate actual points
+          const actualPoints = actualStats
+            ? this.calculatePlayerPoints(actualStats, rules, position)
+            : 0;
+          actualTotal += actualPoints;
+
+          // Determine projected final based on game state
+          if (!gameStatus || (!gameStatus.isInProgress && !gameStatus.isComplete)) {
+            // No game status info - check if we have actual stats (including DEF/K)
+            if (actualStats && this.hasAnyStats(actualStats)) {
+              // Have stats but no game status - treat as complete to avoid snap-back
+              projectedTotal += actualPoints;
+            } else {
+              // Game not started: use full projection
+              projectedTotal += projStats
+                ? this.calculatePlayerPoints(projStats, rules, position)
+                : actualPoints;
+            }
+          } else if (gameStatus.isComplete) {
+            // Game complete: projected = actual
+            projectedTotal += actualPoints;
+          } else {
+            // Game in progress: actual + scaled(remaining stats) + projected bonuses
+            if (actualStats && projStats) {
+              const pctRemaining = this.gameProgressService!.getPercentRemaining(gameStatus);
+
+              const remainingStats = calculateRemainingStats(actualStats, projStats);
+              const remainingPoints = this.calculatePlayerPoints(remainingStats, rules, position);
+
+              // Scale remaining points by time left in game
+              const scaledRemaining = remainingPoints * pctRemaining;
+
+              // DEF points-allowed is bucketed/nonlinear - handle with estimated final PA
+              let defPointsAllowedDelta = 0;
+              if (position === 'DEF') {
+                const actualPA = actualStats.defPointsAllowed ?? 0;
+                const projPA = projStats.defPointsAllowed ?? actualPA;
+
+                // Estimate final PA by interpolating based on time remaining
+                const estFinalPA = actualPA + Math.max(0, projPA - actualPA) * pctRemaining;
+
+                const actualPAPoints = getDefensePointsAllowedScore(actualPA, rules);
+                const estFinalPAPoints = getDefensePointsAllowedScore(estFinalPA, rules);
+
+                // Can be negative (more PA later lowers DEF points)
+                defPointsAllowedDelta = estFinalPAPoints - actualPAPoints;
+              }
+
+              const projectedBonuses = calculateProjectedBonuses(actualStats, projStats, rules);
+              const scaledBonuses = projectedBonuses * pctRemaining;
+              projectedTotal += actualPoints + scaledRemaining + scaledBonuses + defPointsAllowedDelta;
+            } else if (projStats) {
+              // Have projection but no actual stats yet - use full projection
+              projectedTotal += this.calculatePlayerPoints(projStats, rules, position);
+            } else {
+              projectedTotal += actualPoints;
+            }
+          }
+        }
+
+        updates.push({
+          rosterId: lineup.rosterId,
+          season,
+          week,
+          liveActual: Math.round(actualTotal * 100) / 100,
+          liveProjected: Math.round(projectedTotal * 100) / 100,
+        });
+      }
+
+      // Batch update all lineups
+      await this.lineupsRepo.batchUpdateLivePoints(updates, client);
+
+      logger.info(
+        `Updated live projected totals for ${updates.length} lineups in league ${leagueId}`
+      );
+    });
   }
 }

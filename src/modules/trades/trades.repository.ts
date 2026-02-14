@@ -699,13 +699,16 @@ export class TradeVotesRepository {
     rosterId: number,
     vote: 'approve' | 'veto',
     client?: PoolClient
-  ): Promise<TradeVote> {
+  ): Promise<TradeVote | null> {
     const conn = client || this.db;
     const result = await conn.query(
       `INSERT INTO trade_votes (trade_id, roster_id, vote)
-      VALUES ($1, $2, $3) RETURNING *`,
+      VALUES ($1, $2, $3)
+      ON CONFLICT (trade_id, roster_id) DO NOTHING
+      RETURNING *`,
       [tradeId, rosterId, vote]
     );
+    if (result.rows.length === 0) return null;
     return tradeVoteFromDatabase(result.rows[0]);
   }
 

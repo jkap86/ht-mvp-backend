@@ -151,15 +151,17 @@ export class RosterRepository {
     userId: string,
     rosterId: number,
     client?: PoolClient
-  ): Promise<Roster> {
+  ): Promise<Roster | null> {
     const db = client || this.db;
     const result = await db.query(
       `INSERT INTO rosters (league_id, user_id, roster_id)
        VALUES ($1, $2, $3)
+       ON CONFLICT (league_id, user_id) DO NOTHING
        RETURNING *`,
       [leagueId, userId, rosterId]
     );
 
+    if (result.rows.length === 0) return null;
     return RosterMapper.fromRow(result.rows[0]);
   }
 
