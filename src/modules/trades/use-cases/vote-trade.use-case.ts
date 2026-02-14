@@ -43,11 +43,7 @@ export async function voteTrade(
   const trade = await ctx.tradesRepo.findById(tradeId);
   if (!trade) throw new NotFoundException('Trade not found');
 
-  if (trade.status !== 'in_review') {
-    throw new ValidationException('Trade is not in review period');
-  }
-
-  // Get user's roster
+  // Get user's roster (needed for both idempotent check and normal flow)
   const roster = await ctx.rosterRepo.findByLeagueAndUser(trade.leagueId, userId);
   if (!roster) {
     throw new ForbiddenException('You are not a member of this league');
@@ -56,6 +52,20 @@ export async function voteTrade(
   // Cannot vote on own trade
   if (roster.id === trade.proposerRosterId || roster.id === trade.recipientRosterId) {
     throw new ForbiddenException('Cannot vote on your own trade');
+  }
+
+  // Allow idempotent retry — if trade already vetoed/completed, check if user already voted
+  if (trade.status === 'vetoed' || trade.status === 'completed') {
+    const alreadyVoted = await ctx.tradeVotesRepo.hasVoted(tradeId, roster.id);
+    if (alreadyVoted) {
+      const voteCount = await ctx.tradeVotesRepo.countVotes(tradeId);
+      const tradeWithDetails = await ctx.tradesRepo.findByIdWithDetails(tradeId, roster.id);
+      if (!tradeWithDetails) throw new Error('Failed to get trade details');
+      return { trade: tradeWithDetails, voteCount };
+    }
+  }
+  if (trade.status !== 'in_review') {
+    throw new ValidationException('Trade is not in review period');
   }
 
   // Get league settings before transaction
