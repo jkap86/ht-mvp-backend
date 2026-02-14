@@ -286,6 +286,7 @@ const createMockPlayerRepo = (): jest.Mocked<PlayerRepository> =>
     findById: jest.fn(),
     findAll: jest.fn(),
     findRandomEligiblePlayerForAuction: jest.fn(),
+    findBestAvailablePlayerForAuction: jest.fn(),
     findByIdWithClient: jest.fn(),
   }) as unknown as jest.Mocked<PlayerRepository>;
 
@@ -1581,8 +1582,8 @@ describe('FastAuctionService', () => {
       mockDraftRepo.findById.mockResolvedValue(mockFastDraft);
       // Mock hasActiveLotWithClient to return false (no active lot)
       mockLotRepo.hasActiveLotWithClient.mockResolvedValue(false);
-      // Mock findRandomEligiblePlayerForAuction to return null (no players available)
-      mockPlayerRepo.findRandomEligiblePlayerForAuction.mockResolvedValue(null);
+      // Mock findBestAvailablePlayerForAuction to return null (no players available)
+      mockPlayerRepo.findBestAvailablePlayerForAuction.mockResolvedValue(null);
 
       const { runWithLock } = require('../../../shared/transaction-runner');
 
@@ -1652,7 +1653,7 @@ describe('FastAuctionService', () => {
           };
 
           mockLotRepo.hasActiveLotWithClient.mockResolvedValue(false);
-          mockPlayerRepo.findRandomEligiblePlayerForAuction.mockResolvedValue(mockPlayer as any);
+          mockPlayerRepo.findBestAvailablePlayerForAuction.mockResolvedValue({ player: mockPlayer as any, source: 'random' });
           // Nominator cannot afford: budget fully spent
           mockLotRepo.getRosterBudgetDataWithClient.mockResolvedValue({
             spent: 200,
@@ -1757,7 +1758,7 @@ describe('FastAuctionService', () => {
         };
 
         mockLotRepo.hasActiveLotWithClient.mockResolvedValue(false);
-        mockPlayerRepo.findRandomEligiblePlayerForAuction.mockResolvedValue(mockPlayer as any);
+        mockPlayerRepo.findBestAvailablePlayerForAuction.mockResolvedValue({ player: mockPlayer as any, source: 'random' });
         mockLotRepo.getRosterBudgetDataWithClient.mockResolvedValue({
           spent: 0,
           wonCount: 0,
@@ -1826,7 +1827,7 @@ describe('FastAuctionService', () => {
         };
 
         mockLotRepo.hasActiveLotWithClient.mockResolvedValue(false);
-        mockPlayerRepo.findRandomEligiblePlayerForAuction.mockResolvedValue(mockPlayer as any);
+        mockPlayerRepo.findBestAvailablePlayerForAuction.mockResolvedValue({ player: mockPlayer as any, source: 'random' });
         mockLotRepo.getRosterBudgetDataWithClient.mockResolvedValue({
           spent: 0,
           wonCount: 0,
@@ -2672,7 +2673,7 @@ describe('FastAuctionService', () => {
         };
 
         mockLotRepo.hasActiveLotWithClient.mockResolvedValue(false);
-        mockPlayerRepo.findRandomEligiblePlayerForAuction.mockResolvedValue(mockPlayer as any);
+        mockPlayerRepo.findBestAvailablePlayerForAuction.mockResolvedValue({ player: mockPlayer as any, source: 'random' });
         mockLotRepo.getRosterBudgetDataWithClient.mockResolvedValue({
           spent: 0, wonCount: 0, leadingCommitment: 0,
         });
@@ -2739,7 +2740,7 @@ describe('FastAuctionService', () => {
         };
 
         mockLotRepo.hasActiveLotWithClient.mockResolvedValue(false);
-        mockPlayerRepo.findRandomEligiblePlayerForAuction.mockResolvedValue(mockPlayer as any);
+        mockPlayerRepo.findBestAvailablePlayerForAuction.mockResolvedValue({ player: mockPlayer as any, source: 'random' });
         mockLotRepo.getRosterBudgetDataWithClient.mockResolvedValue({
           spent: 0, wonCount: 0, leadingCommitment: 0,
         });

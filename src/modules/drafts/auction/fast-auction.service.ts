@@ -20,7 +20,7 @@ import { runWithLock, LockDomain } from '../../../shared/transaction-runner';
 import { logger } from '../../../config/logger.config';
 import { Draft, FastAuctionTimeoutAction } from '../drafts.model';
 import { resolvePriceWithClient } from './auction-price-resolver';
-import { calculateMaxAffordableBid, canAffordMinBid, computeAvailableBudget } from '../../../domain/auction/budget';
+import { calculateMaxAffordableBid, calculateFallbackMaxBid, canAffordMinBid, computeAvailableBudget } from '../../../domain/auction/budget';
 import { computeExtendedDeadline } from '../../../domain/auction/lot-timer';
 import { assessNominatorEligibility } from '../../../domain/auction/nomination';
 import { finalizeDraftCompletion } from '../draft-completion.utils';
@@ -816,14 +816,18 @@ export class FastAuctionService {
           return { skipReason: 'timeout_skip' as const, skippedRosterId: lockedCurrentRosterId };
         }
 
-        // Find a random available player using SQL-level filtering
-        // (avoids loading all players into memory)
-        const randomPlayer = await this.playerRepo.findRandomEligiblePlayerForAuction(client, draftId);
+        // Find best available player: queue → ADP → random
+        const season = new Date().getFullYear();
+        const bestAvailable = await this.playerRepo.findBestAvailablePlayerForAuction(
+          client, draftId, lockedCurrentRosterId, season
+        );
 
-        if (!randomPlayer) {
+        if (!bestAvailable) {
           logger.warn('No available players for auto-nomination', { draftId });
           return { skipReason: 'no_eligible_players' as const };
         }
+
+        const { player: selectedPlayer, source: selectionSource } = bestAvailable;
 
         // Validate budget for auto-nomination
         const budgetInfo = await this.lotRepo.getRosterBudgetDataWithClient(client, draftId, lockedCurrentRosterId);
@@ -873,7 +877,7 @@ export class FastAuctionService {
         const lot = await this.lotRepo.createLotWithClient(
           client,
           draftId,
-          randomPlayer.id,
+          selectedPlayer.id,
           lockedCurrentRosterId,
           bidDeadline,
           settings.minBid,
@@ -882,15 +886,37 @@ export class FastAuctionService {
           league.activeLeagueSeasonId
         );
 
+        // Calculate smart fallback max bid
+        const fallbackMax = calculateFallbackMaxBid(
+          totalBudget, rosterSlots, budgetInfo, settings.minBid
+        );
+
         // auto_nominate_no_open_bid: create lot but skip opening bid
         // Lot starts with currentBidderRosterId = NULL, settles as passed if nobody bids
         if (timeoutAction !== 'auto_nominate_no_open_bid') {
           // auto_nominate_and_open_bid (default): Nominator becomes the leader at startingBid
           await this.setNominatorAsOpeningBidder(client, lot, lockedCurrentRosterId, settings.minBid);
           lot.currentBidderRosterId = lockedCurrentRosterId;
+
+          // If smart max > minBid, update the proxy bid so AFK user has a real chance
+          // No need to re-run price resolution — only one bidder at this point
+          if (fallbackMax > settings.minBid) {
+            await client.query(
+              `UPDATE auction_proxy_bids
+               SET max_bid = $1, updated_at = CURRENT_TIMESTAMP
+               WHERE lot_id = $2 AND roster_id = $3`,
+              [fallbackMax, lot.id, lockedCurrentRosterId]
+            );
+          }
         }
 
-        return { lot, playerName: randomPlayer.fullName, playerId: randomPlayer.id };
+        return {
+          lot,
+          playerName: selectedPlayer.fullName,
+          playerId: selectedPlayer.id,
+          fallbackMaxBid: fallbackMax,
+          selectionSource,
+        };
       }
     );
 
@@ -926,6 +952,8 @@ export class FastAuctionService {
       playerId: result.playerId,
       playerName: result.playerName,
       nominatorRosterId: draft.currentRosterId,
+      fallbackMaxBid: result.fallbackMaxBid,
+      selectionSource: result.selectionSource,
     });
 
     const eventBus = tryGetEventBus();

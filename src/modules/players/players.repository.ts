@@ -68,6 +68,91 @@ export class PlayerRepository {
     return result.rows.length > 0 ? playerFromDatabase(result.rows[0]) : null;
   }
 
+  /**
+   * Find the best available player for auction auto-nomination using cascading fallback:
+   *   1. Nominator's draft queue (respects user preference)
+   *   2. ADP-ranked selection (deterministic, best available)
+   *   3. Random fallback (if no ADP data exists)
+   *
+   * @param client - Transaction client for consistency
+   * @param draftId - Draft to check eligibility for
+   * @param rosterId - Nominator's roster ID (for queue lookup)
+   * @param season - Season year for ADP rankings lookup
+   * @returns Best available player with selection source, or null if none available
+   */
+  async findBestAvailablePlayerForAuction(
+    client: PoolClient,
+    draftId: number,
+    rosterId: number,
+    season: number
+  ): Promise<{ player: Player; source: 'queue' | 'adp' | 'random' } | null> {
+    // Priority 1: Queue-based selection (nominator's draft queue)
+    const queueResult = await client.query(
+      `SELECT
+        p.id, p.sleeper_id, p.first_name, p.last_name, p.full_name,
+        p.fantasy_positions, p.position, p.team, p.years_exp, p.age,
+        p.active, p.status, p.injury_status, p.jersey_number, p.cfbd_id,
+        p.college, p.height, p.weight, p.home_city, p.home_state,
+        p.player_type, p.created_at, p.updated_at
+       FROM draft_queue dq
+       JOIN players p ON p.id = dq.player_id
+       WHERE dq.draft_id = $1 AND dq.roster_id = $2
+         AND dq.player_id IS NOT NULL
+         AND p.active = true
+         AND NOT EXISTS (
+           SELECT 1 FROM draft_picks dp
+           WHERE dp.draft_id = $1 AND dp.player_id = p.id
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM auction_lots al
+           WHERE al.draft_id = $1 AND al.player_id = p.id
+         )
+       ORDER BY dq.queue_position ASC
+       LIMIT 1`,
+      [draftId, rosterId]
+    );
+    if (queueResult.rows.length > 0) {
+      return { player: playerFromDatabase(queueResult.rows[0]), source: 'queue' };
+    }
+
+    // Priority 2: ADP-ranked selection (deterministic best available)
+    const adpResult = await client.query(
+      `SELECT
+        p.id, p.sleeper_id, p.first_name, p.last_name, p.full_name,
+        p.fantasy_positions, p.position, p.team, p.years_exp, p.age,
+        p.active, p.status, p.injury_status, p.jersey_number, p.cfbd_id,
+        p.college, p.height, p.weight, p.home_city, p.home_state,
+        p.player_type, p.created_at, p.updated_at
+       FROM players p
+       JOIN player_rankings pr ON pr.player_id = p.id
+       WHERE p.active = true
+         AND pr.ranking_source = 'adp'
+         AND pr.season = $2
+         AND NOT EXISTS (
+           SELECT 1 FROM draft_picks dp
+           WHERE dp.draft_id = $1 AND dp.player_id = p.id
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM auction_lots al
+           WHERE al.draft_id = $1 AND al.player_id = p.id
+         )
+       ORDER BY pr.rank ASC
+       LIMIT 1`,
+      [draftId, season]
+    );
+    if (adpResult.rows.length > 0) {
+      return { player: playerFromDatabase(adpResult.rows[0]), source: 'adp' };
+    }
+
+    // Priority 3: Random fallback (if no ADP data exists)
+    const randomPlayer = await this.findRandomEligiblePlayerForAuction(client, draftId);
+    if (randomPlayer) {
+      return { player: randomPlayer, source: 'random' };
+    }
+
+    return null;
+  }
+
   async findAll(limit = 100, offset = 0): Promise<Player[]> {
     const result = await this.db.query(
       `SELECT ${PLAYER_COLUMNS} FROM players WHERE active = true ORDER BY full_name LIMIT $1 OFFSET $2`,
