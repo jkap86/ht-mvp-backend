@@ -11,7 +11,6 @@ import { closeRedis } from './config/redis.config';
 import { requestTimingMiddleware } from './middleware/request-timing.middleware';
 import { requestIdMiddleware } from './middleware/request-id.middleware';
 import { poolHealthMiddleware } from './middleware/pool-health.middleware';
-import { idempotencyMiddleware } from './idempotency.middleware';
 // Bootstrap DI container (auto-runs on import, must be before routes)
 import './bootstrap';
 import routes from './routes';
@@ -78,7 +77,6 @@ app.use(express.json({ limit: '1mb' })); // Limit payload size to prevent DoS (i
 app.use(requestIdMiddleware); // Add request ID for distributed tracing
 app.use(requestTimingMiddleware);
 app.use(poolHealthMiddleware); // Circuit breaker: reject requests when pool is exhausted
-app.use(idempotencyMiddleware); // Handle x-idempotency-key for safe retries
 
 // Routes
 app.use('/api', routes);

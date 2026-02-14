@@ -288,25 +288,14 @@ it('should be idempotent with same key', async () => {
 
 ## Migration from HTTP Middleware
 
-**Previous Approach:**
-
-The application previously used HTTP-level idempotency middleware that:
-- Intercepted all POST/PUT/PATCH/DELETE requests
-- Stored responses in `idempotency_keys` table
-- Had issues: ran before auth, didn't scope by method, used `originalUrl`
-
-**Why We Changed:**
+The application previously used a global HTTP-level idempotency middleware (`src/idempotency.middleware.ts`) that intercepted all mutating requests. This was removed because:
 
 1. **Auth timing** - Middleware ran before user was authenticated
 2. **Limited context** - Couldn't distinguish operation types
 3. **Generic responses** - 24h TTL didn't fit all use cases
-4. **Over-engineering** - Feature tables provide better control
+4. **Column mismatch** - The middleware used wrong column names (`key`, `response_code`) vs the actual schema (`idempotency_key`, `response_status`)
 
-**Migration Path:**
-
-- HTTP middleware removed (no longer registered in server.ts)
-- `idempotency_keys` table can be dropped after confirming no active usage
-- All mutation endpoints now use per-feature or per-entity approach
+The old middleware file has been deleted and all mutation endpoints now use per-feature or per-entity idempotency. The `idempotency_keys` table is retained for the cleanup job and can be dropped after confirming no active usage.
 
 ---
 

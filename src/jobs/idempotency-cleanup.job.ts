@@ -31,6 +31,21 @@ async function cleanupExpiredKeys(): Promise<void> {
       if (result.rowCount && result.rowCount > 0) {
         logger.info('Cleaned up expired idempotency keys', { count: result.rowCount });
       }
+
+      const leagueOps = await client.query('DELETE FROM league_operations WHERE expires_at < NOW()');
+      if (leagueOps.rowCount && leagueOps.rowCount > 0) {
+        logger.info('Cleaned up expired league operations', { count: leagueOps.rowCount });
+      }
+
+      const draftOps = await client.query('DELETE FROM draft_operations WHERE expires_at < NOW()');
+      if (draftOps.rowCount && draftOps.rowCount > 0) {
+        logger.info('Cleaned up expired draft operations', { count: draftOps.rowCount });
+      }
+
+      const playoffOps = await client.query('DELETE FROM playoff_operations WHERE expires_at < NOW()');
+      if (playoffOps.rowCount && playoffOps.rowCount > 0) {
+        logger.info('Cleaned up expired playoff operations', { count: playoffOps.rowCount });
+      }
     } finally {
       await client.query('SELECT pg_advisory_unlock($1)', [IDEMPOTENCY_CLEANUP_LOCK_ID]);
     }

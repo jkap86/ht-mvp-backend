@@ -520,7 +520,9 @@ export class SlowAuctionService {
       // This ensures users see their bid activity even if it doesn't change the visible price
       await client.query(
         `INSERT INTO auction_bid_history (lot_id, roster_id, bid_amount, is_proxy, idempotency_key)
-         VALUES ($1, $2, $3, $4, $5)`,
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (lot_id, roster_id, idempotency_key) WHERE idempotency_key IS NOT NULL
+         DO NOTHING`,
         [lotId, rosterId, maxBid, true, idempotencyKey ?? null]
       );
 
