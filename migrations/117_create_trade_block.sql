@@ -13,4 +13,4 @@ CREATE INDEX idx_trade_block_league ON trade_block_items(league_id);
 CREATE INDEX idx_trade_block_roster ON trade_block_items(roster_id);
 
 CREATE TRIGGER set_trade_block_updated_at BEFORE UPDATE ON trade_block_items
-  FOR EACH ROW EXECUTE FUNCTION trigger_set_timestamp();
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
