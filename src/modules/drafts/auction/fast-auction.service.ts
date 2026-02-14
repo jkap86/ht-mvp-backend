@@ -115,7 +115,8 @@ export class FastAuctionService {
     client: PoolClient,
     lot: AuctionLot,
     nominatorRosterId: number,
-    startingBid: number
+    startingBid: number,
+    idempotencyKey?: string
   ): Promise<void> {
     // Update lot to set nominator as leader
     await client.query(
@@ -134,16 +135,13 @@ export class FastAuctionService {
       [lot.id, nominatorRosterId, startingBid]
     );
 
-    // Record opening bid in history (NOT EXISTS guard for retry safety)
+    // Record opening bid in history (ON CONFLICT for proper idempotency)
     await client.query(
-      `INSERT INTO auction_bid_history (lot_id, roster_id, bid_amount, is_proxy)
-       SELECT $1, $2, $3, $4
-       WHERE NOT EXISTS (
-         SELECT 1 FROM auction_bid_history
-         WHERE lot_id = $1 AND roster_id = $2 AND bid_amount = $3 AND is_proxy = false
-         LIMIT 1
-       )`,
-      [lot.id, nominatorRosterId, startingBid, false]
+      `INSERT INTO auction_bid_history (lot_id, roster_id, bid_amount, is_proxy, idempotency_key)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (lot_id, roster_id, idempotency_key) WHERE idempotency_key IS NOT NULL
+       DO NOTHING`,
+      [lot.id, nominatorRosterId, startingBid, false, idempotencyKey ?? null]
     );
   }
 
@@ -303,7 +301,7 @@ export class FastAuctionService {
         );
 
         // Fast auction: Nominator becomes the leader at openingBid
-        await this.setNominatorAsOpeningBidder(client, lot, roster.id, openingBid);
+        await this.setNominatorAsOpeningBidder(client, lot, roster.id, openingBid, idempotencyKey);
         lot.currentBidderRosterId = roster.id;
 
         return { lot, playerName: player.fullName, openingBid };

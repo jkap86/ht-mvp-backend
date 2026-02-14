@@ -2473,7 +2473,7 @@ describe('FastAuctionService', () => {
       expect(proxyBidQuery).toContain('ON CONFLICT');
     });
 
-    it('should use NOT EXISTS guard for bid history INSERT in setNominatorAsOpeningBidder', async () => {
+    it('should use ON CONFLICT idempotency guard for bid history INSERT in setNominatorAsOpeningBidder', async () => {
       mockDraftRepo.findById.mockResolvedValue(mockFastDraft);
       mockRosterRepo.findByLeagueAndUser.mockResolvedValue(mockRoster as any);
 
@@ -2520,12 +2520,13 @@ describe('FastAuctionService', () => {
 
       await service.nominate(1, 'user-1', 100);
 
-      // Verify bid history INSERT uses NOT EXISTS guard
+      // Verify bid history INSERT uses ON CONFLICT idempotency guard
       const bidHistoryQuery = capturedQueries.find(sql =>
         sql.includes('auction_bid_history') && sql.includes('INSERT')
       );
       expect(bidHistoryQuery).toBeDefined();
-      expect(bidHistoryQuery).toContain('NOT EXISTS');
+      expect(bidHistoryQuery).toContain('ON CONFLICT');
+      expect(bidHistoryQuery).toContain('idempotency_key');
     });
   });
 

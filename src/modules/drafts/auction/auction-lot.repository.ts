@@ -491,26 +491,17 @@ export class AuctionLotRepository {
   ): Promise<AuctionLot> {
     const nomDate = nominationDate || new Date().toISOString().split('T')[0];
     // Concurrency-safe: ON CONFLICT replaces check-then-insert race
+    // DO UPDATE ensures RETURNING * always returns the row (insert or existing)
     const result = await client.query(
       `INSERT INTO auction_lots (draft_id, player_id, nominator_roster_id, bid_deadline, current_bid, current_bidder_roster_id, status, nomination_date, idempotency_key, league_season_id)
        VALUES ($1, $2, $3, $4, $5, NULL, 'active', $6, $7, $8)
        ON CONFLICT (draft_id, nominator_roster_id, idempotency_key) WHERE idempotency_key IS NOT NULL
-       DO NOTHING
+       DO UPDATE SET updated_at = CURRENT_TIMESTAMP
        RETURNING *`,
       [draftId, playerId, nominatorRosterId, bidDeadline, startingBid, nomDate, idempotencyKey || null, leagueSeasonId ?? null]
     );
 
-    if (result.rows.length > 0) {
-      return auctionLotFromDatabase(result.rows[0]);
-    }
-
-    // Conflict: re-select existing lot by idempotency key
-    const existing = await client.query(
-      `SELECT * FROM auction_lots
-       WHERE draft_id = $1 AND nominator_roster_id = $2 AND idempotency_key = $3`,
-      [draftId, nominatorRosterId, idempotencyKey]
-    );
-    return auctionLotFromDatabase(existing.rows[0]);
+    return auctionLotFromDatabase(result.rows[0]);
   }
 
   /**
