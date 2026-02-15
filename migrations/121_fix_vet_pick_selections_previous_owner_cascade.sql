@@ -1,0 +1,6 @@
+ALTER TABLE vet_draft_pick_selections
+DROP CONSTRAINT vet_draft_pick_selections_previous_owner_roster_id_fkey;
+
+ALTER TABLE vet_draft_pick_selections
+ADD CONSTRAINT vet_draft_pick_selections_previous_owner_roster_id_fkey
+FOREIGN KEY (previous_owner_roster_id) REFERENCES rosters(id) ON DELETE CASCADE;
