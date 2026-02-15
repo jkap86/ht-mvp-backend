@@ -123,6 +123,27 @@ export class LeagueService {
         leagueSettings: params.leagueSettings,
       });
 
+      // Create initial league season and set active pointer
+      let leagueSeasonId: number | undefined;
+      if (this.leagueSeasonRepo) {
+        const leagueSeason = await this.leagueSeasonRepo.create(
+          {
+            leagueId: league.id,
+            season: parseInt(params.season, 10),
+            status: 'pre_draft',
+            seasonStatus: 'pre_season',
+            currentWeek: 1,
+          },
+          client
+        );
+        leagueSeasonId = leagueSeason.id;
+
+        await client.query(
+          'UPDATE leagues SET active_league_season_id = $1 WHERE id = $2',
+          [leagueSeason.id, league.id]
+        );
+      }
+
       // Create first roster for the creator (commissioner) with client
       await this.rosterService.createInitialRosterWithClient(client, league.id, userId);
 
@@ -133,6 +154,7 @@ export class LeagueService {
           pickTimeSeconds: 90,
           rounds: preset.defaultRounds,
           playerPool: preset.playerPool,
+          leagueSeasonId,
         });
       }
 

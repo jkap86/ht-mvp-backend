@@ -339,6 +339,7 @@ export class DraftService {
       pickTimeSeconds?: number;
       playerPool?: ('veteran' | 'rookie' | 'college')[];
       scheduledStart?: Date;
+      leagueSeasonId?: number;
     }
   ): Promise<any> {
     const leagueId = league.id;
@@ -357,7 +358,8 @@ export class DraftService {
       options.rounds || defaultRounds,
       options.pickTimeSeconds || 90,
       Object.keys(settings).length > 0 ? settings : undefined,
-      options.scheduledStart
+      options.scheduledStart,
+      options.leagueSeasonId
     );
 
     // Create initial draft order within the transaction
