@@ -99,6 +99,7 @@ export const SOCKET_EVENTS = {
     CLAIM_FAILED: 'waiver:claim_failed',
     PRIORITY_UPDATED: 'waiver:priority_updated',
     BUDGET_UPDATED: 'waiver:budget_updated',
+    CLAIMS_REORDERED: 'waiver:claims_reordered',
   },
 
   // Scoring events

@@ -568,6 +568,11 @@ export class SocketService {
     this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.DRAFT.SETTINGS_UPDATED, draft);
   }
 
+  // Emit chess clock updated event when commissioner adjusts time
+  emitDraftChessClockUpdated(draftId: number, data: { draftId: number; chessClocks: Record<number, number> }): void {
+    this.io.to(ROOM_NAMES.draft(draftId)).emit(SOCKET_EVENTS.DRAFT.CHESS_CLOCK_UPDATED, data);
+  }
+
   // Emit pick traded event when a draft pick asset changes ownership
   emitPickTraded(
     leagueId: number,
@@ -794,6 +799,11 @@ export class SocketService {
   // Emit FAAB budget updated event
   emitWaiverBudgetUpdated(leagueId: number, budgets: any[]): void {
     this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.WAIVER.BUDGET_UPDATED, { budgets });
+  }
+
+  // Emit waiver claims reordered event
+  emitWaiverClaimsReordered(leagueId: number, data: { rosterId: number; claims: any[] }): void {
+    this.io.to(ROOM_NAMES.league(leagueId)).emit(SOCKET_EVENTS.WAIVER.CLAIMS_REORDERED, data);
   }
 
   // Scoring events (emitted to league room)

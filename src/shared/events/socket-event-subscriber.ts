@@ -56,6 +56,23 @@ export class SocketEventSubscriber implements DomainEventSubscriber {
       case EventTypes.DRAFT_OVERNIGHT_PAUSE_ENDED:
         socketService.emitDraftOvernightPauseEnded(event.payload.draftId as number, event.payload);
         break;
+      case EventTypes.DRAFT_CREATED:
+        if (event.leagueId) {
+          socketService.emitDraftCreated(event.leagueId, event.payload.draft ?? event.payload);
+        }
+        break;
+      case EventTypes.DRAFT_PICK_UNDONE:
+        socketService.emitPickUndone(
+          event.payload.draftId as number,
+          { pick: event.payload.pick, draft: event.payload.draft }
+        );
+        break;
+      case EventTypes.DRAFT_CHESS_CLOCK_UPDATED:
+        socketService.emitDraftChessClockUpdated(
+          event.payload.draftId as number,
+          event.payload as { draftId: number; chessClocks: Record<number, number> }
+        );
+        break;
 
       // Auction events
       case EventTypes.AUCTION_BID:
@@ -260,6 +277,11 @@ export class SocketEventSubscriber implements DomainEventSubscriber {
       case EventTypes.WAIVER_BUDGET_UPDATED:
         if (event.leagueId) {
           socketService.emitWaiverBudgetUpdated(event.leagueId, event.payload.budgets as unknown[]);
+        }
+        break;
+      case EventTypes.WAIVER_CLAIMS_REORDERED:
+        if (event.leagueId) {
+          socketService.emitWaiverClaimsReordered(event.leagueId, event.payload as { rosterId: number; claims: any[] });
         }
         break;
 
