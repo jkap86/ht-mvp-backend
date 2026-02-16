@@ -74,19 +74,6 @@ export class LeagueService {
     userId: string,
     idempotencyKey?: string
   ): Promise<LeagueResponse> {
-    // Idempotency check: return existing league if same key was already used
-    if (idempotencyKey) {
-      const existing = await this.db.query(
-        `SELECT result FROM league_operations
-         WHERE idempotency_key = $1 AND user_id = $2 AND operation_type = 'create'
-         AND expires_at > NOW()`,
-        [idempotencyKey, userId]
-      );
-      if (existing.rows.length > 0) {
-        return existing.rows[0].result;
-      }
-    }
-
     // Validate before starting transaction
     if (!params.name || params.name.trim().length === 0) {
       throw new ValidationException('League name is required');
@@ -109,8 +96,22 @@ export class LeagueService {
       throw new ValidationException('Invalid draft structure');
     }
 
-    // Create league, commissioner roster, and drafts atomically in a single transaction
-    const league = await runInTransaction(this.db, async (client) => {
+    // Create league, commissioner roster, and drafts atomically in a single transaction.
+    // Idempotency check + store also inside the transaction to prevent race conditions.
+    const response = await runInTransaction(this.db, async (client) => {
+      // Idempotency check inside the transaction to prevent duplicate creation race
+      if (idempotencyKey) {
+        const existing = await client.query(
+          `SELECT result FROM league_operations
+           WHERE idempotency_key = $1 AND user_id = $2 AND operation_type = 'create'
+           AND expires_at > NOW()`,
+          [idempotencyKey, userId]
+        );
+        if (existing.rows.length > 0) {
+          return existing.rows[0].result as LeagueResponse;
+        }
+      }
+
       // Create league with client
       const league = await this.leagueRepo.createWithClient(client, {
         name: params.name.trim(),
@@ -158,22 +159,22 @@ export class LeagueService {
         });
       }
 
-      return league;
+      // Get updated league with commissioner info inside the transaction
+      const updatedLeague = await this.leagueRepo.findByIdWithUserRoster(league.id, userId, client);
+      const leagueResponse = updatedLeague!.toResponse();
+
+      // Store result for idempotency inside the transaction
+      if (idempotencyKey) {
+        await client.query(
+          `INSERT INTO league_operations (idempotency_key, league_id, user_id, operation_type, result)
+           VALUES ($1, $2, $3, 'create', $4)
+           ON CONFLICT (idempotency_key, user_id, operation_type) DO NOTHING`,
+          [idempotencyKey, league.id, userId, JSON.stringify(leagueResponse)]
+        );
+      }
+
+      return leagueResponse;
     });
-
-    // Get updated league with commissioner info
-    const updatedLeague = await this.leagueRepo.findByIdWithUserRoster(league.id, userId);
-    const response = updatedLeague!.toResponse();
-
-    // Store result for idempotency
-    if (idempotencyKey) {
-      await this.db.query(
-        `INSERT INTO league_operations (idempotency_key, league_id, user_id, operation_type, result)
-         VALUES ($1, $2, $3, 'create', $4)
-         ON CONFLICT (idempotency_key, user_id, operation_type) DO NOTHING`,
-        [idempotencyKey, league.id, userId, JSON.stringify(response)]
-      );
-    }
 
     return response;
   }

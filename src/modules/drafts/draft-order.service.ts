@@ -3,7 +3,7 @@ import { Pool, PoolClient } from 'pg';
 import { DraftRepository } from './drafts.repository';
 import { DraftPickAssetRepository } from './draft-pick-asset.repository';
 import type { LeagueRepository, RosterRepository } from '../leagues/leagues.repository';
-import { ForbiddenException, NotFoundException, ValidationException } from '../../utils/exceptions';
+import { ForbiddenException, ValidationException } from '../../utils/exceptions';
 import { EventTypes, tryGetEventBus } from '../../shared/events';
 import { runWithLock, LockDomain } from '../../shared/transaction-runner';
 
@@ -73,48 +73,50 @@ export class DraftOrderService {
       throw new ValidationException('Can only randomize order before draft starts');
     }
 
-    // Get league to know total roster count
-    const league = await this.leagueRepo.findById(leagueId);
-    if (!league) {
-      throw new NotFoundException('League not found');
-    }
+    // All roster reads, order updates, and confirmations must happen inside the lock
+    // to prevent concurrent join/leave from corrupting draft order
+    const finalOrder = await runWithLock(this.db, LockDomain.LEAGUE, leagueId, async (client) => {
+      // Get ALL rosters for the league
+      const allRosters = await this.rosterRepo.findByLeagueIdWithClient(client, leagueId);
 
-    const targetCount = league.totalRosters;
+      // Partition: real users vs empty placeholders
+      const realRosters = allRosters.filter((r: { userId?: string | null }) => r.userId != null);
+      const emptyRosters = allRosters.filter((r: { userId?: string | null }) => r.userId == null);
 
-    // Clean up and recreate empty rosters in a transaction with league lock
-    await runWithLock(this.db, LockDomain.LEAGUE, leagueId, async (client) => {
-      // Delete all empty rosters first (cleans up any duplicates from previous bugs)
-      await this.rosterRepo.deleteEmptyRosters(leagueId, client);
+      // Shuffle only real-user rosters
+      const shuffledReal = secureShuffleArray(realRosters);
 
-      // Count rosters with actual users
-      const userRosterCount = await this.rosterRepo.getRosterCount(leagueId, client);
+      // Combined order: shuffled real rosters first, then empty placeholders
+      const orderedRosters = [...shuffledReal, ...emptyRosters];
+      const rosterIds = orderedRosters.map((r: { id: number }) => r.id);
 
-      // Create fresh empty rosters to fill remaining slots
-      for (let i = userRosterCount + 1; i <= targetCount; i++) {
-        await this.rosterRepo.createEmptyRoster(leagueId, i, client);
+      await this.draftRepo.updateDraftOrderAtomicWithClient(client, draftId, rosterIds);
+
+      // Update pick asset positions to match new draft order
+      if (this.pickAssetRepo) {
+        await this.pickAssetRepo.updatePickPositions(draftId, client);
       }
+
+      // Mark order as confirmed after successful randomization
+      await this.draftRepo.setOrderConfirmed(draftId, true, client);
+
+      // Fetch the final draft order within the transaction
+      const order = await this.draftRepo.getDraftOrderWithClient(client, draftId);
+
+      // Store result for idempotency inside the transaction
+      if (idempotencyKey) {
+        await client.query(
+          `INSERT INTO draft_operations (idempotency_key, draft_id, user_id, operation_type, result)
+           VALUES ($1, $2, $3, 'randomize', $4)
+           ON CONFLICT (idempotency_key, user_id, operation_type) DO NOTHING`,
+          [idempotencyKey, draftId, userId, JSON.stringify(order)]
+        );
+      }
+
+      return order;
     });
 
-    // Now get ALL rosters (including newly created empty ones)
-    const allRosters = await this.rosterRepo.findByLeagueId(leagueId);
-    const shuffled = secureShuffleArray(allRosters);
-
-    // Atomically update draft order in a single transaction
-    const rosterIds = shuffled.map((r) => r.id);
-    await this.draftRepo.updateDraftOrderAtomic(draftId, rosterIds);
-
-    // Update pick asset positions to match new draft order
-    if (this.pickAssetRepo) {
-      await this.pickAssetRepo.updatePickPositions(draftId);
-    }
-
-    // Mark order as confirmed after successful randomization
-    await this.draftRepo.setOrderConfirmed(draftId, true);
-
-    // Fetch the final draft order
-    const finalOrder = await this.draftRepo.getDraftOrder(draftId);
-
-    // Emit event to notify all users viewing the draft room (AFTER transaction completes)
+    // Emit event AFTER transaction commits
     const eventBus = tryGetEventBus();
     eventBus?.publish({
       type: EventTypes.DRAFT_ORDER_UPDATED,
@@ -124,16 +126,6 @@ export class DraftOrderService {
         draft_order: finalOrder,
       },
     });
-
-    // Store result for idempotency
-    if (idempotencyKey) {
-      await this.db.query(
-        `INSERT INTO draft_operations (idempotency_key, draft_id, user_id, operation_type, result)
-         VALUES ($1, $2, $3, 'randomize', $4)
-         ON CONFLICT (idempotency_key, user_id, operation_type) DO NOTHING`,
-        [idempotencyKey, draftId, userId, JSON.stringify(finalOrder)]
-      );
-    }
 
     return finalOrder;
   }
@@ -273,37 +265,24 @@ export class DraftOrderService {
   }
 
   async createInitialOrder(draftId: number, leagueId: number): Promise<void> {
-    // Get league to know total roster count
-    const league = await this.leagueRepo.findById(leagueId);
-    if (!league) {
-      return;
-    }
-
-    const targetCount = league.totalRosters;
-
-    // Clean up and create empty rosters in a transaction with league lock
+    // All operations must happen inside the lock to prevent concurrent join/leave
+    // from corrupting draft order
     await runWithLock(this.db, LockDomain.LEAGUE, leagueId, async (client) => {
-      // Delete any existing empty rosters first
-      await this.rosterRepo.deleteEmptyRosters(leagueId, client);
-
-      // Count rosters with actual users
-      const userRosterCount = await this.rosterRepo.getRosterCount(leagueId, client);
-
-      // Create fresh empty rosters to fill remaining slots
-      for (let i = userRosterCount + 1; i <= targetCount; i++) {
-        await this.rosterRepo.createEmptyRoster(leagueId, i, client);
+      // Get ALL rosters for the league
+      const allRosters = await this.rosterRepo.findByLeagueIdWithClient(client, leagueId);
+      if (allRosters.length === 0) {
+        return;
       }
+
+      // Partition: real users first (by roster_id), then empty placeholders
+      const realRosters = allRosters.filter((r) => r.userId != null);
+      const emptyRosters = allRosters.filter((r) => r.userId == null);
+      const orderedRosters = [...realRosters, ...emptyRosters];
+
+      // Use batch insert within the transaction
+      const rosterIds = orderedRosters.map((r: { id: number }) => r.id);
+      await this.draftRepo.updateDraftOrderAtomicWithClient(client, draftId, rosterIds);
     });
-
-    // Now get ALL rosters (including newly created empty ones)
-    const allRosters = await this.rosterRepo.findByLeagueId(leagueId);
-    if (allRosters.length === 0) {
-      return;
-    }
-
-    // Use batch insert
-    const rosterIds = allRosters.map((r) => r.id);
-    await this.draftRepo.updateDraftOrderAtomic(draftId, rosterIds);
   }
 
   /**
@@ -314,27 +293,21 @@ export class DraftOrderService {
     client: PoolClient,
     draftId: number,
     leagueId: number,
-    totalRosters: number
+    _totalRosters: number
   ): Promise<void> {
-    // Delete any existing empty rosters first
-    await this.rosterRepo.deleteEmptyRosters(leagueId, client);
-
-    // Count rosters with actual users
-    const userRosterCount = await this.rosterRepo.getRosterCount(leagueId, client);
-
-    // Create fresh empty rosters to fill remaining slots
-    for (let i = userRosterCount + 1; i <= totalRosters; i++) {
-      await this.rosterRepo.createEmptyRoster(leagueId, i, client);
-    }
-
-    // Get ALL rosters (including newly created empty ones) using the transaction client
+    // Get ALL rosters for the league
     const allRosters = await this.rosterRepo.findByLeagueIdWithClient(client, leagueId);
     if (allRosters.length === 0) {
       return;
     }
 
+    // Partition: real users first (by roster_id), then empty placeholders
+    const realRosters = allRosters.filter((r) => r.userId != null);
+    const emptyRosters = allRosters.filter((r) => r.userId == null);
+    const orderedRosters = [...realRosters, ...emptyRosters];
+
     // Use batch insert within the transaction
-    const rosterIds = allRosters.map((r: { id: number }) => r.id);
+    const rosterIds = orderedRosters.map((r: { id: number }) => r.id);
     await this.draftRepo.updateDraftOrderAtomicWithClient(client, draftId, rosterIds);
   }
 }

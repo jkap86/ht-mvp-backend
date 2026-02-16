@@ -105,6 +105,7 @@ export interface DraftOrderEntry {
   rosterId: number;
   draftPosition: number;
   username?: string;
+  userId?: string | null;
   isAutodraftEnabled: boolean;
 }
 

@@ -107,8 +107,8 @@ export class DraftRepository {
     return this.core.delete(id);
   }
 
-  async setOrderConfirmed(draftId: number, confirmed: boolean): Promise<void> {
-    return this.core.setOrderConfirmed(draftId, confirmed);
+  async setOrderConfirmed(draftId: number, confirmed: boolean, client?: PoolClient): Promise<void> {
+    return this.core.setOrderConfirmed(draftId, confirmed, client);
   }
 
   async findExpiredDrafts(): Promise<Draft[]> {

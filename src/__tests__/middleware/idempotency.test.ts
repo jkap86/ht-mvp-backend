@@ -175,9 +175,9 @@ describe('idempotencyMiddleware', () => {
       const mockQuery = jest.fn()
         // INSERT returns 0 rows (key already exists)
         .mockResolvedValueOnce({ rows: [] })
-        // SELECT existing returns in-flight record (response_status = 0)
+        // SELECT existing returns in-flight record (response_status = 0, recent)
         .mockResolvedValueOnce({
-          rows: [{ response_status: 0, response_body: null }],
+          rows: [{ response_status: 0, response_body: null, created_at: new Date().toISOString() }],
         });
 
       const pool = createMockPool(mockQuery);
@@ -277,6 +277,8 @@ describe('idempotencyMiddleware', () => {
         // DELETE expired key
         .mockResolvedValueOnce({ rowCount: 1 })
         // Re-INSERT fails (another request claimed it first)
+        .mockResolvedValueOnce({ rows: [] })
+        // Completion check: no completed response found
         .mockResolvedValueOnce({ rows: [] });
 
       const pool = createMockPool(mockQuery);

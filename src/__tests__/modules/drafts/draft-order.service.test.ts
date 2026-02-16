@@ -90,9 +90,11 @@ const createMockDraftRepo = (): jest.Mocked<DraftRepository> =>
   ({
     findById: jest.fn(),
     getDraftOrder: jest.fn(),
+    getDraftOrderWithClient: jest.fn(),
     createDraftOrder: jest.fn(),
     clearDraftOrder: jest.fn(),
     updateDraftOrderAtomic: jest.fn(),
+    updateDraftOrderAtomicWithClient: jest.fn(),
     setOrderConfirmed: jest.fn(),
   }) as unknown as jest.Mocked<DraftRepository>;
 
@@ -106,6 +108,7 @@ const createMockLeagueRepo = (): jest.Mocked<LeagueRepository> =>
 const createMockRosterRepo = (): jest.Mocked<RosterRepository> =>
   ({
     findByLeagueId: jest.fn(),
+    findByLeagueIdWithClient: jest.fn(),
     getRosterCount: jest.fn(),
     createEmptyRoster: jest.fn(),
     deleteEmptyRosters: jest.fn(),
@@ -221,15 +224,17 @@ describe('DraftOrderService', () => {
       mockLeagueRepo.isCommissioner.mockResolvedValue(true);
       mockDraftRepo.findById.mockResolvedValue(mockDraft);
       mockLeagueRepo.findById.mockResolvedValue(mockLeague as any);
-      mockRosterRepo.findByLeagueId.mockResolvedValue(mockRosters as any);
-      mockDraftRepo.updateDraftOrderAtomic.mockResolvedValue(undefined);
+      mockRosterRepo.findByLeagueIdWithClient.mockResolvedValue(mockRosters as any);
+      mockDraftRepo.updateDraftOrderAtomicWithClient.mockResolvedValue(undefined);
       mockDraftRepo.setOrderConfirmed.mockResolvedValue(undefined);
-      mockDraftRepo.getDraftOrder.mockResolvedValue(mockDraftOrder);
+      mockDraftRepo.getDraftOrderWithClient.mockResolvedValue(mockDraftOrder);
 
       const result = await draftOrderService.randomizeDraftOrder(1, 1, 'user-123');
 
-      expect(mockDraftRepo.updateDraftOrderAtomic).toHaveBeenCalledWith(1, expect.any(Array));
-      expect(mockDraftRepo.setOrderConfirmed).toHaveBeenCalledWith(1, true);
+      expect(mockDraftRepo.updateDraftOrderAtomicWithClient).toHaveBeenCalledWith(
+        expect.anything(), 1, expect.any(Array)
+      );
+      expect(mockDraftRepo.setOrderConfirmed).toHaveBeenCalledWith(1, true, expect.anything());
       expect(result).toEqual(mockDraftOrder);
     });
 
@@ -260,31 +265,40 @@ describe('DraftOrderService', () => {
   describe('createInitialOrder', () => {
     it('should create order for all rosters', async () => {
       mockLeagueRepo.findById.mockResolvedValue(mockLeague as any);
-      mockRosterRepo.findByLeagueId.mockResolvedValue(mockRosters as any);
-      mockDraftRepo.updateDraftOrderAtomic.mockResolvedValue(undefined);
+      mockRosterRepo.findByLeagueIdWithClient.mockResolvedValue(mockRosters as any);
+      mockDraftRepo.updateDraftOrderAtomicWithClient.mockResolvedValue(undefined);
 
       await draftOrderService.createInitialOrder(1, 1);
 
-      expect(mockDraftRepo.updateDraftOrderAtomic).toHaveBeenCalledWith(1, [1, 2, 3]);
+      expect(mockDraftRepo.updateDraftOrderAtomicWithClient).toHaveBeenCalledWith(
+        expect.anything(), 1, [1, 2, 3]
+      );
     });
 
-    it('should create empty rosters when league is not full', async () => {
-      const leagueWith3Slots = { ...mockLeague, totalRosters: 3 };
-
-      mockLeagueRepo.findById.mockResolvedValue(leagueWith3Slots as any);
-      // getRosterCount returns 2 (inside transaction, only user-owned rosters)
-      mockRosterRepo.getRosterCount.mockResolvedValue(2);
-      mockRosterRepo.createEmptyRoster.mockResolvedValue(undefined as any);
-      mockRosterRepo.deleteEmptyRosters.mockResolvedValue(undefined as any);
-      // findByLeagueId is called AFTER transaction, should return all rosters including new empty one
-      mockRosterRepo.findByLeagueId.mockResolvedValue(mockRosters as any);
-      mockDraftRepo.updateDraftOrderAtomic.mockResolvedValue(undefined);
+    it('should do nothing when no rosters exist', async () => {
+      mockRosterRepo.findByLeagueIdWithClient.mockResolvedValue([]);
 
       await draftOrderService.createInitialOrder(1, 1);
 
-      // Should have created one empty roster for slot 3
-      expect(mockRosterRepo.createEmptyRoster).toHaveBeenCalledWith(1, 3, expect.anything());
-      expect(mockDraftRepo.updateDraftOrderAtomic).toHaveBeenCalledWith(1, [1, 2, 3]);
+      expect(mockDraftRepo.updateDraftOrderAtomicWithClient).not.toHaveBeenCalled();
+    });
+
+    it('should place real-user rosters before empty placeholders', async () => {
+      const rostersWithEmpty = [
+        { id: 1, leagueId: 1, userId: 'user-1', teamName: 'Team 1' },
+        { id: 2, leagueId: 1, userId: null, teamName: null },  // empty placeholder
+        { id: 3, leagueId: 1, userId: 'user-3', teamName: 'Team 3' },
+      ];
+
+      mockRosterRepo.findByLeagueIdWithClient.mockResolvedValue(rostersWithEmpty as any);
+      mockDraftRepo.updateDraftOrderAtomicWithClient.mockResolvedValue(undefined);
+
+      await draftOrderService.createInitialOrder(1, 1);
+
+      // Real rosters (1, 3) first, then empty (2)
+      expect(mockDraftRepo.updateDraftOrderAtomicWithClient).toHaveBeenCalledWith(
+        expect.anything(), 1, [1, 3, 2]
+      );
     });
   });
 

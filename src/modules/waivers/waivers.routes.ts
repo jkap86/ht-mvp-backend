@@ -6,8 +6,6 @@ import { apiReadLimiter, waiverLimiter } from '../../middleware/rate-limit.middl
 import { asyncHandler } from '../../shared/async-handler';
 import { resolveSeasonContext } from '../../middleware/season-context.middleware';
 import { seasonWriteGuard } from '../../middleware/season-write-guard.middleware';
-import { idempotencyMiddleware } from '../../middleware/idempotency.middleware';
-import { Pool } from 'pg';
 import { container, KEYS } from '../../container';
 import {
   submitClaimSchema,
@@ -29,7 +27,6 @@ export function createWaiversRoutes(controller: WaiversController): Router {
   router.use(authMiddleware);
   router.use(resolveSeasonContext);
   router.use(seasonWriteGuard);
-  router.use(idempotencyMiddleware(container.resolve<Pool>(KEYS.POOL)));
 
   // Submit a waiver claim
   // POST /leagues/:leagueId/waivers/claims

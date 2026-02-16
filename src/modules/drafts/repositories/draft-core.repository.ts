@@ -271,8 +271,9 @@ export class DraftCoreRepository {
   /**
    * Set the order confirmed flag.
    */
-  async setOrderConfirmed(draftId: number, confirmed: boolean): Promise<void> {
-    await this.db.query(
+  async setOrderConfirmed(draftId: number, confirmed: boolean, client?: PoolClient): Promise<void> {
+    const queryRunner = client || this.db;
+    await queryRunner.query(
       'UPDATE drafts SET order_confirmed = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
       [confirmed, draftId]
     );

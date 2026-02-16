@@ -51,6 +51,7 @@ export class DraftOrderRepository {
       rosterId: row.roster_id,
       draftPosition: row.draft_position,
       username: row.username,
+      userId: row.user_id,
       isAutodraftEnabled: row.is_autodraft_enabled ?? false,
     }));
   }
@@ -185,6 +186,7 @@ export class DraftOrderRepository {
       rosterId: row.roster_id,
       draftPosition: row.draft_position,
       username: row.username,
+      userId: row.user_id,
       isAutodraftEnabled: row.is_autodraft_enabled ?? false,
     }));
   }

@@ -3,11 +3,8 @@ import { container, KEYS } from '../../container';
 import { PlayoffController } from './playoff.controller';
 import { PlayoffService } from './playoff.service';
 import { asyncHandler } from '../../shared/async-handler';
-import { idempotencyMiddleware } from '../../middleware/idempotency.middleware';
-import { Pool } from 'pg';
 
 const router = Router({ mergeParams: true });
-router.use(idempotencyMiddleware(container.resolve<Pool>(KEYS.POOL)));
 
 const playoffController = new PlayoffController(
   container.resolve<PlayoffService>(KEYS.PLAYOFF_SERVICE)

@@ -29,6 +29,8 @@ export async function resolveSeasonContext(req: Request, res: Response, next: Ne
     req.leagueSeasonId = leagueSeasonId;
     next();
   } catch (err) {
-    next(err);
+    // No active season — leave req.leagueSeasonId undefined, pass through.
+    // seasonWriteGuard will handle write protection downstream.
+    next();
   }
 }

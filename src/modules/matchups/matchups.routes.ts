@@ -9,8 +9,6 @@ import { container, KEYS } from '../../container';
 import { asyncHandler } from '../../shared/async-handler';
 import { resolveSeasonContext } from '../../middleware/season-context.middleware';
 import { seasonWriteGuard } from '../../middleware/season-write-guard.middleware';
-import { idempotencyMiddleware } from '../../middleware/idempotency.middleware';
-import { Pool } from 'pg';
 
 // Resolve dependencies from container
 const matchupService = container.resolve<MatchupService>(KEYS.MATCHUP_SERVICE);
@@ -31,7 +29,6 @@ const router = Router({ mergeParams: true });
 // Season context and write guard for all matchup routes
 router.use(resolveSeasonContext);
 router.use(seasonWriteGuard);
-router.use(idempotencyMiddleware(container.resolve<Pool>(KEYS.POOL)));
 
 // GET /api/leagues/:leagueId/matchups
 router.get('/', apiReadLimiter, asyncHandler(matchupsController.getMatchups));

@@ -60,45 +60,39 @@ export function idempotencyMiddleware(pool: Pool) {
       );
 
       if (claimResult.rows.length === 0) {
-        // Key already exists - check if it has a completed response
+        // Key already exists — check existing row
         const existing = await pool.query(
-          `SELECT response_status, response_body FROM idempotency_keys
+          `SELECT response_status, response_body, created_at FROM idempotency_keys
            WHERE idempotency_key = $1 AND endpoint = $2 AND user_id = $3
            AND expires_at > NOW()`,
           [idempotencyKey, endpoint, userId]
         );
 
         if (existing.rows.length > 0) {
-          const { response_status, response_body } = existing.rows[0];
+          const { response_status, response_body, created_at } = existing.rows[0];
           if (response_status > 0) {
-            // Completed - replay cached response
-            if (response_status === 204) {
-              res.status(204).end();
-              return;
-            }
-            if (response_body !== null) {
-              // response_body comes back as parsed object from JSONB column
-              res.status(response_status).json(response_body);
-              return;
-            }
-            // Non-204 with null body - unusual but handle gracefully
-            res.status(response_status).end();
+            // Completed — replay cached response
+            if (response_status === 204) { res.status(204).end(); return; }
+            if (response_body !== null) { res.status(response_status).json(response_body); return; }
+            res.status(response_status).end(); return;
+          }
+          // In-flight (response_status = 0) — check staleness
+          const ageMs = Date.now() - new Date(created_at).getTime();
+          if (ageMs < 30_000) {
+            res.status(409).json({ error: { code: 'IDEMPOTENCY_CONFLICT', message: 'Request is already being processed' } });
             return;
           }
-          // Still in-flight (response_status = 0) - return 409
-          res.status(409).json({ error: { code: 'IDEMPOTENCY_CONFLICT', message: 'Request is already being processed' } });
-          return;
+          // Wedged — fall through to cleanup + re-claim
         }
 
-        // Key expired - allow re-use by deleting and re-inserting
+        // Clean up expired or wedged row, then re-claim
         await pool.query(
           `DELETE FROM idempotency_keys
            WHERE idempotency_key = $1 AND endpoint = $2 AND user_id = $3
-           AND expires_at <= NOW()`,
+           AND (expires_at <= NOW() OR response_status = 0)`,
           [idempotencyKey, endpoint, userId]
         );
 
-        // Re-claim after cleanup
         const reclaimResult = await pool.query(
           `INSERT INTO idempotency_keys (idempotency_key, endpoint, method, user_id, response_status, response_body)
            VALUES ($1, $2, $3, $4, 0, NULL)
@@ -108,7 +102,20 @@ export function idempotencyMiddleware(pool: Pool) {
         );
 
         if (reclaimResult.rows.length === 0) {
-          // Another request raced us
+          // Re-claim failed — the original handler may have completed between
+          // our DELETE and INSERT. Check for a completed response to replay.
+          const completed = await pool.query(
+            `SELECT response_status, response_body FROM idempotency_keys
+             WHERE idempotency_key = $1 AND endpoint = $2 AND user_id = $3
+             AND response_status > 0`,
+            [idempotencyKey, endpoint, userId]
+          );
+          if (completed.rows.length > 0) {
+            const { response_status: completedStatus, response_body: completedBody } = completed.rows[0];
+            if (completedStatus === 204) { res.status(204).end(); return; }
+            if (completedBody !== null) { res.status(completedStatus).json(completedBody); return; }
+            res.status(completedStatus).end(); return;
+          }
           res.status(409).json({ error: { code: 'IDEMPOTENCY_CONFLICT', message: 'Request is already being processed' } });
           return;
         }

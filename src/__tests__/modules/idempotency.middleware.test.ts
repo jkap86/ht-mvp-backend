@@ -162,9 +162,9 @@ describe('IdempotencyMiddleware', () => {
       // INSERT returns 0 rows (key exists)
       mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 } as any);
 
-      // SELECT returns in-flight record (status=0, body=null)
+      // SELECT returns in-flight record (status=0, body=null, recent)
       mockQuery.mockResolvedValueOnce({
-        rows: [{ response_status: 0, response_body: null }],
+        rows: [{ response_status: 0, response_body: null, created_at: new Date().toISOString() }],
         rowCount: 1,
       } as any);
 

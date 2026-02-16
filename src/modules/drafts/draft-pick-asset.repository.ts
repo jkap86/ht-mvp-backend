@@ -691,8 +691,9 @@ export class DraftPickAssetRepository {
   /**
    * Check if pick assets exist for a league and season
    */
-  async existsForLeagueSeason(leagueId: number, season: number): Promise<boolean> {
-    const result = await this.db.query(
+  async existsForLeagueSeason(leagueId: number, season: number, client?: PoolClient): Promise<boolean> {
+    const queryRunner = client || this.db;
+    const result = await queryRunner.query(
       `SELECT EXISTS(
         SELECT 1 FROM draft_pick_assets
         WHERE league_id = $1 AND season = $2
