@@ -102,13 +102,13 @@ export class LeagueService {
       // Idempotency check inside the transaction to prevent duplicate creation race
       if (idempotencyKey) {
         const existing = await client.query(
-          `SELECT result FROM league_operations
+          `SELECT response_data FROM league_operations
            WHERE idempotency_key = $1 AND user_id = $2 AND operation_type = 'create'
            AND expires_at > NOW()`,
           [idempotencyKey, userId]
         );
         if (existing.rows.length > 0) {
-          return existing.rows[0].result as LeagueResponse;
+          return existing.rows[0].response_data as LeagueResponse;
         }
       }
 
@@ -166,7 +166,7 @@ export class LeagueService {
       // Store result for idempotency inside the transaction
       if (idempotencyKey) {
         await client.query(
-          `INSERT INTO league_operations (idempotency_key, league_id, user_id, operation_type, result)
+          `INSERT INTO league_operations (idempotency_key, league_id, user_id, operation_type, response_data)
            VALUES ($1, $2, $3, 'create', $4)
            ON CONFLICT (idempotency_key, user_id, operation_type) DO NOTHING`,
           [idempotencyKey, league.id, userId, JSON.stringify(leagueResponse)]
@@ -605,13 +605,13 @@ export class LeagueService {
     // Idempotency check: return existing result if same key was already used
     if (idempotencyKey) {
       const existing = await this.db.query(
-        `SELECT result FROM league_operations
+        `SELECT response_data FROM league_operations
          WHERE idempotency_key = $1 AND user_id = $2 AND operation_type = 'reset'
          AND league_id = $3 AND expires_at > NOW()`,
         [idempotencyKey, userId, leagueId]
       );
       if (existing.rows.length > 0) {
-        return existing.rows[0].result;
+        return existing.rows[0].response_data;
       }
     }
 
@@ -656,7 +656,7 @@ export class LeagueService {
     // Store result for idempotency
     if (idempotencyKey) {
       await this.db.query(
-        `INSERT INTO league_operations (idempotency_key, league_id, user_id, operation_type, result)
+        `INSERT INTO league_operations (idempotency_key, league_id, user_id, operation_type, response_data)
          VALUES ($1, $2, $3, 'reset', $4)
          ON CONFLICT (idempotency_key, user_id, operation_type) DO NOTHING`,
         [idempotencyKey, leagueId, userId, JSON.stringify(response)]
